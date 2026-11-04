@@ -136,7 +136,7 @@ POST /internal/v1/translate
 - timeout 권장: AI 모델 8초 < 백엔드 10초 < 앱 12초. timeout됐다고 자동으로 두 번째 호출을 보내지 않는다.
 
 ### 내부 토큰(선택)
-`.env`(예시 `.env.example`)에 `AI_INTERNAL_TOKEN=...`을 넣으면 `X-Internal-Token` 헤더가 필요하다. AI 서버는 `127.0.0.1`에만 바인딩한다. FastAPI·모델 포트를 인터넷에 공개하지 않는다.
+`.env`(예시 `.env.example`)에 `AI_INTERNAL_TOKEN=...`을 넣으면 `X-Internal-Token` 헤더가 필요하다. 서버·`smoke.py`·`evaluate.py`가 모두 `config.py`로 같은 `.env`를 읽으므로 새 터미널에서도 따로 설정하지 않는다(이미 설정된 환경 변수가 우선). AI 서버는 `127.0.0.1`에만 바인딩한다. FastAPI·모델 포트를 인터넷에 공개하지 않는다.
 
 ### 에뮬레이터 주소
 APK의 `127.0.0.1`은 PC가 아니다. APK → `http://10.0.2.2:8080`(백엔드), 백엔드 → `http://127.0.0.1:8000`(AI). HTTP 예외는 debug 빌드 `network_security_config`의 `10.0.2.2` domain-config에만 둔다.
@@ -175,7 +175,7 @@ APK의 `127.0.0.1`은 PC가 아니다. APK → `http://10.0.2.2:8080`(백엔드)
 - 평가 사례는 모두 `review_status: draft`다. 사람이 검수해 `approved`로 바꾼다. `tests/test_eval_data.py`가 정답이 검증기를 통과하는지, dev/test/few-shot 사이 누수가 없는지 확인한다.
 
 ### 서버가 자동으로 하는 출력 검증(`validation.py`)
-JSON 계약 → 목표 언어 문자 → 설명문 섞임 → 길이 → 숫자·금액·시간·전화번호 보존(3만 원=30,000 won, 오후 3시=3 p.m.) → 부정 보존 → 연료 용어(gas는 휘발유로 확정 금지) → 좌/우. 실패하면 이유를 붙여 **한 번만** temperature 0으로 다시 생성하고, 그래도 실패하면 502로 재생을 막는다.
+JSON 계약 → 목표 언어 문자 → 설명문 섞임 → 길이 → 숫자·금액·시간·전화번호 보존(3만 원=30,000 won, 오후 3시=3 p.m. / 원↔달러, 오전↔오후가 바뀌면 실패) → 부정 보존 → 연료 용어(gas는 휘발유로 확정 금지)와 연료별 긍정·부정(“휘발유, 경유 말고”가 뒤집히면 실패) → 좌/우. 실패하면 이유를 붙여 **한 번만** temperature 0으로 다시 생성하고, 그래도 실패하면 502로 재생을 막는다.
 
 ## 7. 튜닝
 
@@ -231,7 +231,8 @@ Q5_K_M 비교:
 .\.venv-train\Scripts\python.exe train\train_qlora.py --smoke
 .\.venv-train\Scripts\python.exe train\train_qlora.py
 ```
-- `prepare_data.py`: approved만 사용, 모든 정답을 서버 검증기로 검사, eval·few-shot과 겹치면 중단, **서버와 같은 프롬프트 빌더(`prompting.py`)로 prompt 생성**, 토큰 길이 > `max_length`면 중단(정답 잘림 방지), group_id 단위 80/10/10 분할, `train/out/*_manifest.json` 기록.
+- `prepare_data.py`: approved만 사용, 모든 정답을 서버 검증기로 검사, eval·few-shot과 겹치면 중단, **서버와 같은 프롬프트 빌더(`prompting.py`)로 prompt 생성**, 토큰 길이 > `max_length`면 중단(정답 잘림 방지), group_id 해시로 80/10/10 분할(자료를 추가해도 기존 그룹의 분할이 바뀌지 않음), `train/out/*_manifest.json` 기록.
+- `train_qlora.py`는 `dataset_manifest.json`의 해시를 검사하고, `--allow-draft`로 만든 자료면 `--smoke` 외에는 중단한다.
   스모크 시험만 할 때는 `--allow-draft`로 seed 초안을 쓴다.
 - `--smoke`: optimizer step 2회, completion 마스크 검사(정답 JSON+`<|im_end|>`만 학습), 어댑터 저장, 생성 1회. `train/runs/lora-v1/smoke/run_meta.json`에서 `peak_vram_gib` 확인.
 - 설정은 `train/training_config.json`(NF4 + double quant, LoRA r8/α16/dropout 0.05, q_proj·v_proj, 배치 1×누적 16, lr 1e-4 cosine, warmup 5%, epoch 1, max_length 1280, gradient checkpointing). few-shot 포함 프롬프트가 실측 약 1,000토큰이라 max_length를 1280으로 둔다.
@@ -253,7 +254,9 @@ Q5_K_M 비교:
 - `start_model.ps1`이 manifest의 adapter를 보고 `--lora`를 붙인다. `/health/ready`가 어댑터 로딩을 확인한다.
 - 채택 판단은 **기준 Q4 vs Q4+LoRA를 dev·검증 분할로** 한다. 잠근 시험은 결정 후 한 번만.
 - 되돌리기: `.\.venv\Scripts\python.exe train\convert_adapter.py --remove` 후 재시작.
-- **본학습 전에** 작은 스모크 어댑터로 이 변환·로딩을 먼저 끝까지 확인한다(아래 검증 상태 참고).
+- 변환 전 어댑터 옆 `run_meta.json`의 학습 원본(repo·revision)이 manifest 본체와 다르면 중단한다.
+- **본학습 전에** 작은 스모크 어댑터로 이 변환·로딩을 먼저 끝까지 확인한다(아래 검증 상태 참고). 스모크·초안 어댑터 등록은 `--allow-smoke`를 붙여야 하며, 확인 후 `--remove`로 되돌린다.
+  `.\.venv\Scripts\python.exe train\convert_adapter.py --adapter train\runs\lora-v1\smoke\adapter --apply --allow-smoke`
 
 ## 9. 문제 해결
 
@@ -264,6 +267,8 @@ Q5_K_M 비교:
 | 시작 로그에 GPU offload 없음 | CUDA 빌드 설치 여부, 드라이버, `nvidia-smi` |
 | CUDA out of memory | 에뮬레이터 그래픽 설정, `-GpuLayers` 축소, ctx 유지(2048) |
 | 429 `busy`가 잦음 | 앱에서 같은 세션 중복 호출, 버튼 연타 방지 |
+| 취소·504 뒤 계속 429 | llama-server가 아직 계산 중이면 슬롯을 열지 않는다(`logs\ai.err.log`에 `still processing`). 계속되면 `stop_all.ps1` → `start_all.ps1` |
+| `already running` / `port ... in use` | 이전 서버가 남아 있음. `stop_all.ps1`, 그래도 남으면 `netstat -ano \| findstr :8000`(또는 8081)의 PID 종료 |
 | 502 `output_validation_failed` | `message`에 원인(예: `number_missing:30000`, `negation_mismatch`). dev 평가로 패턴 확인 → 프롬프트·용어집 수정 |
 | 504 | 첫 요청 지연(모델 준비 전) 또는 GPU 미사용 |
 | PowerShell에서 한글 깨짐 | 스크립트는 UTF-8 BOM으로 저장되어 있다. 편집기에서 BOM 유지 |
@@ -307,8 +312,9 @@ roadmate-ai/
 작성 PC(GPU 없음)에서 확인한 것과 실행 PC에서 처음 확인해야 할 것을 구분한다.
 
 **확인함**
-- `pytest` 235건 통과: API 계약·오류 코드·중복/충돌·epoch 취소(진행 중 취소·늦은 취소)·busy 429·timeout 504·검증 실패 502·교정 재시도·목적지 매칭·OpenAPI 일치, 검증기 최소쌍, 규칙 엔진 fixture 27단계, 평가 데이터 117개 정답이 검증기를 통과하고 누수 없음.
-- `start_all.ps1 -Mock` → `smoke.py` → `evaluate.py` → `stop_all.ps1` 실제 실행.
+- `pytest` 259건 통과: API 계약·오류 코드·중복/충돌·epoch 취소(진행 중 취소·늦은 취소·슬롯 대기 중 취소)·busy 429·timeout 504·모델 계산 중 슬롯 유지·검증 실패 502·교정 재시도·목적지 매칭·OpenAPI 일치, 검증기 최소쌍(연료 긍정·부정, 오전·오후, 통화 포함), 규칙 엔진 fixture 33단계(관측 공백·미래 시각 포함), 발화 큐 반복 제한, 평가 데이터 117개 정답이 검증기를 통과하고 누수 없음.
+- `start_all.ps1 -Mock` → `smoke.py` → `evaluate.py` → `stop_all.ps1` 실제 실행. 중복 시작·포트 점유 시 시작 거부 확인.
+- `train_qlora.py`의 데이터 manifest 검사는 작성 PC에 torch 환경이 없어 실행하지 못했다(`prepare_data.py`·`convert_adapter.py`의 검사는 실행 확인).
 - 실제 Qwen 토크나이저로 프롬프트 길이 측정(번역 약 980토큰, 목적지 약 480토큰).
 - 학습 파이프라인(transformers 5.22.1, trl 1.17.1, peft 0.21.2 실제 버전)을 CPU·초소형 Qwen3 구조로 끝까지 실행: 데이터 준비 → completion 마스크 검사 → 학습 2 step → 평가 → 어댑터 저장 → 생성 → `eval_hf.py`.
 - llama.cpp b12076 릴리스 자산 이름, `/slots`·`--lora`·`--cache-ram`·`--jinja` 옵션, `response_format` 파싱 방식을 소스·문서에서 확인.

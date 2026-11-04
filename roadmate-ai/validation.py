@@ -2,7 +2,7 @@
 import re
 from dataclasses import dataclass
 
-from prompting import match_concepts
+from prompting import concept_spans, match_concepts
 
 HANGUL = re.compile(r"[가-힣]")
 LATIN = re.compile(r"[A-Za-z]")
@@ -33,6 +33,8 @@ def looks_like_other_language(text: str, locale: str) -> bool:
 class Num:
     value: float
     kind: str  # n | time | phone
+    exact: bool = False  # time: 오전·오후(a.m./p.m.)나 24시간제로 확정된 값
+    unit: str | None = None  # 금액: KRW | USD
 
 
 EN_UNITS = {
@@ -61,7 +63,35 @@ NATIVE_RE = re.compile(
 )
 PHONE_RE = re.compile(r"(?<!\d)(?:\+?82[\s-]?)?0?\d{1,3}[\s-]\d{3,4}[\s-]\d{4}(?!\d)")
 CLOCK_RE = re.compile(r"(?<!\d)([01]?\d|2[0-4]):([0-5]\d)(?!\d)")
-DIGIT_RE = re.compile(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?![\d,])")
+DIGIT_RE = re.compile(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?!\d|,\d)")
+EN_TIME_TAIL = re.compile(r"\s*(?:(o'clock)|([ap])\.?\s?m\.?(?![A-Za-z]))", re.IGNORECASE)
+KO_MERIDIEM = re.compile(r"(오전|새벽|아침|오후|저녁)\s*$")
+CUR_EN = re.compile(r"\s?(?:k|thousand|million|mil)?\s?(won|krw|dollars?|usd|bucks)\b", re.IGNORECASE)
+CUR_KO = re.compile(r"\s?(원|달러|불)")
+
+
+def _time(h: int, pm: bool | None) -> Num:
+    # 검증: 오전·오후가 있거나 24시간제(0시, 13~24시)면 확정 값, 아니면 12시간 단위로만 비교
+    if pm is None:
+        return Num(float(h), "time", exact=h == 0 or 12 < h <= 24)
+    return Num(float(h % 12 + (12 if pm else 0)), "time", exact=True)
+
+
+def _ko_pm(before: str) -> bool | None:
+    m = KO_MERIDIEM.search(before)
+    return None if not m else m.group(1) in ("오후", "저녁")
+
+
+def _unit(before: str, after: str, locale: str) -> str | None:
+    # 검증: 금액은 통화까지 비교(30,000 won ≠ 3만 달러)
+    if re.search(r"\$\s?$", before):
+        return "USD"
+    if re.search(r"₩\s?$", before):
+        return "KRW"
+    m = (CUR_EN if locale == "en-US" else CUR_KO).match(after)
+    if not m:
+        return None
+    return "KRW" if m.group(1).lower() in ("won", "krw", "원") else "USD"
 
 
 def _parse_sino(s: str) -> int | None:
@@ -121,15 +151,19 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
     text = _mask(text, spans)
     spans = []
     for m in CLOCK_RE.finditer(text):
-        out.append(Num(float(m.group(1)), "time"))
+        end, pm = m.end(), _ko_pm(text[:m.start()]) if locale == "ko-KR" else None
+        t = EN_TIME_TAIL.match(text, end) if locale == "en-US" else None
+        if t and t.group(2):
+            end, pm = t.end(), t.group(2).lower() == "p"
+        out.append(_time(int(m.group(1)), pm))
         if int(m.group(2)):
             out.append(Num(float(m.group(2)), "n"))
-        spans.append(m.span())
+        spans.append((m.start(), end))
     text = _mask(text, spans)
 
     if locale == "en-US":
-        for m in re.finditer(r"(?<![\d.])(\d{1,2})\s*(?:a\.?m\.?|p\.?m\.?|o'clock)(?![A-Za-z])", text, re.IGNORECASE):
-            out.append(Num(float(m.group(1)), "time"))
+        for m in re.finditer(r"(?<![\d.])(\d{1,2})" + EN_TIME_TAIL.pattern, text, re.IGNORECASE):
+            out.append(_time(int(m.group(1)), None if m.group(2) else m.group(3).lower() == "p"))
             spans.append(m.span())
         text = _mask(text, spans)
         for m in DIGIT_RE.finditer(text):
@@ -141,27 +175,33 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
                 v *= 1_000_000
             elif re.match(r"\s?thousand\b", tail):
                 v *= 1000
-            out.append(Num(v, "n"))
+            out.append(Num(v, "n", unit=_unit(text[:m.start()], text[m.end():], locale)))
         for m in EN_ORD_RE.finditer(text):
             out.append(Num(float(EN_ORD[m.group(1).lower()]), "n"))
         for m in EN_WORD_RE.finditer(_mask(text, [mm.span() for mm in DIGIT_RE.finditer(text)])):
             words = m.group().strip(" -")
-            if re.fullmatch(r"(one|a|and)", words, re.IGNORECASE):
+            t = EN_TIME_TAIL.match(text, m.end())
+            if not t and re.fullmatch(r"(one|a|and)", words, re.IGNORECASE):
                 continue
             v = _parse_en_words(words)
-            if v is not None:
-                kind = "time" if re.match(r"\s*o'clock", text[m.end():], re.IGNORECASE) else "n"
-                out.append(Num(float(v), kind))
+            if v is None:
+                continue
+            if t and v <= 12:
+                out.append(_time(v, None if t.group(1) else t.group(2).lower() == "p"))
+            else:
+                out.append(Num(float(v), "n", unit=_unit(text[:m.start()], text[m.end():], locale)))
     else:
         for m in re.finditer(r"(\d{1,2})\s?시(?!간)(\s?반)?", text):
-            out.append(Num(float(m.group(1)), "time"))
+            out.append(_time(int(m.group(1)), _ko_pm(text[:m.start()])))
             if m.group(2):
                 out.append(Num(30.0, "n"))
             spans.append(m.span())
         for m in NATIVE_RE.finditer(text):
-            kind = "time" if m.group(2) == "시" else "n"
-            out.append(Num(float(NATIVE[m.group(1)]), kind))
-            if kind == "time" and re.match(r"\s?반", text[m.end():]):
+            if m.group(2) == "시":
+                out.append(_time(NATIVE[m.group(1)], _ko_pm(text[:m.start()])))
+            else:
+                out.append(Num(float(NATIVE[m.group(1)]), "n"))
+            if m.group(2) == "시" and re.match(r"\s?반", text[m.end():]):
                 out.append(Num(30.0, "n"))
             spans.append(m.span())
         text = _mask(text, spans)
@@ -169,7 +209,7 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
         tok = re.compile(r"(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s?(억|만|천|백)?")
         rank = {"억": 4, "만": 3, "천": 2, "백": 1, None: 0}
         mult = {"억": 1e8, "만": 1e4, "천": 1e3, "백": 1e2, None: 1}
-        pending, last_end, last_rank = None, -10, 99
+        pending, start, last_end, last_rank = None, 0, -10, 99
         for m in tok.finditer(text):
             v = float(m.group(1).replace(",", "")) * mult[m.group(2)]
             r = rank[m.group(2)]
@@ -177,11 +217,11 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
                 pending += v
             else:
                 if pending is not None:
-                    out.append(Num(pending, "n"))
-                pending = v
+                    out.append(Num(pending, "n", unit=_unit(text[:start], text[last_end:], locale)))
+                pending, start = v, m.start()
             last_end, last_rank = m.end(), r
         if pending is not None:
-            out.append(Num(pending, "n"))
+            out.append(Num(pending, "n", unit=_unit(text[:start], text[last_end:], locale)))
         text = _mask(text, [m.span() for m in tok.finditer(text)])
         sino = r"[일이삼사오육칠팔구십백천만억]{1,8}"
         for m in re.finditer(rf"(?<![가-힣])({sino}(?:\s{sino})*)(?=\s?" + KO_COUNTER + ")", text):
@@ -190,16 +230,20 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
                 continue
             v = _parse_sino(s)
             if v:
-                out.append(Num(float(v), "n"))
+                out.append(Num(float(v), "n", unit=_unit(text[:m.start()], text[m.end():], locale)))
     return [n for n in out if not (n.kind == "n" and n.value == 1)]
 
 
 def _num_match(a: Num, b: Num) -> bool:
     if a.kind == "phone" or b.kind == "phone":
         return a.kind == b.kind and a.value == b.value
+    if a.unit and b.unit and a.unit != b.unit:
+        return False
     if abs(a.value - b.value) < 1e-6:
         return True
     if "time" in (a.kind, b.kind) and a.value <= 24 and b.value <= 24:
+        if a.exact and b.exact:
+            return a.value % 24 == b.value % 24
         return a.value % 12 == b.value % 12
     return False
 
@@ -264,6 +308,41 @@ def check_critical_terms(src: str, src_locale: str, tgt: str, tgt_locale: str) -
     return [f"term_missing:{c}" for c in sorted(a - b)] + [f"term_added:{c}" for c in sorted(b - a)]
 
 
+_EN_FUEL_VERB = r"(?:put(?:\s+in)?|use|want|need|take|pump|add|give\s+me|fill\s+(?:it\s+)?(?:up\s+)?with)"
+FUEL_NEG_BEFORE = {
+    "en-US": re.compile(
+        r"(?:\b(?:not|no|never|instead\s+of|rather\s+than|other\s+than|except|without)|n't"
+        rf"|\b(?:not|cannot)\s+{_EN_FUEL_VERB}|n't\s+{_EN_FUEL_VERB})\s+(?:(?:any|the|a|an|in|it|some)\s+)*$", re.I),
+    "ko-KR": None,
+}
+FUEL_NEG_AFTER = {
+    "en-US": re.compile(r"^\s+(?:(?:is|was)\s+not|isn't|wasn't|is\s+(?:wrong|prohibited|forbidden)|not\s+allowed)\b", re.I),
+    "ko-KR": re.compile(r"^(?:차)?(?:은|는|이|가|을|를|으로|로|도|만)?\s*(?:말고|아니|대신|빼|금지|절대|안\s?(?:돼|되|됩|넣|쓰)"
+                        r"|(?:넣|주유하|주유|쓰|사용하|채우)(?:지\s?(?:마|말|않)|으?시?면\s?안))"),
+}
+CLAUSE = re.compile(r"[,.;!?]")
+
+
+def fuel_polarity(text: str, locale: str) -> dict[str, set[bool]]:
+    """연료 개념 id → {True(넣을 연료) / False(부정된 연료)}. "not diesel", "경유 말고"처럼 바로 붙은 부정만 본다."""
+    spans = [(s, e, cid) for s, e, cid, cat in concept_spans(text, locale) if cat == "fuel"]
+    out: dict[str, set[bool]] = {}
+    for i, (s, e, cid) in enumerate(spans):
+        before = CLAUSE.split(text[spans[i - 1][1] if i else 0:s])[-1]
+        after = CLAUSE.split(text[e:spans[i + 1][0] if i + 1 < len(spans) else len(text)])[0]
+        pre = FUEL_NEG_BEFORE[locale]
+        out.setdefault(cid, set()).add(not ((pre and pre.search(before)) or FUEL_NEG_AFTER[locale].search(after)))
+    return out
+
+
+def check_fuel_polarity(src: str, src_locale: str, tgt: str, tgt_locale: str) -> list[str]:
+    # 검증: "휘발유, 경유 말고"가 "경유, 휘발유 말고"로 뒤집힌 출력 차단(넣을 연료·부정 연료가 함께 나온 문장)
+    a, b = fuel_polarity(src, src_locale), fuel_polarity(tgt, tgt_locale)
+    if not any(len(set().union(*p.values())) == 2 for p in (a, b) if p):
+        return []
+    return [f"fuel_polarity_mismatch:{c}" for c in sorted(a.keys() & b.keys()) if a[c] != b[c]]
+
+
 LEAK_RE = re.compile(r"^\s*(translation|translated|here is|note|번역|통역|참고)\s*[:：]|\n", re.I)
 
 
@@ -303,6 +382,7 @@ def validate_translation(out: dict, source: str, src_locale: str, tgt_locale: st
     if max(a, b) == 2 and min(a, b) == 0:
         issues.append("negation_mismatch")
     issues += check_critical_terms(source, src_locale, tt, tgt_locale)
+    issues += check_fuel_polarity(source, src_locale, tt, tgt_locale)
     en, ko = (source, tt) if src_locale == "en-US" else (tt, source)
     issues += check_direction(en, ko)
     return issues

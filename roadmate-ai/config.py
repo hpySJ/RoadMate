@@ -1,9 +1,20 @@
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+
+
+def load_dotenv(path: Path = ROOT / ".env"):
+    # 백엔드 연동: 서버·smoke·평가가 같은 .env(AI_INTERNAL_TOKEN 등)를 읽는다. 이미 설정된 환경 변수가 우선
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        m = re.match(r"^\s*([A-Z_][A-Z0-9_]*)=(.*)$", line)
+        if m:
+            os.environ.setdefault(m.group(1), m.group(2).strip())
 
 
 def load_manifest(path: Path = ROOT / "models" / "manifest.json") -> dict:
@@ -26,6 +37,7 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        load_dotenv()
         m = load_manifest()
         env = os.environ.get
         return cls(

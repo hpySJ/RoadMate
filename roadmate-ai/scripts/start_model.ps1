@@ -19,8 +19,8 @@ $a = @(
 if ($m.adapter) { $a += @("--lora", (Join-Path $Root $m.adapter.file)) }
 
 if ($Background) {
-    Start-Bg "llama" $exe $a
-    Wait-Http "http://127.0.0.1:$($r.port)/health" 300
+    $p = Start-Bg "llama" $exe $a $r.port
+    Wait-Http "http://127.0.0.1:$($r.port)/health" 300 $p
 } else {
     & $exe @a
 }

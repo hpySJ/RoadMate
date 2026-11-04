@@ -46,11 +46,12 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
     async def lifespan(_app):
         c = client or (MockClient() if s.model_backend == "mock" else LlamaClient(s.model_base_url, s.model_id))
         st.update(client=c, engine=Engine(c, s), registry=TurnRegistry(s.dedupe_ttl_s), slot=ModelSlot(),
-                  self_check=None)
+                  self_check=None, settle=None)
         log.info("ai server up: backend=%s bundle=%s", s.model_backend, s.engine_bundle)
         yield
-        for f in list(st["registry"].inflight.values()):
-            f.task.cancel()
+        for t in [f.task for f in st["registry"].inflight.values()] + [st["settle"]]:
+            if t:
+                t.cancel()
         await c.aclose()
 
     app = FastAPI(title="RoadMate Korea AI", version=API_VERSION, lifespan=lifespan,
@@ -71,20 +72,36 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
         if s.internal_token and not hmac.compare_digest(x_internal_token or "", s.internal_token):
             raise ApiError(401, "unauthorized")
 
-    async def _guarded(kind: str, req, ctx: dict):
-        ctx["entered"] = True
-        engine, client_ = st["engine"], st["client"]
+    async def _settle_slot():
+        # QWEN 구현: 취소·timeout 뒤 llama-server 계산이 실제로 끝났을 때만 슬롯을 연다(그 전까지 429 busy)
+        async def settle():
+            try:
+                while not await st["client"].wait_idle(s.cancel_settle_s):
+                    log.warning("llama-server still processing after cancel/timeout; slot stays busy")
+                    await asyncio.sleep(0.5)  # wait_idle이 즉시 False여도 이벤트 루프를 막지 않게
+            finally:
+                st["slot"].release()
+
+        st["settle"] = asyncio.create_task(settle())
+        await asyncio.wait({st["settle"]}, timeout=s.cancel_settle_s)
+
+    async def _guarded(kind: str, req, timeout_s: float, wait_s: float):
+        # 파라미터 튜닝: 대기열 없이 busy_wait_s만 기다림. 대기 중 취소되면 모델을 호출하지 않는다
+        if not await st["slot"].try_acquire(wait_s):
+            raise ApiError(429, "busy", "model is serving another turn", req.request_id, {"Retry-After": "1"})
+        engine = st["engine"]
+        fn = engine.translate if kind == "translate" else engine.parse_destination
         t0 = time.monotonic()
         try:
-            fn = engine.translate if kind == "translate" else engine.parse_destination
-            out = await fn(req, t0 + s.model_timeout_s)
-            return out, int((time.monotonic() - t0) * 1000)
+            out = await fn(req, t0 + timeout_s)
         except (asyncio.CancelledError, ModelTimeout):
-            # QWEN 구현: 취소·timeout 뒤 llama-server 계산이 끝난 것을 확인하고 슬롯을 연다
-            await client_.wait_idle(s.cancel_settle_s)
+            await _settle_slot()
             raise
-        finally:
+        except BaseException:
             st["slot"].release()
+            raise
+        st["slot"].release()
+        return out, int((time.monotonic() - t0) * 1000)
 
     async def _wait(request: Request, entry):
         while True:
@@ -98,6 +115,8 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
         if entry.task.cancelled():
             raise ApiError(409, "epoch_cancelled")
         exc = entry.task.exception()
+        if isinstance(exc, ApiError):
+            raise exc
         if isinstance(exc, ModelError):
             raise ApiError(exc.status, exc.code, str(exc)[:500])
         if exc is not None:
@@ -121,16 +140,11 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
         if state == "done":
             return obj
         if state == "new":
-            # 파라미터 튜닝: 대기열 없이 busy_wait_s만 기다림
-            if not await st["slot"].try_acquire(s.busy_wait_s):
-                raise ApiError(429, "busy", "model is serving another turn", rid, {"Retry-After": "1"})
-            ctx: dict = {}
-            task = asyncio.create_task(_guarded(kind, req, ctx))
+            # 검증: 슬롯 대기 전에 등록(조회~등록 사이 await 없음) → 대기 중 같은 ID는 합류·충돌 409, 취소는 대기 작업을 취소
+            task = asyncio.create_task(_guarded(kind, req, s.model_timeout_s, s.busy_wait_s))
             entry = reg.start(rid, req.session_id, req.session_epoch, phash, task)
 
             def _done(t: asyncio.Task):
-                if not ctx.get("entered"):
-                    st["slot"].release()  # 시작 전에 취소된 작업
                 ok = not t.cancelled() and t.exception() is None
                 reg.finish(rid, build(req, *t.result()) if ok else None)
 
@@ -204,19 +218,17 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
         # 검증: 준비 확인용 짧은 번역 1회(성공 결과만 캐시)
         if st["self_check"] == "ok":
             return "ok"
-        if not await st["slot"].try_acquire(0):
-            return "skipped_busy"
+        req = TranslateRequest(request_id="selfcheck", session_id="selfcheck", session_epoch=0, turn_id=0,
+                               source_locale="en-US", target_locale="ko-KR", scenario="general",
+                               text="Hello, thank you.", engine_bundle=s.engine_bundle)
         try:
-            req = TranslateRequest(request_id="selfcheck", session_id="selfcheck", session_epoch=0, turn_id=0,
-                                   source_locale="en-US", target_locale="ko-KR", scenario="general",
-                                   text="Hello, thank you.", engine_bundle=s.engine_bundle)
-            out = await st["engine"].translate(req, time.monotonic() + max(s.model_timeout_s, 20))
+            out, _ = await _guarded("translate", req, max(s.model_timeout_s, 20), 0)
             ok = out["status"] == "ok" and (st["client"].is_mock or bool(HANGUL.search(out["translated_text"])))
             st["self_check"] = "ok" if ok else "bad_output"
+        except ApiError:
+            return "skipped_busy"
         except ModelError as e:
             st["self_check"] = e.code
-        finally:
-            st["slot"].release()
         return st["self_check"]
 
     # 백엔드 연동: 백엔드·개발 도구의 준비 확인

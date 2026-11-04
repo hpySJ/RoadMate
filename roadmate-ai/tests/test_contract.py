@@ -13,7 +13,8 @@ from inference import MockClient, ModelBadOutput
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = Settings.from_env()
-SETTINGS = dataclasses.replace(BASE, model_backend="mock", model_timeout_s=2.0, busy_wait_s=0.05, cancel_settle_s=0.1)
+SETTINGS = dataclasses.replace(BASE, model_backend="mock", model_timeout_s=2.0, busy_wait_s=0.05, cancel_settle_s=0.1,
+                               dedupe_ttl_s=30, max_text_chars=400, internal_token="")  # 개발 PC의 .env와 무관하게
 
 
 class FakeLlama(MockClient):
@@ -151,6 +152,48 @@ def test_busy_429_and_inflight_cancel():
                 assert again.status_code == 200
 
     asyncio.run(run())
+
+
+def test_slot_waiters_dedupe_conflict_and_cancel():
+    # 검증: 슬롯을 기다리는 동안 같은 ID는 합류, 다른 내용은 409, 취소된 대기 요청은 모델을 호출하지 않음
+    async def run():
+        m = MockClient(delay_s=0.3)
+        app = create_app(dataclasses.replace(SETTINGS, busy_wait_s=2.0), m)
+        async with app.router.lifespan_context(app):
+            async with await _async_client(app) as c:
+                post = lambda **kw: asyncio.create_task(c.post("/internal/v1/translate", json=body(**kw)))
+                first = post(request_id="x", session_id="sx")
+                await asyncio.sleep(0.05)
+                a1, a2 = post(request_id="r"), post(request_id="r")
+                await asyncio.sleep(0.05)
+                q = post(request_id="q", session_id="sq", text="Hello there.")
+                await asyncio.sleep(0.05)
+                conflict = await c.post("/internal/v1/translate", json=body(request_id="q", session_id="sq", text="Bye."))
+                w = post(request_id="w", session_id="sw")
+                await asyncio.sleep(0.05)
+                await c.post("/internal/v1/cancel", json={"session_id": "sw", "session_epoch": 1})
+                rs = await asyncio.gather(first, a1, a2, q, w)
+        assert conflict.status_code == 409 and conflict.json()["error_code"] == "request_id_conflict"
+        assert [r.status_code for r in rs] == [200, 200, 200, 200, 409]
+        assert m.calls == 3  # x, r(1회), q
+
+    asyncio.run(run())
+
+
+class StuckModel(MockClient):
+    """timeout 뒤에도 llama-server가 계산 중인 상태."""
+
+    async def wait_idle(self, max_s):
+        return False
+
+
+def test_slot_stays_busy_until_model_idle():
+    s = dataclasses.replace(SETTINGS, model_timeout_s=0.2, busy_wait_s=0)
+    m = StuckModel(delay_s=5.0)
+    with TestClient(create_app(s, m)) as c:
+        assert c.post("/internal/v1/translate", json=body()).status_code == 504
+        r = c.post("/internal/v1/translate", json=body(request_id="r2"))
+        assert r.status_code == 429 and m.calls == 1
 
 
 def test_destination_match_and_not_found():

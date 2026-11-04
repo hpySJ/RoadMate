@@ -5,6 +5,7 @@
 에뮬레이터·llama-server를 끄고 실행한다(같은 GPU 동시 사용 금지).
 """
 import argparse
+import hashlib
 import json
 import platform
 import sys
@@ -86,6 +87,17 @@ def main():
         raise SystemExit("trainable parameter check failed")
     print(f"trainable={trainable:,} total={total:,} ({trainable / total:.4%}) dtype={dtype} 4bit={use_4bit}")
 
+    # 검증: 본학습은 검수(approved) 자료만, prepare_data.py 이후 바뀐 파일이 없는지 manifest 해시로 확인
+    dm_path = data_dir / "dataset_manifest.json"
+    if not dm_path.exists():
+        raise SystemExit(f"{dm_path} missing: run train/prepare_data.py first")
+    dm = json.loads(dm_path.read_text(encoding="utf-8"))
+    if dm["allow_draft"] and not a.smoke:
+        raise SystemExit("dataset was prepared with --allow-draft (smoke only). Re-run prepare_data.py without it.")
+    for name, digest in dm["outputs"].items():
+        if hashlib.sha256((data_dir / name).read_bytes()).hexdigest() != digest:
+            raise SystemExit(f"{name} changed after prepare_data.py: re-run it")
+
     files = {"train": str(data_dir / "train.jsonl"), "validation": str(data_dir / "validation.jsonl")}
     ds = load_dataset("json", data_files=files).select_columns(["prompt", "completion"])
 
@@ -144,7 +156,7 @@ def main():
     sample = tok.decode(gen[0, enc["input_ids"].shape[1]:], skip_special_tokens=True)
 
     meta = {
-        "config": cfg, "smoke": a.smoke, "use_4bit": use_4bit, "dtype": str(dtype),
+        "config": cfg, "smoke": a.smoke, "dataset": dm, "use_4bit": use_4bit, "dtype": str(dtype),
         "trainable_params": trainable, "total_params": total, "mask": mask,
         "train_seconds": round(secs, 1), "global_steps": result.global_step, "train_loss": result.training_loss,
         "peak_vram_gib": round(torch.cuda.max_memory_allocated() / 2**30, 2) if cuda else None,

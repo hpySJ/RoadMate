@@ -9,6 +9,10 @@ from pathlib import Path
 import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from config import load_dotenv  # noqa: E402
+
+load_dotenv()
 M = json.loads((ROOT / "models" / "manifest.json").read_text(encoding="utf-8"))
 AI = os.environ.get("AI_URL", "http://127.0.0.1:8000")
 HEADERS = {"X-Internal-Token": os.environ["AI_INTERNAL_TOKEN"]} if os.environ.get("AI_INTERNAL_TOKEN") else {}

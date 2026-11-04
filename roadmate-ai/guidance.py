@@ -24,13 +24,17 @@ class Utterance:
     created_ms: int
     ttl_ms: int
     zone_id: str | None = None
+    day_key: str = ""
 
 
 def _fresh(sig: dict | None, now: int, max_age: int | None):
-    """status=valid이고 값이 있고 max_age 안에 관측된 신호만 사용한다."""
+    """status=valid이고 값이 있고 max_age 안에 관측된 신호만 사용한다. now보다 미래 시각(시계 불일치)은 버린다."""
     if not sig or sig.get("status") != "valid" or sig.get("value", sig.get("state")) is None:
         return None
-    if max_age is not None and now - int(sig.get("ts_ms", -10**12)) > max_age:
+    ts = sig.get("ts_ms")
+    if ts is not None and int(ts) > now:
+        return None
+    if max_age is not None and (ts is None or now - int(ts) > max_age):
         return None
     return sig
 
@@ -102,6 +106,13 @@ class GuidanceEngine:
             raise ValueError(f"slot not allowed in {rule['rule_id']}")
         return rule["templates"][self.locale].format(**{k: int(v) for k, v in slots.items()})
 
+    def _blocked(self, rule: dict, day_key: str, now: int, zone_id: str | None) -> bool:
+        # 검증: 일일 횟수·재생 간격·구역당 1회. 생성 시와 큐에서 꺼낼 때 모두 검사
+        rid = rule["rule_id"]
+        return (self.played.get((day_key, rid), 0) >= rule["daily_explanation_limit"]
+                or now - self.last_played.get(rid, -10**12) < rule["cooldown_seconds"] * 1000
+                or bool(zone_id and rid.startswith("school_zone_approach") and (rid, zone_id) in self.announced_zones))
+
     # ------------------------------------------------------------ 평가
     def evaluate(self, snap: dict, day_key: str) -> list[Utterance]:
         # 프론트 연동: 차량·내비 값이 바뀔 때마다 호출 → SpeechQueue.push
@@ -118,17 +129,14 @@ class GuidanceEngine:
                 since = self.over_since.setdefault(rid, now)
                 if now - since < sustain:
                     continue
-            if self.played.get((day_key, rid), 0) >= rule["daily_explanation_limit"]:
+            if self._blocked(rule, day_key, now, zone_id):
                 continue
-            if now - self.last_played.get(rid, -10**12) < rule["cooldown_seconds"] * 1000:
-                continue
-            if zone_id and rid.startswith("school_zone_approach") and (rid, zone_id) in self.announced_zones:
-                continue
-            out.append(Utterance(rid, rule["priority"], self._render(rule, slots), slots, now, rule["ttl_ms"], zone_id))
+            out.append(Utterance(rid, rule["priority"], self._render(rule, slots), slots, now, rule["ttl_ms"], zone_id,
+                                 day_key))
         return out
 
     def revalidate(self, utt: Utterance, snap: dict) -> Utterance | None:
-        # 프론트 연동: TTS 재생 직전에 조건을 다시 확인, 지난 구역 안내는 폐기
+        # 프론트 연동: TTS 재생 직전에 조건·횟수·간격을 다시 확인(재생 중 들어온 같은 안내 폐기), 지난 구역 안내는 폐기
         if snap["now_ms"] > utt.created_ms + utt.ttl_ms:
             return None
         rule = next(r for r in self.rules if r["rule_id"] == utt.rule_id)
@@ -136,7 +144,10 @@ class GuidanceEngine:
         if hit is None:
             return None
         slots, zone_id = hit
-        return Utterance(utt.rule_id, utt.priority, self._render(rule, slots), slots, utt.created_ms, utt.ttl_ms, zone_id)
+        if self._blocked(rule, utt.day_key, snap["now_ms"], zone_id):
+            return None
+        return Utterance(utt.rule_id, utt.priority, self._render(rule, slots), slots, utt.created_ms, utt.ttl_ms, zone_id,
+                         utt.day_key)
 
     def mark_played(self, utt: Utterance, day_key: str, now_ms: int):
         # 프론트 연동: TTS 재생 완료 콜백에서만 호출(대기 후 취소된 안내는 세지 않음)
@@ -181,18 +192,22 @@ class StopLock:
     """정차 잠금: P 확인 + 유효 속도 |v| ≤ max가 sustain_ms 이상. 미지원·오류면 잠금 유지."""
 
     def __init__(self, pack: dict):
-        self.cfg, self.fresh, self.since = pack["stop_lock"], pack["freshness_ms"], None
+        self.cfg, self.fresh, self.since, self.last_ms = pack["stop_lock"], pack["freshness_ms"], None, None
 
     def update(self, snap: dict) -> bool:
-        # 프론트 연동: 통역 버튼 활성화, STT 시작·전송·TTS 직전에 호출
+        # 프론트 연동: 기어·속도 값이 들어올 때마다 호출하고, 통역 버튼 활성화·STT 시작·전송·TTS 직전에도 호출
         now = snap["now_ms"]
         gear = _fresh(snap.get("gear"), now, None)
         speed = _fresh(snap.get("speed"), now, self.fresh["speed"])
         stopped = bool(gear and gear["value"] == "P" and speed and abs(float(speed["value"])) <= self.cfg["max_speed_mps"])
+        # 검증: 관측 공백(속도 신선도 초과)이나 시각 역행이 있으면 정차 유지 시간을 처음부터 다시 잰다
+        gap = self.last_ms is None or not 0 <= now - self.last_ms <= self.fresh["speed"]
+        self.last_ms = now
         if not stopped:
             self.since = None
             return False
-        self.since = self.since if self.since is not None else now
+        if self.since is None or gap:
+            self.since = now
         return now - self.since >= self.cfg["sustain_ms"]
 
 

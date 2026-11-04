@@ -20,6 +20,14 @@ def v(src, sl, tgt, tl):
     ("That is right.", "en-US", "맞아요.", "ko-KR"),
     ("여기로 오지 마세요.", "ko-KR", "Please don't come here.", "en-US"),
     ("Fill it up with gas.", "en-US", "기름 가득 넣어 주세요.", "ko-KR"),
+    ("Stop at the petrol station.", "en-US", "주유소에서 멈춰 주세요.", "ko-KR"),
+    ("Gasoline, not diesel, please.", "en-US", "경유 말고 휘발유로 넣어 주세요.", "ko-KR"),
+    ("Don't put gasoline, put diesel.", "en-US", "휘발유 말고 경유 넣어 주세요.", "ko-KR"),
+    ("휘발유 차예요. 경유는 넣지 마세요.", "ko-KR", "It's a gasoline car. Please don't put diesel in it.", "en-US"),
+    ("I don't know if it's diesel or gasoline.", "en-US", "경유인지 휘발유인지 모르겠어요.", "ko-KR"),
+    ("Return it at 3 p.m.", "en-US", "3시에 반납하세요.", "ko-KR"),
+    ("Can I park here until 8 p.m.?", "en-US", "저녁 8시까지 여기 주차해도 되나요?", "ko-KR"),
+    ("Meet me at one o'clock.", "en-US", "1시에 만나요.", "ko-KR"),
 ])
 def test_valid_pairs(src, sl, tgt, tl):
     assert v(src, sl, tgt, tl) == []
@@ -37,6 +45,12 @@ def test_valid_pairs(src, sl, tgt, tl):
     ("Hello.", "en-US", "Hello.", "ko-KR", "wrong_language"),
     ("Hello.", "en-US", "Translation: 안녕하세요.", "ko-KR", "extra_text"),
     ("Hello.", "en-US", "你好 안녕하세요.", "ko-KR", "foreign_script"),
+    ("Gasoline, not diesel, please.", "en-US", "휘발유 말고 경유를 넣어 주세요.", "ko-KR", "fuel_polarity_mismatch:fuel_diesel"),
+    ("경유 말고 휘발유 넣어 주세요.", "ko-KR", "Diesel, not gasoline, please.", "en-US", "fuel_polarity_mismatch:fuel_gasoline"),
+    ("Return it at 3 p.m.", "en-US", "오전 3시에 반납하세요.", "ko-KR", "number_missing:15"),
+    ("내일 오전 10시까지 반납해 주세요.", "ko-KR", "Please return it by 10 p.m. tomorrow.", "en-US", "number_missing:10"),
+    ("It costs 30,000 won.", "en-US", "3만 달러입니다.", "ko-KR", "number_missing:30000"),
+    ("$20, please.", "en-US", "2만 원 주세요.", "ko-KR", "number_missing:20"),
 ])
 def test_invalid_pairs(src, sl, tgt, tl, issue):
     assert issue in v(src, sl, tgt, tl)
@@ -54,7 +68,8 @@ def test_clarification_rules():
     ("3만 5천 원이요", "ko-KR", [35000]),
     ("만 원만 넣어 주세요.", "ko-KR", [10000]),
     ("이 사람이 운전했어요.", "ko-KR", []),
-    ("오후 두 시 반에 만나요.", "ko-KR", [2, 30]),
+    ("오후 두 시 반에 만나요.", "ko-KR", [14, 30]),
+    ("$20, please.", "en-US", [20]),
     ("thirty-five thousand won", "en-US", [35000]),
     ("50k won", "en-US", [50000]),
     ("twenty one people", "en-US", [21]),

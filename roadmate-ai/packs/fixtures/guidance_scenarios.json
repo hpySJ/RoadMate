@@ -106,6 +106,18 @@
         {"snapshot": {"now_ms": 1400, "gear": {"value": "P", "status": "valid", "ts_ms": 1400}, "speed": {"value": 0.0, "unit": "m/s", "status": "error", "ts_ms": 1400}}, "expect_spoken": null, "expect_unlocked": false},
         {"snapshot": {"now_ms": 5000, "gear": {"value": "P", "status": "unavailable", "ts_ms": 5000}, "speed": {"value": 0.0, "unit": "m/s", "status": "valid", "ts_ms": 5000}}, "expect_spoken": null, "expect_unlocked": false}
       ]
+    },
+    {
+      "id": "stop_lock_gap_and_future_ts",
+      "locale": "en-US",
+      "steps": [
+        {"snapshot": {"now_ms": 0, "gear": {"value": "P", "status": "valid", "ts_ms": 0}, "speed": {"value": 0.0, "unit": "m/s", "status": "valid", "ts_ms": 0}}, "expect_spoken": null, "expect_unlocked": false},
+        {"snapshot": {"now_ms": 5000, "gear": {"value": "P", "status": "valid", "ts_ms": 0}, "speed": {"value": 0.0, "unit": "m/s", "status": "valid", "ts_ms": 5000}}, "expect_spoken": null, "expect_unlocked": false},
+        {"snapshot": {"now_ms": 6000, "gear": {"value": "P", "status": "valid", "ts_ms": 0}, "speed": {"value": 0.0, "unit": "m/s", "status": "valid", "ts_ms": 6000}}, "expect_spoken": null, "expect_unlocked": true},
+        {"snapshot": {"now_ms": 6500, "gear": {"value": "P", "status": "valid", "ts_ms": 0}, "speed": {"value": 0.0, "unit": "m/s", "status": "valid", "ts_ms": 9000}}, "expect_spoken": null, "expect_unlocked": false},
+        {"snapshot": {"now_ms": 7000, "gear": {"value": "P", "status": "valid", "ts_ms": 0}, "speed": {"value": 0.0, "unit": "m/s", "status": "valid", "ts_ms": 7000}}, "expect_spoken": null, "expect_unlocked": false},
+        {"snapshot": {"now_ms": 8000, "gear": {"value": "P", "status": "valid", "ts_ms": 0}, "speed": {"value": 0.0, "unit": "m/s", "status": "valid", "ts_ms": 8000}}, "expect_spoken": null, "expect_unlocked": true}
+      ]
     }
   ]
 }

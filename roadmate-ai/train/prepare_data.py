@@ -7,7 +7,6 @@ import argparse
 import glob
 import hashlib
 import json
-import random
 import sys
 from pathlib import Path
 
@@ -54,13 +53,10 @@ def check(rec: dict) -> list[str]:
 
 
 def split_groups(groups: list[str], seed: int) -> dict[str, str]:
-    # 학습: group_id 단위 분할(같은 원문·역번역·변형은 같은 분할)
-    g = sorted(groups)
-    random.Random(seed).shuffle(g)
-    n = len(g)
-    n_val = max(1, round(n * 0.1)) if n >= 3 else 0
-    n_test = max(1, round(n * 0.1)) if n >= 3 else 0
-    return {x: ("validation" if i < n_val else "test" if i < n_val + n_test else "train") for i, x in enumerate(g)}
+    # 학습: group_id 해시로 80/10/10 분할 → 자료를 추가해도 기존 그룹의 분할이 바뀌지 않는다(같은 원문·변형은 같은 분할)
+    def bucket(g: str) -> int:
+        return int(hashlib.sha256(f"{seed}:{g}".encode()).hexdigest(), 16) % 100
+    return {g: "validation" if bucket(g) < 10 else "test" if bucket(g) < 20 else "train" for g in groups}
 
 
 def main():
@@ -109,6 +105,8 @@ def main():
             sys.exit(f"{len(too_long)} rows exceed max_length (정답 잘림 방지): {too_long[:10]}")
 
     assign = split_groups(list({r["meta"]["group_id"] for r in rows}), a.seed)
+    if "validation" not in assign.values():
+        sys.exit(f"validation split is empty ({len(assign)} groups): add more groups or change --seed")
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     counts = {}

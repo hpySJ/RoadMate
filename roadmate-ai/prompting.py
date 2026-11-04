@@ -48,22 +48,24 @@ def _find_terms(text: str, terms: list[str], lang: str) -> list[tuple[int, int, 
     return hits
 
 
-def match_concepts(text: str, locale: str, categories: set | None = None) -> dict[str, str]:
-    """용어집 개념 id → 실제로 찾은 표현. 긴 표현이 먼저 자리를 차지한다(gas station > gas)."""
+def concept_spans(text: str, locale: str) -> list[tuple[int, int, str, str]]:
+    """(시작, 끝, 개념 id, category) 위치순. 전체 용어에서 긴 표현이 먼저 자리를 차지한다(petrol station > petrol)."""
     lang = LANG_KEY[locale]
-    cands = []
-    for e in glossary()["entries"]:
-        if categories and e["category"] not in categories:
-            continue
-        for s, end, t in _find_terms(text, e[lang], lang):
-            cands.append((-(end - s), s, end, e["id"], text[s:end]))
-    taken: list[tuple[int, int]] = []
+    cands = sorted((-(end - s), s, end, e["id"], e["category"])
+                   for e in glossary()["entries"] for s, end, _ in _find_terms(text, e[lang], lang))
+    taken: list[tuple[int, int, str, str]] = []
+    for _, s, end, cid, cat in cands:
+        if not any(s < te and ts < end for ts, te, _, _ in taken):
+            taken.append((s, end, cid, cat))
+    return sorted(taken)
+
+
+def match_concepts(text: str, locale: str, categories: set | None = None) -> dict[str, str]:
+    """용어집 개념 id → 실제로 찾은 표현. 카테고리는 긴 표현 매칭이 끝난 뒤 거른다."""
     found: dict[str, str] = {}
-    for _, s, end, cid, surface in sorted(cands):
-        if any(s < te and ts < end for ts, te in taken):
-            continue
-        taken.append((s, end))
-        found.setdefault(cid, surface)
+    for s, end, cid, cat in concept_spans(text, locale):
+        if not categories or cat in categories:
+            found.setdefault(cid, text[s:end])
     return found
 
 
