@@ -1,0 +1,32 @@
+{
+  "version": "rental-ko-en-v1",
+  "review": {"status": "draft", "reviewer": null, "checked_at": "2026-11-04"},
+  "entries": [
+    {"id": "fuel_gasoline", "category": "fuel", "critical": true, "en": ["gasoline", "petrol", "unleaded"], "ko": ["휘발유"]},
+    {"id": "fuel_premium", "category": "fuel", "critical": true, "en": ["premium gasoline", "premium petrol", "premium unleaded"], "ko": ["고급 휘발유", "고급휘발유"]},
+    {"id": "fuel_diesel", "category": "fuel", "critical": true, "en": ["diesel"], "ko": ["경유", "디젤"]},
+    {"id": "fuel_lpg", "category": "fuel", "critical": true, "en": ["LPG", "autogas"], "ko": ["LPG", "엘피지"]},
+    {"id": "fuel_ev", "category": "fuel", "critical": true, "en": ["EV charging", "EV charger", "charging station"], "ko": ["전기차 충전", "충전소"]},
+    {"id": "gas_station", "category": "place", "critical": false, "en": ["gas station", "petrol station", "filling station"], "ko": ["주유소"]},
+    {"id": "full_tank", "category": "amount", "critical": false, "en": ["fill it up", "full tank", "fill up"], "ko": ["가득"]},
+    {"id": "receipt", "category": "document", "critical": false, "en": ["receipt"], "ko": ["영수증"]},
+    {"id": "rental_agreement", "category": "document", "critical": false, "en": ["rental agreement", "rental contract"], "ko": ["대여계약서", "렌터카 계약서"]},
+    {"id": "idp", "category": "document", "critical": false, "en": ["international driving permit", "international driver's license", "IDP"], "ko": ["국제운전면허증"]},
+    {"id": "insurance_full", "category": "insurance", "critical": false, "en": ["full coverage", "full insurance"], "ko": ["완전자차"]},
+    {"id": "insurance_cdw", "category": "insurance", "critical": false, "en": ["collision damage waiver", "CDW"], "ko": ["자차보험"]},
+    {"id": "deductible", "category": "insurance", "critical": false, "en": ["deductible", "excess"], "ko": ["면책금", "자기부담금"]},
+    {"id": "hipass", "category": "toll", "critical": false, "en": ["Hi-Pass", "Hipass"], "ko": ["하이패스"]},
+    {"id": "tollgate", "category": "toll", "critical": false, "en": ["tollgate", "toll booth", "toll plaza"], "ko": ["요금소", "톨게이트"]},
+    {"id": "tow_truck", "category": "accident", "critical": false, "en": ["tow truck"], "ko": ["견인차"]},
+    {"id": "dashcam", "category": "accident", "critical": false, "en": ["dashcam", "dash cam", "black box"], "ko": ["블랙박스"]},
+    {"id": "license_plate", "category": "vehicle", "critical": false, "en": ["license plate", "plate number"], "ko": ["차량 번호", "번호판"]},
+    {"id": "spare_key", "category": "vehicle", "critical": false, "en": ["spare key"], "ko": ["보조키"]},
+    {"id": "flat_tire", "category": "vehicle", "critical": false, "en": ["flat tire", "flat tyre"], "ko": ["펑크"]},
+    {"id": "warning_light", "category": "vehicle", "critical": false, "en": ["warning light"], "ko": ["경고등"]},
+    {"id": "school_zone", "category": "road", "critical": false, "en": ["school zone"], "ko": ["어린이보호구역", "스쿨존"]},
+    {"id": "bus_lane", "category": "road", "critical": false, "en": ["bus lane", "bus-only lane"], "ko": ["버스전용차로"]},
+    {"id": "parking_fee", "category": "parking", "critical": false, "en": ["parking fee"], "ko": ["주차비", "주차 요금"]},
+    {"id": "return_car", "category": "rental", "critical": false, "en": ["return the car", "drop off the car"], "ko": ["차량 반납", "반납"]},
+    {"id": "shuttle", "category": "rental", "critical": false, "en": ["shuttle bus"], "ko": ["셔틀버스"]}
+  ]
+}

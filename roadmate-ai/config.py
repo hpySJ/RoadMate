@@ -1,0 +1,46 @@
+import json
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+
+
+def load_manifest(path: Path = ROOT / "models" / "manifest.json") -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@dataclass(frozen=True)
+class Settings:
+    model_backend: str  # llama | mock
+    model_base_url: str
+    model_id: str
+    engine_bundle: str
+    model_timeout_s: float
+    busy_wait_s: float
+    cancel_settle_s: float
+    dedupe_ttl_s: float
+    max_text_chars: int
+    internal_token: str
+    manifest: dict
+
+    @classmethod
+    def from_env(cls) -> "Settings":
+        m = load_manifest()
+        env = os.environ.get
+        return cls(
+            model_backend=env("MODEL_BACKEND", "llama"),
+            # 백엔드 연동: AI 서버 → 로컬 llama-server
+            model_base_url=env("MODEL_BASE_URL", f"http://127.0.0.1:{m['runtime']['port']}/v1"),
+            model_id=env("MODEL_ID", m["model"]["alias"]),
+            engine_bundle=m["engine_bundle"],
+            # 파라미터 튜닝: 모델 8초 < 백엔드 10초 < 앱 12초
+            model_timeout_s=float(env("MODEL_TIMEOUT_S", "8")),
+            busy_wait_s=float(env("BUSY_WAIT_S", "0.3")),
+            cancel_settle_s=float(env("CANCEL_SETTLE_S", "3")),
+            dedupe_ttl_s=float(env("DEDUPE_TTL_S", "30")),
+            max_text_chars=int(env("MAX_TEXT_CHARS", "400")),
+            # 백엔드 연동: 백엔드와 공유하는 내부 토큰(비어 있으면 검사 안 함)
+            internal_token=env("AI_INTERNAL_TOKEN", ""),
+            manifest=m,
+        )
