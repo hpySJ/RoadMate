@@ -526,7 +526,7 @@ roadmate-ai/
   .gitignore
 ```
 
-2026년 11월 4일 실제 구현은 `roadmate-ai/`에 있으며 파일 구조·사용법은 `roadmate-ai/README.md`를 기준으로 한다(위 트리는 초기 설계). 실제 GGUF·음성 원본·캐시·비밀값은 Git에 무심코 넣지 않는다. 모델의 내려받을 위치·revision·SHA256·라이선스를 manifest에 기록한다.
+2026년 11월 4일 실제 구현은 `roadmate-ai/`에 있으며 파일 구조는 `roadmate-ai/README.md`, 사용법은 `roadmate-ai/docs/guide.md`를 기준으로 한다(위 트리는 초기 설계). 실제 GGUF·음성 원본·캐시·비밀값은 Git에 무심코 넣지 않는다. 모델의 내려받을 위치·revision·SHA256·라이선스를 manifest에 기록한다.
 
 ### 10.2 개발 순서
 
