@@ -7,6 +7,7 @@
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -66,9 +67,10 @@ def main():
     base_dir = Path(snapshot_download(
         m["model"]["base_repo"], revision=m["model"]["base_revision"], local_dir=ROOT / "train" / "base-config",
         allow_patterns=["config.json", "generation_config.json", "tokenizer*", "vocab.json", "merges.txt"]))
-    conv_py = ROOT / ".venv-convert" / "Scripts" / "python.exe"
+    conv_py = ROOT / ".venv-convert" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     script = ROOT / "tools" / "llama-src" / "convert_lora_to_gguf.py"
-    for p, hint in ((conv_py, "scripts\\setup_convert_env.ps1"), (script, "scripts\\setup_llama.ps1")):
+    for p, hint in ((conv_py, "scripts\\setup_convert_env.ps1 (Linux: bash scripts/run.sh setup-convert)"),
+                    (script, "scripts\\setup_llama.ps1 (Linux: bash scripts/run.sh setup)")):
         if not p.exists():
             sys.exit(f"{p} missing: run {hint}")
     out.parent.mkdir(parents=True, exist_ok=True)

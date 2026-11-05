@@ -1,6 +1,48 @@
 # roadmate-ai 사용 안내
 
-설치, 서버 실행, 백엔드·앱 연동 규칙, 평가, 튜닝, 학습, 문제 해결을 모아 둔 문서입니다. 명령은 모두 `roadmate-ai` 폴더에서 PowerShell로 실행합니다.
+설치, 서버 실행, 백엔드·앱 연동 규칙, 평가, 튜닝, 학습, 문제 해결을 모아 둔 문서입니다. 아래 1~11장은 Windows 기준이고 명령은 `roadmate-ai` 폴더에서 PowerShell로 실행합니다. Linux(DLPC 등)는 바로 아래 장을 먼저 봅니다.
+
+## Linux(DLPC)에서 실행
+
+Ubuntu에서는 PowerShell 스크립트 대신 `scripts/run.sh` 하나로 설치하고 실행합니다. llama.cpp는 공식 Ubuntu CUDA 12.8 빌드를 받아 쓰므로 직접 빌드하지 않습니다. 명령은 JupyterLab 터미널의 `roadmate-ai` 폴더에서 실행합니다.
+
+```bash
+git clone -b feat/roadmate-ai-server https://github.com/hpySJ/RoadMate.git
+cd RoadMate/roadmate-ai
+nvidia-smi                                   # GPU 이름과 VRAM 확인
+bash scripts/run.sh setup                    # .venv, llama.cpp, 모델 다운로드, 환경 확인
+bash scripts/run.sh start                    # 모델 서버 → AI 서버 → smoke 시험(SMOKE OK가 나오면 성공)
+.venv/bin/python eval/evaluate.py --file eval/dev.jsonl --label q4-base
+bash scripts/run.sh stop
+```
+
+학습 쪽도 같습니다. 서버를 끈 뒤 실행합니다.
+
+```bash
+bash scripts/run.sh setup-train
+.venv-train/bin/python train/prepare_data.py --allow-draft --tokenizer Qwen/Qwen3-4B-Instruct-2507
+.venv-train/bin/python train/train_qlora.py --smoke
+bash scripts/run.sh setup-convert
+.venv/bin/python train/convert_adapter.py --adapter train/runs/lora-v1/smoke/adapter --apply --allow-smoke
+```
+
+Windows 명령과의 대응은 이렇습니다. 나머지 Python 명령은 `.venv\Scripts\python.exe`를 `.venv/bin/python`으로, `\`를 `/`로 바꿔 그대로 씁니다.
+
+| Windows | Linux |
+|---|---|
+| `setup_ai_env.ps1`, `setup_llama.ps1`, `download_model.py`, `check_env.py` | `bash scripts/run.sh setup` |
+| `start_all.ps1 [-Mock]` | `bash scripts/run.sh start [--mock]` |
+| `stop_all.ps1` | `bash scripts/run.sh stop` |
+| `start_model.ps1` / `start_ai.ps1` (포그라운드) | `bash scripts/run.sh model` / `bash scripts/run.sh ai` |
+| `start_model.ps1 -GpuLayers 30` | `GPU_LAYERS=30 bash scripts/run.sh start` |
+| `setup_train_env.ps1`, `setup_convert_env.ps1` | `bash scripts/run.sh setup-train`, `bash scripts/run.sh setup-convert` |
+
+DLPC에서 알아 둘 점:
+
+- 기본으로 `python3.12`를 씁니다. 다른 Python을 쓰려면 `PYTHON=/경로/python bash scripts/run.sh setup`처럼 지정합니다.
+- 노트북 작업을 정지하면 띄워 둔 서버도 같이 꺼집니다. 홈 폴더의 모델과 가상환경은 남으니 다시 `start`만 하면 됩니다.
+- 서버는 그 작업 안(127.0.0.1)에서만 접속됩니다. 다른 PC의 백엔드는 이 서버를 호출할 수 없으니, DLPC는 평가·튜닝·학습에 쓰고 백엔드 연동 시연은 백엔드와 같은 PC에서 합니다.
+- 학습까지 하면 디스크를 20GB 넘게 씁니다. `df -h ~`로 남은 공간을 먼저 확인합니다.
 
 ## 1. 실행 PC 요구사항
 

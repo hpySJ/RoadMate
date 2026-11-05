@@ -35,7 +35,7 @@ APK → 백엔드(8080) → AI 서버(8000) → llama-server(8081)
 
 ## 실행 환경
 
-Windows 10/11, NVIDIA RTX 4060급 GPU(VRAM 8GB), RAM 16GB, Python 3.11을 기준으로 만들었습니다. 설치, 실행, 평가, 튜닝, 학습 방법은 [`docs/guide.md`](docs/guide.md)에 있습니다.
+NVIDIA GPU(VRAM 8GB 이상), RAM 16GB, Python 3.11~3.12를 기준으로 만들었습니다. Windows는 `scripts/*.ps1`, Linux(DLPC 등)는 `scripts/run.sh`로 설치하고 실행합니다. 자세한 방법은 [`docs/guide.md`](docs/guide.md)에 있습니다.
 
 ## 지금 상태
 

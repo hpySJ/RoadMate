@@ -17,6 +17,10 @@ def ram_gib():
                     ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
                     ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
                     ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+    if platform.system() == "Linux":
+        info = dict(line.split(":", 1) for line in Path("/proc/meminfo").read_text().splitlines() if ":" in line)
+        kib = lambda k: int(info[k].split()[0])  # noqa: E731
+        return round(kib("MemTotal") / 2**20, 1), round(kib("MemAvailable") / 2**20, 1)
     if platform.system() != "Windows":
         return None
     s = MS()
@@ -40,7 +44,7 @@ def main():
         "python": sys.version.split()[0],
         "gpu (name, total, used, free, driver)": gpu(),
         "ram total/avail GiB": f"{ram[0]} / {ram[1]}" if ram else "n/a",
-        "llama-server.exe": (ROOT / "tools" / "llama" / "llama-server.exe").exists(),
+        "llama-server": any((ROOT / "tools" / "llama").rglob("llama-server*")),
         "llama VERSION.json": (ROOT / "tools" / "llama" / "VERSION.json").read_text(encoding="utf-8-sig").strip()
         if (ROOT / "tools" / "llama" / "VERSION.json").exists() else "missing",
         "model file": (ROOT / "models" / m["model"]["gguf_file"]).exists(),
