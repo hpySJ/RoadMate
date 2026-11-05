@@ -9,7 +9,7 @@ from pathlib import Path
 
 import prompting as P
 from inference import ModelBadOutput, ModelError, ModelTruncated
-from validation import looks_like_other_language, validate_destination, validate_translation
+from validation import add_meridiem, looks_like_other_language, validate_destination, validate_translation
 
 ROOT = Path(__file__).resolve().parent
 MIN_RETRY_S = 1.5
@@ -51,6 +51,14 @@ class ValidationFailed(ModelError):
     def __init__(self, issues: list[str]):
         super().__init__(", ".join(issues))
         self.issues = issues
+
+
+def _with_meridiem(out, req):
+    # QWEN 구현: 모델이 원문의 오전·오후를 빼면 원문 기준으로 채운다(모델 재호출 없이)
+    if isinstance(out, dict) and out.get("status") == "ok" and isinstance(out.get("translated_text"), str):
+        return {**out, "translated_text": add_meridiem(out["translated_text"], req.text, req.source_locale,
+                                                       req.target_locale)}
+    return out
 
 
 def _norm(s: str) -> str:
@@ -126,8 +134,8 @@ class Engine:
         issues: list[str] = []
         out: dict | None = None
         try:
-            out = await self.client.chat_json(messages, P.TRANSLATE_SCHEMA, P.TRANSLATE_MAX_TOKENS,
-                                              P.TRANSLATE_SAMPLING, deadline - time.monotonic())
+            out = _with_meridiem(await self.client.chat_json(messages, P.TRANSLATE_SCHEMA, P.TRANSLATE_MAX_TOKENS,
+                                                             P.TRANSLATE_SAMPLING, deadline - time.monotonic()), req)
             issues = validate_translation(out, req.text, req.source_locale, req.target_locale, structural)
         except (ModelBadOutput, ModelTruncated) as e:
             issues = [e.code]
@@ -149,8 +157,8 @@ class Engine:
                                    "JSON only."}, ensure_ascii=False),
         }]
         try:
-            out = await self.client.chat_json(repair, P.TRANSLATE_SCHEMA, P.TRANSLATE_MAX_TOKENS,
-                                              P.RETRY_SAMPLING, deadline - time.monotonic())
+            out = _with_meridiem(await self.client.chat_json(repair, P.TRANSLATE_SCHEMA, P.TRANSLATE_MAX_TOKENS,
+                                                             P.RETRY_SAMPLING, deadline - time.monotonic()), req)
         except (ModelBadOutput, ModelTruncated) as e:
             raise ValidationFailed(issues + [e.code]) from e
         issues = validate_translation(out, req.text, req.source_locale, req.target_locale, structural)

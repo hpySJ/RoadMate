@@ -78,6 +78,18 @@ def test_invalid_pairs(src, sl, tgt, tl, issue):
     assert issue in v(src, sl, tgt, tl)
 
 
+@pytest.mark.parametrize("src,tgt,fixed", [
+    ("We'll be back by 6 p.m.", "6시까지 돌아올 예정이에요.", "오후 6시까지 돌아올 예정이에요."),
+    ("Return it at 9 a.m.", "9시에 반납할게요.", "오전 9시에 반납할게요."),
+    ("We'll be back by 6 p.m.", "오후 6시까지 돌아올게요.", "오후 6시까지 돌아올게요."),
+    ("We'll be back by 6 p.m.", "7시까지 돌아올게요.", "7시까지 돌아올게요."),  # 다른 시각은 고치지 않음
+    ("It takes 2 hours.", "2시간 걸려요.", "2시간 걸려요."),
+])
+def test_add_meridiem(src, tgt, fixed):
+    from validation import add_meridiem
+    assert add_meridiem(tgt, src, "en-US", "ko-KR") == fixed
+
+
 def test_clarification_rules():
     q = {"status": "clarification_required", "translated_text": None, "clarification_question": "Could you say it again?"}
     assert validate_translation(q, "Fill it with um", "en-US", "ko-KR") == []

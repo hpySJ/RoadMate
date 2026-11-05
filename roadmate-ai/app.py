@@ -254,4 +254,5 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logging.getLogger("httpx").setLevel(logging.WARNING)  # llama-server 호출마다 찍히는 요청 줄은 숨긴다
 app = create_app()

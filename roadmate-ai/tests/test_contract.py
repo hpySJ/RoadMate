@@ -136,6 +136,13 @@ def test_log_rejected_only_when_enabled(caplog):
         assert sum("rejected" in r.getMessage() for r in caplog.records) == expect
 
 
+def test_dropped_pm_is_filled_without_retry():
+    fake = FakeLlama(outputs=[ok("6시까지 돌아올 예정이에요.")])
+    with TestClient(create_app(SETTINGS, fake)) as c:
+        d = c.post("/internal/v1/translate", json=body(text="We'll be back by 6 p.m.", scenario="parking")).json()
+    assert d["translated_text"] == "오후 6시까지 돌아올 예정이에요." and fake.calls == 1
+
+
 def test_bad_clarification_becomes_fixed_question():
     q = {"status": "clarification_required", "translated_text": None, "clarification_question": "Could you say it again?"}
     fake = FakeLlama(outputs=[q])

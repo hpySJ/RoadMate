@@ -282,6 +282,19 @@ def compare_numbers(src: list[Num], tgt: list[Num]) -> list[str]:
     return issues
 
 
+def add_meridiem(tt: str, source: str, src_locale: str, tgt_locale: str) -> str:
+    # 검증: 원문에 오전·오후가 있는데 한국어 번역이 "6시"처럼 뺐으면 원문 기준으로 "오후 6시"를 채운다(같은 시각일 때만)
+    if src_locale != "en-US" or tgt_locale != "ko-KR":
+        return tt
+    exact = [n.value for n in extract_numbers(source, src_locale) if n.kind == "time" and n.exact]
+    for m in reversed(list(re.finditer(r"(?<!\d)(\d{1,2})\s?시(?!간)", tt))):
+        h = int(m.group(1))
+        hit = next((v for v in exact if 1 <= h <= 12 and h % 12 == v % 12), None)
+        if hit is not None and _ko_pm(tt[:m.start()]) is None:
+            tt = tt[:m.start()] + ("오후 " if hit >= 12 else "오전 ") + tt[m.start():]
+    return tt
+
+
 # ---------------------------------------------------------------- negation
 NEG = {
     "en-US": (
