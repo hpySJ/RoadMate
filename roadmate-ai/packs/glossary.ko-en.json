@@ -1,5 +1,5 @@
 {
-  "version": "rental-ko-en-v2",
+  "version": "rental-ko-en-v3",
   "review": {"status": "draft", "reviewer": null, "checked_at": "2026-11-05"},
   "entries": [
     {"id": "fuel_gasoline", "category": "fuel", "critical": true, "en": ["gasoline", "petrol", "unleaded"], "ko": ["휘발유"]},
@@ -36,6 +36,8 @@
     {"id": "tire_pressure", "category": "vehicle", "critical": false, "en": ["tire pressure", "tyre pressure"], "ko": ["타이어 공기압", "공기압"]},
     {"id": "bumper", "category": "vehicle", "critical": false, "en": ["bumper"], "ko": ["범퍼"]},
     {"id": "scratch", "category": "vehicle", "critical": false, "en": ["scratch", "scratches"], "ko": ["긁힌 자국", "스크래치"]},
-    {"id": "road_shoulder", "category": "road", "critical": false, "en": ["road shoulder", "hard shoulder", "side of the road"], "ko": ["갓길"]}
+    {"id": "road_shoulder", "category": "road", "critical": false, "en": ["road shoulder", "hard shoulder", "side of the road"], "ko": ["갓길"]},
+    {"id": "ambulance", "category": "accident", "critical": false, "en": ["ambulance"], "ko": ["구급차"]},
+    {"id": "engine_no_start", "category": "vehicle", "critical": false, "en": ["won't start", "will not start", "doesn't start", "does not start"], "ko": ["시동이 안 걸려요", "시동이 안 걸", "시동이 안 켜"]}
   ]
 }

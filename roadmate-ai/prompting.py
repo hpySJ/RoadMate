@@ -73,6 +73,24 @@ def match_concepts(text: str, locale: str, categories: set | None = None) -> dic
     return found
 
 
+EN_TIME = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*([ap])(?:\.\s?m\.|\s?m)(?![A-Za-z])", re.IGNORECASE)
+KO_TIME = re.compile(r"(오전|오후)\s?(\d{1,2})시(?:\s?(\d{1,2})분|\s?(반))?")
+
+
+def _time_hints(text: str, src: str) -> dict[str, str]:
+    # QWEN 구현: 오전·오후가 붙은 시각은 목표 언어 표기를 직접 알려 준다(6 p.m. = 오후 6시)
+    out = {}
+    if src == "en":
+        for m in EN_TIME.finditer(text):
+            minute = f" {int(m.group(2))}분" if m.group(2) and int(m.group(2)) else ""
+            out[m.group(0)] = f"{'오후' if m.group(3).lower() == 'p' else '오전'} {int(m.group(1))}시{minute}"
+    else:
+        for m in KO_TIME.finditer(text):
+            minute = "30" if m.group(4) else m.group(3)
+            out[m.group(0)] = f"{int(m.group(2))}{':' + minute.zfill(2) if minute else ''} {'p.m.' if m.group(1) == '오후' else 'a.m.'}"
+    return out
+
+
 def select_glossary(text: str, source_locale: str, target_locale: str) -> dict[str, str]:
     # QWEN 구현: 발화에 나온 용어·데모 장소 이름만 넣어 프롬프트를 짧게 유지(성산일출봉 = Seongsan Ilchulbong)
     by_id = {e["id"]: e for e in glossary()["entries"]}
@@ -83,6 +101,8 @@ def select_glossary(text: str, source_locale: str, target_locale: str) -> dict[s
         hits = sorted(_find_terms(text, names, src), key=lambda h: h[0] - h[1])
         if hits:
             out.setdefault(text[hits[0][0]:hits[0][1]], p[f"name_{tgt}"])
+    for k, v in _time_hints(text, src).items():
+        out.setdefault(k, v)
     return out
 
 
@@ -119,12 +139,16 @@ def completion_text(output: dict) -> str:
     return _dump(output)
 
 
+# QWEN 구현: llama.cpp 문법 제약으로 생성 단계에서 한자·가나(와 따옴표·역슬래시·제어문자)를 막는다. ^...$, \uXXXX 형식 필수
+NO_CJK_TEXT = r"^[^\x22\x5c\x00-\x1f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]*$"
+_TEXT_OR_NULL = {"anyOf": [{"type": "string", "pattern": NO_CJK_TEXT}, {"type": "null"}]}
+
 TRANSLATE_SCHEMA = {
     "type": "object",
     "properties": {
         "status": {"type": "string", "enum": ["ok", "clarification_required"]},
-        "translated_text": {"type": ["string", "null"]},
-        "clarification_question": {"type": ["string", "null"]},
+        "translated_text": _TEXT_OR_NULL,
+        "clarification_question": _TEXT_OR_NULL,
     },
     "required": ["status", "translated_text", "clarification_question"],
     "additionalProperties": False,

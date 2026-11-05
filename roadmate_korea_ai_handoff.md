@@ -995,7 +995,7 @@ group_id와 task는 데이터 관리용이며 필요한 경우 학습기의 입�
 
 시스템 지시는 추론 서버가 쓰는 prompt_version 원문과 글자 단위로 같아야 한다. 축약하거나 다른 문장을 쓰면 어댑터가 실제 서비스와 다른 조건에서 학습된다. 프롬프트 버전을 바꾸면 학습 데이터의 시스템 지시도 다시 생성하고 어댑터를 재학습·재평가한다.
 
-최대 길이는 시스템 지시·few-shot·입력·정답 전체 길이다. 번역 프롬프트는 translate-v1 실측 약 1,000토큰, 용어·규칙·예시를 늘린 translate-v2 추정 약 1,200토큰이므로 1536을 쓴다(2026년 11월 5일). 토큰 길이 분포를 확인하고 정답이 잘리는 자료를 그대로 학습시키지 않는다. 긴 사례는 뜻을 유지해 짧게 작성하거나 설정 범위 안에서 길이를 늘린다.
+최대 길이는 시스템 지시·few-shot·입력·정답 전체 길이다. 번역 프롬프트는 translate-v1 실측 약 1,000토큰, 용어·규칙·예시를 늘린 translate-v3 추정 약 1,250토큰이므로 1536을 쓴다(2026년 11월 5일). 토큰 길이 분포를 확인하고 정답이 잘리는 자료를 그대로 학습시키지 않는다. 긴 사례는 뜻을 유지해 짧게 작성하거나 설정 범위 안에서 길이를 늘린다.
 
 TRL의 completion-only loss를 사용한다. 실제 token과 labels를 확인해 prompt는 마스킹되고 정답 및 종료 토큰에만 학습 손실이 적용되는지 검사한다. tokenizer·chat template·종료 토큰 처리도 버전으로 고정한다. [TRL SFTTrainer](https://huggingface.co/docs/trl/sft_trainer)
 
@@ -1014,7 +1014,7 @@ TRL의 completion-only loss를 사용한다. 실제 token과 labels를 확인해
 | LoRA dropout / bias | 0.05 / none |
 | 배치 크기 | 1 |
 | Gradient accumulation | 16 |
-| 최대 전체 길이 | 1536(translate-v2 프롬프트 약 1,200토큰), 초과 자료는 prepare_data가 중단 |
+| 최대 전체 길이 | 1536(translate-v3 프롬프트 약 1,250토큰), 초과 자료는 prepare_data가 중단 |
 | 학습률 | 1e-4 시작 |
 | Epoch | 1부터, 검증 결과에 따라 최대 2 |
 | 메모리 설정 | gradient checkpointing, use_cache=False |

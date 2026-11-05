@@ -12,7 +12,7 @@
     "output": {"status": "ok", "translated_text": "기름 가득 넣어 주세요.", "clarification_question": null}
   },
   {
-    "input": {"source_locale": "ko-KR", "target_locale": "en-US", "scenario": "parking", "glossary": {}, "utterance": "오후 3시까지 여기 세워도 돼요? 왼쪽 자리 말고요."},
+    "input": {"source_locale": "ko-KR", "target_locale": "en-US", "scenario": "parking", "glossary": {"오후 3시": "3 p.m."}, "utterance": "오후 3시까지 여기 세워도 돼요? 왼쪽 자리 말고요."},
     "output": {"status": "ok", "translated_text": "Can I park here until 3 p.m.? Not the spot on the left.", "clarification_question": null}
   },
   {
