@@ -1,6 +1,6 @@
 {
-  "version": "poi-jeju-demo-v1",
-  "review": {"status": "draft", "reviewer": null, "checked_at": "2026-11-04", "note": "좌표는 근사값. 지도에서 확인한 뒤 verified=true와 source를 채운다."},
+  "version": "poi-jeju-demo-v2",
+  "review": {"status": "draft", "reviewer": null, "checked_at": "2026-11-05", "note": "좌표는 근사값. 지도에서 확인한 뒤 verified=true와 source를 채운다."},
   "places": [
     {"poi_id": "jeju-airport", "name_ko": "제주국제공항", "name_en": "Jeju International Airport", "aliases": ["제주공항", "Jeju Airport", "CJU"], "region_ko": "제주시", "region_en": "Jeju-si", "category": "airport", "lat": 33.5104, "lon": 126.4914, "verified": false, "source": null},
     {"poi_id": "seongsan-ilchulbong", "name_ko": "성산일출봉", "name_en": "Seongsan Ilchulbong", "aliases": ["Seongsan Sunrise Peak", "Sunrise Peak", "Seongsan Ilchulbong Tuff Cone", "성산 일출봉"], "region_ko": "서귀포시 성산읍", "region_en": "Seongsan", "category": "attraction", "lat": 33.4581, "lon": 126.9425, "verified": false, "source": null},
@@ -9,8 +9,8 @@
     {"poi_id": "hyeopjae-beach", "name_ko": "협재해수욕장", "name_en": "Hyeopjae Beach", "aliases": ["협재 해변", "Hyeopjae", "Hyupjae Beach"], "region_ko": "제주시 한림읍", "region_en": "Hallim", "category": "beach", "lat": 33.3940, "lon": 126.2397, "verified": false, "source": null},
     {"poi_id": "hamdeok-beach", "name_ko": "함덕해수욕장", "name_en": "Hamdeok Beach", "aliases": ["함덕 해변", "Hamdeok", "Hamdeok Seoubong Beach"], "region_ko": "제주시 조천읍", "region_en": "Jocheon", "category": "beach", "lat": 33.5432, "lon": 126.6694, "verified": false, "source": null},
     {"poi_id": "jungmun-saekdal-beach", "name_ko": "중문색달해수욕장", "name_en": "Jungmun Saekdal Beach", "aliases": ["중문해수욕장", "중문 해변", "Jungmun Beach"], "region_ko": "서귀포시 중문", "region_en": "Jungmun", "category": "beach", "lat": 33.2445, "lon": 126.4119, "verified": false, "source": null},
-    {"poi_id": "cheonjiyeon-falls", "name_ko": "천지연폭포", "name_en": "Cheonjiyeon Waterfall", "aliases": ["천지연 폭포", "Cheonjiyeon Falls", "Cheonjiyeon"], "region_ko": "서귀포시", "region_en": "Seogwipo", "category": "attraction", "lat": 33.2468, "lon": 126.5544, "verified": false, "source": null},
-    {"poi_id": "jeongbang-falls", "name_ko": "정방폭포", "name_en": "Jeongbang Waterfall", "aliases": ["정방 폭포", "Jeongbang Falls", "Jeongbang"], "region_ko": "서귀포시", "region_en": "Seogwipo", "category": "attraction", "lat": 33.2448, "lon": 126.5717, "verified": false, "source": null},
+    {"poi_id": "cheonjiyeon-falls", "name_ko": "천지연폭포", "name_en": "Cheonjiyeon Waterfall", "aliases": ["천지연 폭포", "Cheonjiyeon Falls", "Cheonjiyeon", "서귀포 폭포", "Seogwipo waterfall"], "region_ko": "서귀포시", "region_en": "Seogwipo", "category": "attraction", "lat": 33.2468, "lon": 126.5544, "verified": false, "source": null},
+    {"poi_id": "jeongbang-falls", "name_ko": "정방폭포", "name_en": "Jeongbang Waterfall", "aliases": ["정방 폭포", "Jeongbang Falls", "Jeongbang", "서귀포 폭포", "Seogwipo waterfall"], "region_ko": "서귀포시", "region_en": "Seogwipo", "category": "attraction", "lat": 33.2448, "lon": 126.5717, "verified": false, "source": null},
     {"poi_id": "manjanggul", "name_ko": "만장굴", "name_en": "Manjanggul Lava Tube", "aliases": ["Manjanggul Cave", "Manjanggul", "만장 굴"], "region_ko": "제주시 구좌읍", "region_en": "Gujwa", "category": "attraction", "lat": 33.5284, "lon": 126.7716, "verified": false, "source": null},
     {"poi_id": "seopjikoji", "name_ko": "섭지코지", "name_en": "Seopjikoji", "aliases": ["Seopjikoji Point", "섭지 코지"], "region_ko": "서귀포시 성산읍", "region_en": "Seongsan", "category": "attraction", "lat": 33.4240, "lon": 126.9309, "verified": false, "source": null},
     {"poi_id": "dongmun-market", "name_ko": "동문재래시장", "name_en": "Dongmun Traditional Market", "aliases": ["동문시장", "Dongmun Market", "Dongmun"], "region_ko": "제주시", "region_en": "Jeju-si", "category": "market", "lat": 33.5122, "lon": 126.5283, "verified": false, "source": null},

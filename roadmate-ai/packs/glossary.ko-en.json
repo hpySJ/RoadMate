@@ -1,6 +1,6 @@
 {
-  "version": "rental-ko-en-v1",
-  "review": {"status": "draft", "reviewer": null, "checked_at": "2026-11-04"},
+  "version": "rental-ko-en-v2",
+  "review": {"status": "draft", "reviewer": null, "checked_at": "2026-11-05"},
   "entries": [
     {"id": "fuel_gasoline", "category": "fuel", "critical": true, "en": ["gasoline", "petrol", "unleaded"], "ko": ["휘발유"]},
     {"id": "fuel_premium", "category": "fuel", "critical": true, "en": ["premium gasoline", "premium petrol", "premium unleaded"], "ko": ["고급 휘발유", "고급휘발유"]},
@@ -27,6 +27,15 @@
     {"id": "bus_lane", "category": "road", "critical": false, "en": ["bus lane", "bus-only lane"], "ko": ["버스전용차로"]},
     {"id": "parking_fee", "category": "parking", "critical": false, "en": ["parking fee"], "ko": ["주차비", "주차 요금"]},
     {"id": "return_car", "category": "rental", "critical": false, "en": ["return the car", "drop off the car"], "ko": ["차량 반납", "반납"]},
-    {"id": "shuttle", "category": "rental", "critical": false, "en": ["shuttle bus"], "ko": ["셔틀버스"]}
+    {"id": "shuttle", "category": "rental", "critical": false, "en": ["shuttle bus"], "ko": ["셔틀버스"]},
+    {"id": "extra_driver", "category": "rental", "critical": false, "en": ["additional driver", "second driver", "extra driver"], "ko": ["추가 운전자"]},
+    {"id": "deposit", "category": "rental", "critical": false, "en": ["deposit", "security deposit"], "ko": ["보증금"]},
+    {"id": "credit_card", "category": "payment", "critical": false, "en": ["credit card"], "ko": ["신용카드"]},
+    {"id": "no_parking", "category": "parking", "critical": false, "en": ["no-parking zone", "no parking zone", "no parking"], "ko": ["주차 금지 구역", "주차금지"]},
+    {"id": "fuel_door", "category": "vehicle", "critical": false, "en": ["fuel door", "gas cap", "fuel cap"], "ko": ["주유구"]},
+    {"id": "tire_pressure", "category": "vehicle", "critical": false, "en": ["tire pressure", "tyre pressure"], "ko": ["타이어 공기압", "공기압"]},
+    {"id": "bumper", "category": "vehicle", "critical": false, "en": ["bumper"], "ko": ["범퍼"]},
+    {"id": "scratch", "category": "vehicle", "critical": false, "en": ["scratch", "scratches"], "ko": ["긁힌 자국", "스크래치"]},
+    {"id": "road_shoulder", "category": "road", "critical": false, "en": ["road shoulder", "hard shoulder", "side of the road"], "ko": ["갓길"]}
   ]
 }

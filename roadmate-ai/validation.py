@@ -64,7 +64,10 @@ NATIVE_RE = re.compile(
 PHONE_RE = re.compile(r"(?<!\d)(?:\+?82[\s-]?)?0?\d{1,3}[\s-]\d{3,4}[\s-]\d{4}(?!\d)")
 CLOCK_RE = re.compile(r"(?<!\d)([01]?\d|2[0-4]):([0-5]\d)(?!\d)")
 DIGIT_RE = re.compile(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?!\d|,\d)")
-EN_TIME_TAIL = re.compile(r"\s*(?:(o'clock)|([ap])\.?\s?m\.?(?![A-Za-z]))", re.IGNORECASE)
+_EN_DAYPART = r"(in the morning|in the afternoon|in the evening|at night)"
+EN_TIME_TAIL = re.compile(rf"\s*(?:o'clock(?:\s+{_EN_DAYPART})?|([ap])\.?\s?m\.?(?![A-Za-z])|{_EN_DAYPART})", re.IGNORECASE)
+EN_ORD_ANY = re.compile(r"\b(" + "|".join(EN_ORD) + r")\s+(?=[A-Za-z])", re.IGNORECASE)
+KO_ORD = re.compile(r"(?<![가-힣])(첫|두|세|네|다섯|여섯|일곱|여덟|아홉|열|\d{1,2})\s?번째")
 KO_MERIDIEM = re.compile(r"(오전|새벽|아침|오후|저녁)\s*$")
 CUR_EN = re.compile(r"\s?(?:k|thousand|million|mil)?\s?(won|krw|dollars?|usd|bucks)\b", re.IGNORECASE)
 CUR_KO = re.compile(r"\s?(원|달러|불)")
@@ -75,6 +78,12 @@ def _time(h: int, pm: bool | None) -> Num:
     if pm is None:
         return Num(float(h), "time", exact=h == 0 or 12 < h <= 24)
     return Num(float(h % 12 + (12 if pm else 0)), "time", exact=True)
+
+
+def _en_pm(t: re.Match | None) -> bool | None:
+    # 검증: a.m./p.m., in the morning/evening 등 → 오후 여부. o'clock만 있으면 미확정(None)
+    part = t and (t.group(2) or t.group(1) or t.group(3))
+    return None if not part else part.lower() == "p" or part.lower().endswith(("afternoon", "evening", "night"))
 
 
 def _ko_pm(before: str) -> bool | None:
@@ -153,8 +162,8 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
     for m in CLOCK_RE.finditer(text):
         end, pm = m.end(), _ko_pm(text[:m.start()]) if locale == "ko-KR" else None
         t = EN_TIME_TAIL.match(text, end) if locale == "en-US" else None
-        if t and t.group(2):
-            end, pm = t.end(), t.group(2).lower() == "p"
+        if _en_pm(t) is not None:
+            end, pm = t.end(), _en_pm(t)
         out.append(_time(int(m.group(1)), pm))
         if int(m.group(2)):
             out.append(Num(float(m.group(2)), "n"))
@@ -162,9 +171,11 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
     text = _mask(text, spans)
 
     if locale == "en-US":
-        for m in re.finditer(r"(?<![\d.])(\d{1,2})" + EN_TIME_TAIL.pattern, text, re.IGNORECASE):
-            out.append(_time(int(m.group(1)), None if m.group(2) else m.group(3).lower() == "p"))
-            spans.append(m.span())
+        for m in re.finditer(r"(?<![\d.,])(\d{1,2})\b", text):
+            t = EN_TIME_TAIL.match(text, m.end())
+            if t:
+                out.append(_time(int(m.group(1)), _en_pm(t)))
+                spans.append((m.start(), t.end()))
         text = _mask(text, spans)
         for m in DIGIT_RE.finditer(text):
             v = float(m.group(1).replace(",", "") + ("." + m.group(2) if m.group(2) else ""))
@@ -176,8 +187,11 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
             elif re.match(r"\s?thousand\b", tail):
                 v *= 1000
             out.append(Num(v, "n", unit=_unit(text[:m.start()], text[m.end():], locale)))
-        for m in EN_ORD_RE.finditer(text):
+        ords = list(EN_ORD_RE.finditer(text))
+        for m in ords:
             out.append(Num(float(EN_ORD[m.group(1).lower()]), "n"))
+        for m in EN_ORD_ANY.finditer(_mask(text, [m.span() for m in ords])):
+            out.append(Num(float(EN_ORD[m.group(1).lower()]), "ord"))
         for m in EN_WORD_RE.finditer(_mask(text, [mm.span() for mm in DIGIT_RE.finditer(text)])):
             words = m.group().strip(" -")
             t = EN_TIME_TAIL.match(text, m.end())
@@ -187,10 +201,14 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
             if v is None:
                 continue
             if t and v <= 12:
-                out.append(_time(v, None if t.group(1) else t.group(2).lower() == "p"))
+                out.append(_time(v, _en_pm(t)))
             else:
                 out.append(Num(float(v), "n", unit=_unit(text[:m.start()], text[m.end():], locale)))
     else:
+        for m in KO_ORD.finditer(text):
+            g = m.group(1)
+            out.append(Num(float(g) if g.isdigit() else float({**NATIVE, "첫": 1}[g]), "ord"))
+        text = _mask(text, [m.span() for m in KO_ORD.finditer(text)])
         for m in re.finditer(r"(\d{1,2})\s?시(?!간)(\s?반)?", text):
             out.append(_time(int(m.group(1)), _ko_pm(text[:m.start()])))
             if m.group(2):
@@ -244,19 +262,23 @@ def _num_match(a: Num, b: Num) -> bool:
     if "time" in (a.kind, b.kind) and a.value <= 24 and b.value <= 24:
         if a.exact and b.exact:
             return a.value % 24 == b.value % 24
+        if a.exact:
+            return False  # 원문의 오전·오후(또는 24시간제)가 번역에서 빠짐
         return a.value % 12 == b.value % 12
     return False
 
 
 def compare_numbers(src: list[Num], tgt: list[Num]) -> list[str]:
+    # 검증: 서수(두 번째)는 양쪽에 다 있을 때만 비교한다("a second driver" = "운전자 한 명 더")
+    both_ord = any(n.kind == "ord" for n in src) and any(n.kind == "ord" for n in tgt)
     issues, pool = [], list(tgt)
     for s in src:
         hit = next((t for t in pool if _num_match(s, t)), None)
-        if hit is None:
-            issues.append(f"number_missing:{s.value:g}")
-        else:
+        if hit is not None:
             pool.remove(hit)
-    issues += [f"number_added:{t.value:g}" for t in pool]
+        elif s.kind != "ord" or both_ord:
+            issues.append(f"number_missing:{s.value:g}")
+    issues += [f"number_added:{t.value:g}" for t in pool if t.kind != "ord" or both_ord]
     return issues
 
 
@@ -343,6 +365,8 @@ def check_fuel_polarity(src: str, src_locale: str, tgt: str, tgt_locale: str) ->
     return [f"fuel_polarity_mismatch:{c}" for c in sorted(a.keys() & b.keys()) if a[c] != b[c]]
 
 
+# 파라미터 튜닝: 번역/원문 글자 수 최소 비율(정답 자료 최솟값 영→한 0.30, 한→영 1.33보다 낮게). 짧은 원문은 검사 안 함
+MIN_LEN_RATIO = {"en-US": (30, 0.22), "ko-KR": (12, 0.8)}
 LEAK_RE = re.compile(r"^\s*(translation|translated|here is|note|번역|통역|참고)\s*[:：]|\n", re.I)
 
 
@@ -355,7 +379,11 @@ def validate_translation(out: dict, source: str, src_locale: str, tgt_locale: st
             return ["bad_clarification"]
         if tt not in (None, ""):
             return ["mixed_output"]
-        if not structural_only and not in_locale_script(cq, src_locale):
+        if structural_only:
+            return []
+        if " ".join(cq.lower().split()) == " ".join(source.lower().split()):
+            return ["clarification_echo"]
+        if not in_locale_script(cq, src_locale):
             return ["clarification_wrong_language"]
         return []
     if status != "ok":
@@ -371,6 +399,9 @@ def validate_translation(out: dict, source: str, src_locale: str, tgt_locale: st
         issues.append("extra_text")
     if len(tt) > 3 * len(source) + 60:
         issues.append("too_long")
+    min_src, ratio = MIN_LEN_RATIO[src_locale]
+    if len(source) >= min_src and len(tt) < ratio * len(source):
+        issues.append("too_short")
     if not in_locale_script(tt, tgt_locale):
         issues.append("wrong_language")
     if HAN_KANA.search(tt) and not HAN_KANA.search(source):

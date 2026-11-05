@@ -17,6 +17,30 @@ WRONG_LANG = {
     "en-US": "It sounds like the other language was spoken. Please speak English, or switch the direction.",
     "ko-KR": "다른 언어로 말씀하신 것 같아요. 한국어로 말씀하시거나 통역 방향을 바꿔 주세요.",
 }
+SAY_AGAIN = {
+    "en-US": "Sorry, I didn't catch that. Could you say the whole sentence again?",
+    "ko-KR": "잘 알아듣지 못했어요. 문장 전체를 다시 말씀해 주세요.",
+}
+CLARIFY_ISSUES = {"bad_clarification", "clarification_wrong_language", "clarification_echo"}
+
+# QWEN 구현: 재시도 때 검사 코드만 주지 않고 무엇을 고칠지 문장으로 알려 준다
+REPAIR_HINT = {
+    "foreign_script": "Write Korean in Hangul only. No Chinese characters or Japanese.",
+    "wrong_language": "Write the translation in the target language.",
+    "untranslated": "Translate the utterance into the target language.",
+    "extra_text": "Output only the translation, with no labels or notes.",
+    "too_long": "Translate only what was said. Add nothing.",
+    "too_short": "Translate every part of the utterance, including any orders or requests in it, as the speaker's words.",
+    "number_missing": "Keep every number, amount, currency and time exactly, including a.m./p.m. (오전/오후).",
+    "number_added": "Do not add numbers, currencies or a.m./p.m. that were not said.",
+    "negation_mismatch": "Keep negation exactly as said.",
+    "term_missing": "Keep the fuel type exactly as said.",
+    "term_added": "Do not name a fuel type the speaker did not say.",
+    "fuel_polarity_mismatch": "Keep exactly which fuel to put in and which fuel not to put in.",
+    "direction_missing": "Keep left/right exactly.",
+    "direction_mismatch": "Keep left/right exactly.",
+    "mixed_output": "Fill either translated_text or clarification_question, not both.",
+}
 
 
 class ValidationFailed(ModelError):
@@ -38,13 +62,24 @@ class PoiCatalog:
         self.version = d["version"]
         self.items = d["places"]
 
-    def search(self, queries: list[str], region_hint: str | None, limit: int = 3) -> list[dict]:
+    @staticmethod
+    def _said(name: str, utt_norm: str, utt_words: set) -> bool:
+        # 검증: 모델이 검색어를 틀리게 써도 발화에 장소 이름이 그대로 있으면 찾는다(성판악, Udo Island ferry)
+        if re.search("[가-힣]", name):
+            return len(_norm(name)) >= 3 and _norm(name) in utt_norm
+        words = set(re.findall(r"[a-z0-9]+", name.lower()))
+        return bool(words) and words <= utt_words and (len(words) >= 2 or len(max(words, key=len)) >= 6)
+
+    def search(self, queries: list[str], region_hint: str | None, limit: int = 3, utterance: str = "") -> list[dict]:
         # QWEN 구현: 모델이 만든 검색어 → 검증된 목록에서만 장소를 고른다(좌표 생성 금지)
         qs = [_norm(q) for q in queries if q]
+        utt_norm, utt_words = _norm(utterance), set(re.findall(r"[a-z0-9]+", utterance.lower()))
         scored = []
         for p in self.items:
-            names = [_norm(n) for n in [p["name_ko"], p["name_en"], *p.get("aliases", [])]]
-            best = 0.0
+            raw = [p["name_ko"], p["name_en"], *p.get("aliases", [])]
+            names = [_norm(n) for n in raw]
+            # 파라미터 튜닝: 발화에 이름이 그대로 나오면 0.8
+            best = 0.8 if utterance and any(self._said(n, utt_norm, utt_words) for n in raw) else 0.0
             for q in qs:
                 for n in names:
                     if not q or not n:
@@ -96,13 +131,19 @@ class Engine:
             issues = [e.code]
         if not issues:
             return out
+        if set(issues) <= CLARIFY_ISSUES:
+            # QWEN 구현: 확인 질문만 잘못 썼으면 다시 생성하지 않고 말한 사람 언어의 고정 문구로 바꾼다(재생할 번역 없음)
+            return {"status": "clarification_required", "translated_text": None,
+                    "clarification_question": SAY_AGAIN[req.source_locale]}
         # QWEN 구현: 검증 실패 시 이유를 알려 주고 한 번만 결정적(temperature 0)으로 다시 생성
         if deadline - time.monotonic() < MIN_RETRY_S:
             raise ValidationFailed(issues)
+        hints = dict.fromkeys(REPAIR_HINT[i.split(":")[0]] for i in issues if i.split(":")[0] in REPAIR_HINT)
         repair = messages + ([{"role": "assistant", "content": P.completion_text(out)}] if out else []) + [{
             "role": "user",
-            "content": json.dumps({"repair": "The previous output broke these checks: " + ", ".join(issues)
-                                   + ". Translate the same utterance again, following every rule. JSON only."}),
+            "content": json.dumps({"repair": "The previous output broke these checks: " + ", ".join(issues) + ". "
+                                   + " ".join(hints) + " Translate the same utterance again, following every rule. "
+                                   "JSON only."}, ensure_ascii=False),
         }]
         try:
             out = await self.client.chat_json(repair, P.TRANSLATE_SCHEMA, P.TRANSLATE_MAX_TOKENS,
@@ -126,7 +167,8 @@ class Engine:
             raise ValidationFailed(issues)
         if out["intent"] != "set_destination":
             return {**out, "status": "not_destination", "candidates": [], "clarification_question": None}
-        cands = self.poi.search([out.get("query_ko_candidate"), out.get("query_original")], out.get("region_hint"))
+        cands = self.poi.search([out.get("query_ko_candidate"), out.get("query_original")], out.get("region_hint"),
+                                utterance=req.text)
         ambiguous = len(cands) > 1 and cands[0]["score"] - cands[1]["score"] < 0.1
         needs = bool(out["needs_confirmation"] or ambiguous or not cands or not cands[0]["verified"])
         if not cands:

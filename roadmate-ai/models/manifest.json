@@ -25,11 +25,11 @@
     "cache_ram_mib": 0
   },
   "versions": {
-    "translate_prompt": "translate-v1",
+    "translate_prompt": "translate-v2",
     "destination_prompt": "destination-v1",
-    "glossary": "rental-ko-en-v1",
+    "glossary": "rental-ko-en-v2",
     "rules": "rules-ko-en-v1",
-    "poi": "poi-jeju-demo-v1",
+    "poi": "poi-jeju-demo-v2",
     "eval": "eval-ko-en-v1"
   }
 }

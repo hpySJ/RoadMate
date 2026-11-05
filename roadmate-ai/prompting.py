@@ -30,6 +30,11 @@ def glossary() -> dict:
     return json.loads((ROOT / "packs" / "glossary.ko-en.json").read_text(encoding="utf-8"))
 
 
+@lru_cache(maxsize=None)
+def places() -> tuple:
+    return tuple(json.loads((ROOT / "packs" / "poi.demo.json").read_text(encoding="utf-8"))["places"])
+
+
 def _dump(obj) -> str:
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
 
@@ -41,10 +46,9 @@ def _find_terms(text: str, terms: list[str], lang: str) -> list[tuple[int, int, 
             pat = r"(?<![A-Za-z])" + re.escape(t) + r"(?![A-Za-z])"
             hits += [(m.start(), m.end(), t) for m in re.finditer(pat, text, re.IGNORECASE)]
         else:
-            start = text.find(t)
-            while start != -1:
-                hits.append((start, start + len(t), t))
-                start = text.find(t, start + 1)
+            # 검증: 한국어는 띄어쓰기가 달라도 같은 용어로 본다(자차보험 = 자차 보험)
+            pat = r"\s?".join(map(re.escape, t.replace(" ", "")))
+            hits += [(m.start(), m.end(), t) for m in re.finditer(pat, text)]
     return hits
 
 
@@ -70,10 +74,16 @@ def match_concepts(text: str, locale: str, categories: set | None = None) -> dic
 
 
 def select_glossary(text: str, source_locale: str, target_locale: str) -> dict[str, str]:
-    # QWEN 구현: 발화에 나온 용어만 넣어 프롬프트를 짧게 유지
+    # QWEN 구현: 발화에 나온 용어·데모 장소 이름만 넣어 프롬프트를 짧게 유지(성산일출봉 = Seongsan Ilchulbong)
     by_id = {e["id"]: e for e in glossary()["entries"]}
-    tgt = LANG_KEY[target_locale]
-    return {surface: by_id[cid][tgt][0] for cid, surface in match_concepts(text, source_locale).items()}
+    src, tgt = LANG_KEY[source_locale], LANG_KEY[target_locale]
+    out = {surface: by_id[cid][tgt][0] for cid, surface in match_concepts(text, source_locale).items()}
+    for p in places():
+        names = [p[f"name_{src}"]] + [a for a in p.get("aliases", []) if bool(re.search("[가-힣]", a)) == (src == "ko")]
+        hits = sorted(_find_terms(text, names, src), key=lambda h: h[0] - h[1])
+        if hits:
+            out.setdefault(text[hits[0][0]:hits[0][1]], p[f"name_{tgt}"])
+    return out
 
 
 def _few_shot(name: str) -> list[dict]:

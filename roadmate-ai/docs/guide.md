@@ -129,7 +129,7 @@ POST /internal/v1/translate
 {"request_id":"req-001","session_id":"sess-001","session_epoch":3,"turn_id":1,
  "status":"ok","translated_text":"휘발유로 가득 넣어 주세요.","clarification_question":null,
  "engine_bundle":"roadmate-ko-en-q4-v1","model_id":"roadmate-qwen4b-q4",
- "prompt_version":"translate-v1","glossary_version":"rental-ko-en-v1","latency_ms":850}
+ "prompt_version":"translate-v2","glossary_version":"rental-ko-en-v2","latency_ms":850}
 ```
 - `source_locale`/`target_locale`: `ko-KR`, `en-US` / `scenario`: `gas_station`, `parking`, `rental_counter`, `accident`, `general`
 - `status=clarification_required`이면 `clarification_question`(말한 사람의 언어)을 화면에 보여 주고 **번역 음성은 재생하지 않는다**.
@@ -255,7 +255,7 @@ Q5_K_M 비교:
 - `train_qlora.py`는 `dataset_manifest.json`의 해시를 검사하고, `--allow-draft`로 만든 자료면 `--smoke` 외에는 중단한다.
   스모크 시험만 할 때는 `--allow-draft`로 seed 초안을 쓴다.
 - `--smoke`: optimizer step 2회, completion 마스크 검사(정답 JSON+`<|im_end|>`만 학습), 어댑터 저장, 생성 1회. `train/runs/lora-v1/smoke/run_meta.json`에서 `peak_vram_gib` 확인.
-- 설정은 `train/training_config.json`(NF4 + double quant, LoRA r8/α16/dropout 0.05, q_proj·v_proj, 배치 1×누적 16, lr 1e-4 cosine, warmup 5%, epoch 1, max_length 1280, gradient checkpointing). few-shot 포함 프롬프트가 실측 약 1,000토큰이라 max_length를 1280으로 둔다.
+- 설정은 `train/training_config.json`(NF4 + double quant, LoRA r8/α16/dropout 0.05, q_proj·v_proj, 배치 1×누적 16, lr 1e-4 cosine, warmup 5%, epoch 1, max_length 1536, gradient checkpointing). few-shot 포함 번역 프롬프트가 약 1,200토큰(translate-v2 추정)이라 max_length를 1536으로 둔다. `prepare_data.py --tokenizer`가 실제 길이를 재고 넘으면 중단한다.
 - 학습 loss 감소만으로 고르지 않는다. 숫자·부정·연료 오류가 늘면 채택하지 않는다.
 
 ### 8.4 효과 비교(같은 검증 자료)
@@ -311,7 +311,7 @@ Q5_K_M 비교:
 - `pytest` 259건 통과: API 계약·오류 코드·중복/충돌·epoch 취소(진행 중 취소·늦은 취소·슬롯 대기 중 취소)·busy 429·timeout 504·모델 계산 중 슬롯 유지·검증 실패 502·교정 재시도·목적지 매칭·OpenAPI 일치, 검증기 최소쌍(연료 긍정·부정, 오전·오후, 통화 포함), 규칙 엔진 fixture 33단계(관측 공백·미래 시각 포함), 발화 큐 반복 제한, 평가 데이터 117개 정답이 검증기를 통과하고 누수 없음.
 - `start_all.ps1 -Mock` → `smoke.py` → `evaluate.py` → `stop_all.ps1` 실제 실행. 중복 시작·포트 점유 시 시작 거부 확인.
 - `train_qlora.py`의 데이터 manifest 검사는 작성 PC에 torch 환경이 없어 실행하지 못했다(`prepare_data.py`·`convert_adapter.py`의 검사는 실행 확인).
-- 실제 Qwen 토크나이저로 프롬프트 길이 측정(번역 약 980토큰, 목적지 약 480토큰).
+- 실제 Qwen 토크나이저로 프롬프트 길이 측정(translate-v1 약 980토큰, 목적지 약 480토큰). translate-v2는 약 1,200토큰으로 추정하며 DLPC에서 `prepare_data.py --tokenizer`로 다시 잰다.
 - 학습 파이프라인(transformers 5.22.1, trl 1.17.1, peft 0.21.2 실제 버전)을 CPU·초소형 Qwen3 구조로 끝까지 실행: 데이터 준비 → completion 마스크 검사 → 학습 2 step → 평가 → 어댑터 저장 → 생성 → `eval_hf.py`.
 - llama.cpp b12076 릴리스 자산 이름, `/slots`·`--lora`·`--cache-ram`·`--jinja` 옵션, `response_format` 파싱 방식을 소스·문서에서 확인.
 

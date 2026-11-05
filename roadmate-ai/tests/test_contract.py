@@ -47,7 +47,7 @@ def test_translate_ok_and_ready(client):
     assert r.status_code == 200, r.text
     d = r.json()
     assert d["status"] == "ok" and d["model_id"] == "mock" and d["translated_text"].startswith("[모의 번역]")
-    assert d["prompt_version"] == "translate-v1" and r.headers["content-type"].endswith("charset=utf-8")
+    assert d["prompt_version"] == "translate-v2" and r.headers["content-type"].endswith("charset=utf-8")
     assert client.get("/health/live").json() == {"status": "ok"}
     ready = client.get("/health/ready")
     assert ready.status_code == 200 and ready.json()["ready"] is True
@@ -106,6 +106,34 @@ def test_validation_retry_then_success():
     with TestClient(create_app(SETTINGS, fake)) as c:
         d = c.post("/internal/v1/translate", json=body()).json()
         assert d["translated_text"] == "휘발유 가득 넣어 주세요." and fake.calls == 2
+
+
+class RecordingLlama(FakeLlama):
+    def __init__(self, outputs):
+        super().__init__(outputs=outputs)
+        self.messages = []
+
+    async def chat_json(self, messages, *a, **kw):
+        self.messages.append(messages)
+        return await super().chat_json(messages, *a, **kw)
+
+
+def test_retry_explains_what_to_fix():
+    fake = RecordingLlama([ok("信用카드로 결제할 수 있어요?"), ok("신용카드로 결제할 수 있어요?")])
+    with TestClient(create_app(SETTINGS, fake)) as c:
+        d = c.post("/internal/v1/translate", json=body(text="Can I pay by credit card?")).json()
+    assert d["translated_text"] == "신용카드로 결제할 수 있어요?"
+    assert "Hangul only" in fake.messages[1][-1]["content"]
+
+
+def test_bad_clarification_becomes_fixed_question():
+    q = {"status": "clarification_required", "translated_text": None, "clarification_question": "Could you say it again?"}
+    fake = FakeLlama(outputs=[q])
+    with TestClient(create_app(SETTINGS, fake)) as c:
+        d = c.post("/internal/v1/translate", json=body(text="저기 그거... 어...", source_locale="ko-KR",
+                                                     target_locale="en-US")).json()
+    assert d["status"] == "clarification_required" and fake.calls == 1
+    assert d["clarification_question"] == "잘 알아듣지 못했어요. 문장 전체를 다시 말씀해 주세요."
 
 
 def test_validation_failure_is_502_and_not_cached():
@@ -211,6 +239,22 @@ def test_destination_match_and_not_found():
         assert b["status"] == "not_found" and b["candidates"] == []
         o = c.post("/internal/v1/parse-destination", json={**db, "request_id": "r3", "text": "Turn on the AC"}).json()
         assert o["status"] == "not_destination"
+
+
+def test_destination_found_from_utterance_when_query_is_wrong():
+    # 검증: 모델 검색어가 틀려도(하라산) 발화에 있는 장소 이름(Seongpanak)으로 찾는다
+    wrong = {"intent": "set_destination", "query_original": "Hallasan", "query_ko_candidate": "하라산",
+             "region_hint": None, "category_hint": "mountain", "needs_confirmation": False}
+    falls = {**wrong, "query_original": "the waterfall in Seogwipo", "query_ko_candidate": "서귀포의 물결"}
+    fake = FakeLlama(outputs=[wrong, falls])
+    db = {k: v for k, v in body().items() if k not in ("target_locale", "scenario")}
+    with TestClient(create_app(SETTINGS, fake)) as c:
+        a = c.post("/internal/v1/parse-destination", json={**db, "text": "I want to climb Hallasan from Seongpanak."}).json()
+        b = c.post("/internal/v1/parse-destination",
+                   json={**db, "request_id": "r2", "text": "Take me to the waterfall in Seogwipo."}).json()
+    assert a["candidates"][0]["poi_id"] == "seongpanak-trail"
+    assert {x["poi_id"] for x in b["candidates"][:2]} == {"cheonjiyeon-falls", "jeongbang-falls"}
+    assert b["needs_confirmation"] is True
 
 
 def test_openapi_committed_matches():
