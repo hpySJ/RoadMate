@@ -1,0 +1,27 @@
+# Python
+.venv/
+.venv-train/
+.venv-convert/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 모델·런타임(용량 큼, scripts로 재설치)
+models/*.gguf
+models/adapters/
+tools/llama/
+tools/llama-src/
+
+# 실행 산출물
+logs/
+run/
+eval/results/
+packs/drafts/
+
+# 학습 산출물(manifest·config만 커밋)
+train/out/
+train/runs/
+train/base-config/
+
+# 비밀값
+.env

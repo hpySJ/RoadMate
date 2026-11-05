@@ -1,0 +1,22 @@
+# roadmate-ai 폴더 변경 시 모델 없이(mock) 계약·검증·규칙 시험을 실행
+name: roadmate-ai tests
+on:
+  pull_request:
+    paths: ["roadmate-ai/**", ".github/workflows/roadmate-ai.yml"]
+  push:
+    branches: [main]
+    paths: ["roadmate-ai/**", ".github/workflows/roadmate-ai.yml"]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: roadmate-ai
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.lock.txt
+      - run: python -m pytest -q
+      - run: python guidance.py

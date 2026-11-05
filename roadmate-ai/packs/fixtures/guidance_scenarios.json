@@ -1,0 +1,123 @@
+{
+  "version": "guidance-fixtures-v1",
+  "note": "speed는 m/s, 제한속도는 km/h. 앱 포팅 동등성 시험에 같은 파일을 사용한다.",
+  "scenarios": [
+    {
+      "id": "school_zone_inside_speeding_sustained",
+      "locale": "en-US",
+      "steps": [
+        {"snapshot": {"now_ms": 0, "speed": {"value": 13.9, "unit": "m/s", "status": "valid", "ts_ms": 0}, "current_speed_limit": {"value": 30, "status": "valid", "ts_ms": 0}, "school_zone": {"state": "inside", "zone_id": "z1", "status": "valid", "ts_ms": 0}}, "expect_spoken": null},
+        {"snapshot": {"now_ms": 1000, "speed": {"value": 13.9, "unit": "m/s", "status": "valid", "ts_ms": 1000}, "current_speed_limit": {"value": 30, "status": "valid", "ts_ms": 1000}, "school_zone": {"state": "inside", "zone_id": "z1", "status": "valid", "ts_ms": 1000}}, "expect_spoken": null},
+        {"snapshot": {"now_ms": 2000, "speed": {"value": 13.9, "unit": "m/s", "status": "valid", "ts_ms": 2000}, "current_speed_limit": {"value": 30, "status": "valid", "ts_ms": 2000}, "school_zone": {"state": "inside", "zone_id": "z1", "status": "valid", "ts_ms": 2000}}, "expect_spoken": "school_zone_current_speed"},
+        {"snapshot": {"now_ms": 3000, "speed": {"value": 13.9, "unit": "m/s", "status": "valid", "ts_ms": 3000}, "current_speed_limit": {"value": 30, "status": "valid", "ts_ms": 3000}, "school_zone": {"state": "inside", "zone_id": "z1", "status": "valid", "ts_ms": 3000}}, "expect_spoken": null}
+      ]
+    },
+    {
+      "id": "school_zone_inside_within_limit",
+      "locale": "ko-KR",
+      "steps": [
+        {"snapshot": {"now_ms": 0, "speed": {"value": 8.0, "unit": "m/s", "status": "valid", "ts_ms": 0}, "current_speed_limit": {"value": 30, "status": "valid", "ts_ms": 0}, "school_zone": {"state": "inside", "zone_id": "z1", "status": "valid", "ts_ms": 0}}, "expect_spoken": null},
+        {"snapshot": {"now_ms": 5000, "speed": {"value": 8.0, "unit": "m/s", "status": "valid", "ts_ms": 5000}, "current_speed_limit": {"value": 30, "status": "valid", "ts_ms": 5000}, "school_zone": {"state": "inside", "zone_id": "z1", "status": "valid", "ts_ms": 5000}}, "expect_spoken": null}
+      ]
+    },
+    {
+      "id": "school_zone_stale_speed_suppressed",
+      "locale": "en-US",
+      "steps": [
+        {"snapshot": {"now_ms": 0, "speed": {"value": 13.9, "unit": "m/s", "status": "valid", "ts_ms": 0}, "current_speed_limit": {"value": 30, "status": "valid", "ts_ms": 0}, "school_zone": {"state": "inside", "zone_id": "z1", "status": "valid", "ts_ms": 0}}, "expect_spoken": null},
+        {"snapshot": {"now_ms": 4000, "speed": {"value": 13.9, "unit": "m/s", "status": "valid", "ts_ms": 1000}, "current_speed_limit": {"value": 30, "status": "valid", "ts_ms": 4000}, "school_zone": {"state": "inside", "zone_id": "z1", "status": "valid", "ts_ms": 4000}}, "expect_spoken": null}
+      ]
+    },
+    {
+      "id": "school_zone_approach_faster_than_limit",
+      "locale": "en-US",
+      "steps": [
+        {"snapshot": {"now_ms": 0, "speed": {"value": 12.5, "unit": "m/s", "status": "valid", "ts_ms": 0}, "school_zone": {"state": "ahead", "on_route": true, "distance_m": 200, "limit_kph": 30, "limit_status": "valid", "zone_id": "z2", "status": "valid", "ts_ms": 0}}, "expect_spoken": "school_zone_approach"}
+      ]
+    },
+    {
+      "id": "school_zone_approach_already_slow",
+      "locale": "en-US",
+      "steps": [
+        {"snapshot": {"now_ms": 0, "speed": {"value": 7.0, "unit": "m/s", "status": "valid", "ts_ms": 0}, "school_zone": {"state": "ahead", "on_route": true, "distance_m": 200, "limit_kph": 30, "limit_status": "valid", "zone_id": "z2", "status": "valid", "ts_ms": 0}}, "expect_spoken": null}
+      ]
+    },
+    {
+      "id": "school_zone_approach_limit_unknown_once_per_zone",
+      "locale": "ko-KR",
+      "steps": [
+        {"snapshot": {"now_ms": 0, "speed": {"value": 12.5, "unit": "m/s", "status": "valid", "ts_ms": 0}, "current_speed_limit": {"value": 50, "status": "valid", "ts_ms": 0}, "school_zone": {"state": "ahead", "on_route": true, "distance_m": 250, "limit_kph": null, "limit_status": "unknown", "zone_id": "z3", "status": "valid", "ts_ms": 0}}, "expect_spoken": "school_zone_approach_no_limit"},
+        {"snapshot": {"now_ms": 200000, "speed": {"value": 12.5, "unit": "m/s", "status": "valid", "ts_ms": 200000}, "school_zone": {"state": "ahead", "on_route": true, "distance_m": 150, "limit_kph": null, "limit_status": "unknown", "zone_id": "z3", "status": "valid", "ts_ms": 200000}}, "expect_spoken": null}
+      ]
+    },
+    {
+      "id": "school_zone_not_on_route",
+      "locale": "en-US",
+      "steps": [
+        {"snapshot": {"now_ms": 0, "speed": {"value": 12.5, "unit": "m/s", "status": "valid", "ts_ms": 0}, "school_zone": {"state": "ahead", "on_route": false, "distance_m": 100, "limit_kph": 30, "limit_status": "valid", "zone_id": "z4", "status": "valid", "ts_ms": 0}}, "expect_spoken": null}
+      ]
+    },
+    {
+      "id": "right_turn_with_tbt",
+      "locale": "en-US",
+      "steps": [
+        {"snapshot": {"now_ms": 0, "speed": {"value": 8.0, "unit": "m/s", "status": "valid", "ts_ms": 0}, "turn_signal": {"value": "right", "status": "valid", "ts_ms": 0}, "tbt": {"value": "right", "distance_m": 80, "status": "valid", "ts_ms": 0}}, "expect_spoken": "right_turn_red_light_stop"}
+      ]
+    },
+    {
+      "id": "right_signal_lane_change_no_tbt",
+      "locale": "en-US",
+      "steps": [
+        {"snapshot": {"now_ms": 0, "speed": {"value": 15.0, "unit": "m/s", "status": "valid", "ts_ms": 0}, "turn_signal": {"value": "right", "status": "valid", "ts_ms": 0}, "tbt": {"value": "straight", "distance_m": 400, "status": "valid", "ts_ms": 0}}, "expect_spoken": null}
+      ]
+    },
+    {
+      "id": "hazard_lights_ignored",
+      "locale": "en-US",
+      "steps": [
+        {"snapshot": {"now_ms": 0, "speed": {"value": 3.0, "unit": "m/s", "status": "valid", "ts_ms": 0}, "turn_signal": {"value": "hazard", "status": "valid", "ts_ms": 0}, "tbt": {"value": "right", "distance_m": 50, "status": "valid", "ts_ms": 0}}, "expect_spoken": null}
+      ]
+    },
+    {
+      "id": "right_turn_daily_limit_two",
+      "locale": "ko-KR",
+      "steps": [
+        {"snapshot": {"now_ms": 0, "turn_signal": {"value": "right", "status": "valid", "ts_ms": 0}, "tbt": {"value": "right", "distance_m": 80, "status": "valid", "ts_ms": 0}}, "expect_spoken": "right_turn_red_light_stop"},
+        {"snapshot": {"now_ms": 60000, "turn_signal": {"value": "right", "status": "valid", "ts_ms": 60000}, "tbt": {"value": "right", "distance_m": 80, "status": "valid", "ts_ms": 60000}}, "expect_spoken": null},
+        {"snapshot": {"now_ms": 301000, "turn_signal": {"value": "right", "status": "valid", "ts_ms": 301000}, "tbt": {"value": "right", "distance_m": 80, "status": "valid", "ts_ms": 301000}}, "expect_spoken": "right_turn_red_light_stop"},
+        {"snapshot": {"now_ms": 602000, "turn_signal": {"value": "right", "status": "valid", "ts_ms": 602000}, "tbt": {"value": "right", "distance_m": 80, "status": "valid", "ts_ms": 602000}}, "expect_spoken": null}
+      ]
+    },
+    {
+      "id": "cancelled_playback_not_counted",
+      "locale": "en-US",
+      "steps": [
+        {"snapshot": {"now_ms": 0, "turn_signal": {"value": "right", "status": "valid", "ts_ms": 0}, "tbt": {"value": "right", "distance_m": 80, "status": "valid", "ts_ms": 0}}, "expect_spoken": "right_turn_red_light_stop", "played": false},
+        {"snapshot": {"now_ms": 1000, "turn_signal": {"value": "right", "status": "valid", "ts_ms": 1000}, "tbt": {"value": "right", "distance_m": 60, "status": "valid", "ts_ms": 1000}}, "expect_spoken": "right_turn_red_light_stop"}
+      ]
+    },
+    {
+      "id": "stop_lock",
+      "locale": "en-US",
+      "steps": [
+        {"snapshot": {"now_ms": 0, "gear": {"value": "P", "status": "valid", "ts_ms": 0}, "speed": {"value": 0.0, "unit": "m/s", "status": "valid", "ts_ms": 0}}, "expect_spoken": null, "expect_unlocked": false},
+        {"snapshot": {"now_ms": 1000, "gear": {"value": "P", "status": "valid", "ts_ms": 0}, "speed": {"value": 0.05, "unit": "m/s", "status": "valid", "ts_ms": 1000}}, "expect_spoken": null, "expect_unlocked": true},
+        {"snapshot": {"now_ms": 1200, "gear": {"value": "D", "status": "valid", "ts_ms": 1200}, "speed": {"value": 0.0, "unit": "m/s", "status": "valid", "ts_ms": 1200}}, "expect_spoken": null, "expect_unlocked": false},
+        {"snapshot": {"now_ms": 1400, "gear": {"value": "P", "status": "valid", "ts_ms": 1400}, "speed": {"value": 0.0, "unit": "m/s", "status": "error", "ts_ms": 1400}}, "expect_spoken": null, "expect_unlocked": false},
+        {"snapshot": {"now_ms": 5000, "gear": {"value": "P", "status": "unavailable", "ts_ms": 5000}, "speed": {"value": 0.0, "unit": "m/s", "status": "valid", "ts_ms": 5000}}, "expect_spoken": null, "expect_unlocked": false}
+      ]
+    },
+    {
+      "id": "stop_lock_gap_and_future_ts",
+      "locale": "en-US",
+      "steps": [
+        {"snapshot": {"now_ms": 0, "gear": {"value": "P", "status": "valid", "ts_ms": 0}, "speed": {"value": 0.0, "unit": "m/s", "status": "valid", "ts_ms": 0}}, "expect_spoken": null, "expect_unlocked": false},
+        {"snapshot": {"now_ms": 5000, "gear": {"value": "P", "status": "valid", "ts_ms": 0}, "speed": {"value": 0.0, "unit": "m/s", "status": "valid", "ts_ms": 5000}}, "expect_spoken": null, "expect_unlocked": false},
+        {"snapshot": {"now_ms": 6000, "gear": {"value": "P", "status": "valid", "ts_ms": 0}, "speed": {"value": 0.0, "unit": "m/s", "status": "valid", "ts_ms": 6000}}, "expect_spoken": null, "expect_unlocked": true},
+        {"snapshot": {"now_ms": 6500, "gear": {"value": "P", "status": "valid", "ts_ms": 0}, "speed": {"value": 0.0, "unit": "m/s", "status": "valid", "ts_ms": 9000}}, "expect_spoken": null, "expect_unlocked": false},
+        {"snapshot": {"now_ms": 7000, "gear": {"value": "P", "status": "valid", "ts_ms": 0}, "speed": {"value": 0.0, "unit": "m/s", "status": "valid", "ts_ms": 7000}}, "expect_spoken": null, "expect_unlocked": false},
+        {"snapshot": {"now_ms": 8000, "gear": {"value": "P", "status": "valid", "ts_ms": 0}, "speed": {"value": 0.0, "unit": "m/s", "status": "valid", "ts_ms": 8000}}, "expect_spoken": null, "expect_unlocked": true}
+      ]
+    }
+  ]
+}

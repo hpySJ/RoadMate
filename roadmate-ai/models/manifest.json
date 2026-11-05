@@ -1,0 +1,35 @@
+{
+  "engine_bundle": "roadmate-ko-en-q4-v1",
+  "model": {
+    "alias": "roadmate-qwen4b-q4",
+    "base_repo": "Qwen/Qwen3-4B-Instruct-2507",
+    "base_revision": "cdbee75f17c01a7cc42f958dc650907174af0554",
+    "gguf_repo": "unsloth/Qwen3-4B-Instruct-2507-GGUF",
+    "gguf_revision": "a06e946bb6b655725eafa393f4a9745d460374c9",
+    "gguf_file": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+    "gguf_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+    "gguf_size": 2497281120,
+    "license": "apache-2.0"
+  },
+  "adapter": null,
+  "runtime": {
+    "llama_cpp_tag": "b12076",
+    "llama_cpp_backend": "cuda-12.4",
+    "port": 8081,
+    "ctx": 2048,
+    "parallel": 1,
+    "n_predict": 256,
+    "n_gpu_layers": 99,
+    "batch": 256,
+    "ubatch": 128,
+    "cache_ram_mib": 0
+  },
+  "versions": {
+    "translate_prompt": "translate-v3",
+    "destination_prompt": "destination-v1",
+    "glossary": "rental-ko-en-v3",
+    "rules": "rules-ko-en-v1",
+    "poi": "poi-jeju-demo-v2",
+    "eval": "eval-ko-en-v1"
+  }
+}

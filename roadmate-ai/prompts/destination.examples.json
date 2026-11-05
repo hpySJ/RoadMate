@@ -1,0 +1,14 @@
+[
+  {
+    "input": {"source_locale": "en-US", "utterance": "Take me to Seongsan Sunrise Peak."},
+    "output": {"intent": "set_destination", "query_original": "Seongsan Sunrise Peak", "query_ko_candidate": "성산일출봉", "region_hint": "성산", "category_hint": "attraction", "needs_confirmation": false}
+  },
+  {
+    "input": {"source_locale": "en-US", "utterance": "Let's go to a beach near here."},
+    "output": {"intent": "set_destination", "query_original": "a beach", "query_ko_candidate": null, "region_hint": null, "category_hint": "beach", "needs_confirmation": true}
+  },
+  {
+    "input": {"source_locale": "ko-KR", "utterance": "에어컨 좀 더 세게 틀어 줘"},
+    "output": {"intent": "other", "query_original": null, "query_ko_candidate": null, "region_hint": null, "category_hint": null, "needs_confirmation": false}
+  }
+]
