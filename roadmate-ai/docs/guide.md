@@ -289,7 +289,7 @@ Q5_K_M 비교:
 | 429 `busy`가 잦음 | 앱에서 같은 세션 중복 호출, 버튼 연타 방지 |
 | 취소·504 뒤 계속 429 | llama-server가 아직 계산 중이면 슬롯을 열지 않는다(`logs\ai.err.log`에 `still processing`). 계속되면 `stop_all.ps1` → `start_all.ps1` |
 | `already running` / `port ... in use` | 이전 서버가 남아 있음. `stop_all.ps1`, 그래도 남으면 `netstat -ano \| findstr :8000`(또는 8081)의 PID 종료 |
-| 502 `output_validation_failed` | `message`에 원인(예: `number_missing:30000`, `negation_mismatch`). dev 평가로 패턴 확인 → 프롬프트·용어집 수정 |
+| 502 `output_validation_failed` | `message`에 원인(예: `number_missing:30000`, `negation_mismatch`). 실제로 걸린 출력을 보려면 `LOG_REJECTED=1`로 서버를 띄우고 `logs/ai.err.log`에서 `rejected`를 찾는다(개발·평가 전용). dev 평가로 패턴 확인 → 프롬프트·용어집·검사기 수정 |
 | 504 | 첫 요청 지연(모델 준비 전) 또는 GPU 미사용 |
 | PowerShell에서 한글 깨짐 | 스크립트는 UTF-8 BOM으로 저장되어 있다. 편집기에서 BOM 유지 |
 | `Expand-Archive`·다운로드 실패 | 사내망 프록시, `%TEMP%\roadmate-llama-<tag>` 삭제 후 재시도 |

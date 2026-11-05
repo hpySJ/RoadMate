@@ -1,5 +1,6 @@
 """번역·목적지 추론 서비스: 프롬프트 → 로컬 모델 → 검증 → 1회 교정 재시도."""
 import json
+import logging
 import re
 import time
 import unicodedata
@@ -12,6 +13,7 @@ from validation import looks_like_other_language, validate_destination, validate
 
 ROOT = Path(__file__).resolve().parent
 MIN_RETRY_S = 1.5
+log = logging.getLogger("roadmate.ai")
 
 WRONG_LANG = {
     "en-US": "It sounds like the other language was spoken. Please speak English, or switch the direction.",
@@ -131,6 +133,7 @@ class Engine:
             issues = [e.code]
         if not issues:
             return out
+        self._log_rejected(req, issues, out)
         if set(issues) <= CLARIFY_ISSUES:
             # QWEN 구현: 확인 질문만 잘못 썼으면 다시 생성하지 않고 말한 사람 언어의 고정 문구로 바꾼다(재생할 번역 없음)
             return {"status": "clarification_required", "translated_text": None,
@@ -152,8 +155,14 @@ class Engine:
             raise ValidationFailed(issues + [e.code]) from e
         issues = validate_translation(out, req.text, req.source_locale, req.target_locale, structural)
         if issues:
+            self._log_rejected(req, issues, out)
             raise ValidationFailed(issues)
         return out
+
+    def _log_rejected(self, req, issues: list[str], out: dict | None):
+        if self.s.log_rejected:
+            log.warning("rejected %s %s | %s | %s", req.request_id, ",".join(issues), req.text,
+                        P.completion_text(out) if out else None)
 
     async def parse_destination(self, req, deadline: float) -> dict:
         messages = P.destination_messages(req.source_locale, req.text)

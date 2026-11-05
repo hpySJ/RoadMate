@@ -126,6 +126,16 @@ def test_retry_explains_what_to_fix():
     assert "Hangul only" in fake.messages[1][-1]["content"]
 
 
+def test_log_rejected_only_when_enabled(caplog):
+    bad = ok("휘발유와 경유로 5만 원어치 넣어 주세요.")
+    text = "Please put in 50,000 won of gasoline, not diesel."
+    for flag, expect in ((False, 0), (True, 2)):
+        caplog.clear()
+        with TestClient(create_app(dataclasses.replace(SETTINGS, log_rejected=flag), FakeLlama(outputs=[bad, bad]))) as c:
+            assert c.post("/internal/v1/translate", json=body(text=text)).status_code == 502
+        assert sum("rejected" in r.getMessage() for r in caplog.records) == expect
+
+
 def test_bad_clarification_becomes_fixed_question():
     q = {"status": "clarification_required", "translated_text": None, "clarification_question": "Could you say it again?"}
     fake = FakeLlama(outputs=[q])

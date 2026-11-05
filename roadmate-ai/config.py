@@ -34,6 +34,7 @@ class Settings:
     max_text_chars: int
     internal_token: str
     manifest: dict
+    log_rejected: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -55,4 +56,6 @@ class Settings:
             # 백엔드 연동: 백엔드와 공유하는 내부 토큰(비어 있으면 검사 안 함)
             internal_token=env("AI_INTERNAL_TOKEN", ""),
             manifest=m,
+            # 검증: 개발·평가 전용. 1이면 검사에 걸린 원문과 모델 출력을 로그에 남긴다(실사용 금지, 개인정보)
+            log_rejected=env("LOG_REJECTED", "0") == "1",
         )
