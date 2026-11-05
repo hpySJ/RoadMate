@@ -289,7 +289,7 @@ NEG = {
         re.compile(r"\b(instead|rather than|other than|except|excluding|apart from|only|stop|refuse|fine|okay|ok|all right|free)\b", re.I),
     ),
     "ko-KR": (
-        re.compile(r"않|못|없|말고|마세요|마십시오|말아|지 ?마|아니|아닌|금지|불가"
+        re.compile(r"않|못|없|말고|마세요|마십시오|말아|지 ?마|아니|아닌|아닙|아냐|아녜|금지|불가"
                    r"|(?<![가-힣])안\s?(?!녕|내|전|에|쪽|경|심|과|개|건|부|마|방|색|약|면|정|팎|으로|까)[가-힣]"),
         re.compile(r"무사|괜찮|모르|몰라|싫|아직|대신|그만|무료|제외|빼고"),
     ),
@@ -339,7 +339,7 @@ FUEL_NEG_BEFORE = {
 }
 FUEL_NEG_AFTER = {
     "en-US": re.compile(r"^\s+(?:(?:is|was)\s+not|isn't|wasn't|is\s+(?:wrong|prohibited|forbidden)|not\s+allowed)\b", re.I),
-    "ko-KR": re.compile(r"^(?:차)?(?:은|는|이|가|을|를|으로|로|도|만)?\s*(?:말고|아니|대신|빼|제외|금지|절대|안\s?(?:돼|되|됩|넣|쓰)"
+    "ko-KR": re.compile(r"^(?:차)?(?:은|는|이|가|을|를|으로|로|도|만)?\s*(?:말고|아니|아닙|아냐|아녜|대신|빼|제외|금지|절대|안\s?(?:돼|되|됩|넣|쓰)"
                         r"|(?:넣|주유하|주유|쓰|사용하|채우)(?:지\s?(?:마|말|않)|으?시?면\s?안))"),
 }
 CLAUSE = re.compile(r"[,.;!?]")
