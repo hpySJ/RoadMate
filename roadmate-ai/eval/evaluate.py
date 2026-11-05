@@ -120,13 +120,24 @@ def main():
         rs = [r for r in rows if r["case"]["task"] == task]
         p = sum(r["pass"] for r in rs)
         lines.append(f"| {task} | {len(rs)} | {p} | {p / len(rs):.1%} |")
+    cats = sorted({r["case"]["category"] for r in rows if r["case"].get("category")})
+    if cats:  # 일반 평가셋: 상황별로 약한 곳을 본다
+        lines += ["", "| category | n | auto pass | pass rate |", "|---|---:|---:|---:|"]
+        for cat in cats:
+            rs = [r for r in rows if r["case"].get("category") == cat]
+            p = sum(r["pass"] for r in rs)
+            lines.append(f"| {cat} | {len(rs)} | {p} | {p / len(rs):.1%} |")
     lat = [r["body"]["latency_ms"] for r in rows if r["http"] == 200 and "latency_ms" in r["body"]]
     wall = [r["wall_ms"] for r in rows if r["http"] == 200]
     errors = Counter(f for r in rows for f in r["flags"] if f.startswith("http_"))
+    # 검증: 502가 어떤 검사에 걸렸는지 종류별로 센다(number_missing:18 → number_missing)
+    issues = Counter(i.split(":")[0] for r in rows if r["http"] == 502
+                     for i in (r["body"].get("message") or "").split(", ") if i)
     lines += ["", f"- model latency p50/p95 ms: {pct(lat, .5)} / {pct(lat, .95)}",
               f"- HTTP wall p50/p95 ms: {pct(wall, .5)} / {pct(wall, .95)}",
               f"- mean model latency ms: {round(statistics.mean(lat)) if lat else None}",
-              f"- errors: {dict(errors) or 'none'}", "",
+              f"- errors: {dict(errors) or 'none'}",
+              f"- 502 reasons: {dict(issues) or 'none'}", "",
               "자동 통과는 보조 지표다. review.csv에서 사람이 의미 보존·치명 오류를 판정한다."]
     (out_dir / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines))

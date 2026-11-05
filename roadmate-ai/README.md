@@ -19,7 +19,7 @@ APK → 백엔드(8080) → AI 서버(8000) → llama-server(8081)
 | `validation.py` | 번역 결과 검사(숫자, 시간, 통화, 부정, 연료, 좌우) |
 | `guidance.py`, `packs/` | 주행 안내 규칙, 용어집, 안내 문구, 데모 장소 |
 | `models/manifest.json` | 모델 파일, 버전, 실행 옵션 |
-| `eval/` | 평가셋(dev 100건, test 60건)과 평가 스크립트 |
+| `eval/` | 평가셋(dev 100건, 범용 general 180건, 최종 test 60건)과 평가 스크립트 |
 | `train/` | QLoRA 학습과 어댑터 변환 |
 | `scripts/` | 설치·실행·종료 스크립트 |
 | `docs/` | API 계약(`openapi.json`), 사용 안내(`guide.md`) |

@@ -70,7 +70,8 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     a = ap.parse_args()
 
-    blocked = {norm(c["text"]) for f in ("dev.jsonl", "test.locked.jsonl") for c in load_jsonl(ROOT / "eval" / f)}
+    blocked = {norm(c["text"]) for f in ("dev.jsonl", "test.locked.jsonl", "general.jsonl")
+               for c in load_jsonl(ROOT / "eval" / f)}
     blocked |= {norm(e["input"]["utterance"]) for n in ("translate", "destination") for e in P.examples(n)}
     recs, errors = [], []
     for path in map(Path, a.inputs):
