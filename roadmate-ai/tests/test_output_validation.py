@@ -148,3 +148,118 @@ def test_clarification_rules():
 ])
 def test_number_parsing(text, loc, values):
     assert [n.value for n in extract_numbers(text, loc)] == values
+
+
+# ---------------------------------------------------------------- 스페인어(es-US·es-MX) ↔ 한국어
+@pytest.mark.parametrize("src,sl,tgt,tl", [
+    ("Póngale 30,000 wones de gasolina, no de diésel.", "es-US", "경유 말고 휘발유로 3만 원어치 넣어 주세요.", "ko-KR"),
+    ("No le ponga diesel, solo gasolina.", "es-MX", "경유는 넣지 말고 휘발유만 넣어 주세요.", "ko-KR"),
+    ("Diésel no, gasolina.", "es-US", "경유 말고 휘발유요.", "ko-KR"),
+    ("오후 3시까지 여기 세워도 돼요?", "ko-KR", "¿Puedo estacionarme aquí hasta las 3 p. m.?", "es-US"),
+    ("오후 3시까지 여기 세워도 돼요?", "ko-KR", "¿Puedo estacionarme aquí hasta las tres de la tarde?", "es-MX"),
+    ("3시 반에 와 주세요.", "ko-KR", "Venga a las tres y media, por favor.", "es-US"),
+    ("주차비는 만 오천 원이에요.", "ko-KR", "La tarifa de estacionamiento es de 15 mil wones.", "es-US"),
+    ("Son 30.000 wones.", "es-US", "3만 원이에요.", "ko-KR"),
+    ("두 시간 반 걸려요.", "ko-KR", "Tarda dos horas y media.", "es-US"),
+    ("반 시간 정도 걸려요.", "ko-KR", "Tarda como media hora.", "es-US"),
+    ("Siga derecho y luego gire a la izquierda.", "es-US", "직진하다가 왼쪽으로 도세요.", "ko-KR"),
+    ("El carril derecho está cerrado.", "es-US", "오른쪽 차선이 막혔어요.", "ko-KR"),
+    ("Mi esposa se siente mal.", "es-US", "아내가 몸이 안 좋아요.", "ko-KR"),
+    ("Está bien, ¿no?", "es-US", "괜찮죠?", "ko-KR"),
+    ("Gasolina sin plomo, por favor.", "es-MX", "무연 휘발유로 넣어 주세요.", "ko-KR"),
+    ("두 분이세요, 세 분이세요?", "ko-KR", "¿Son dos o tres personas?", "es-US"),
+    ("Somos tres adultos y dos niños.", "es-US", "어른 셋, 아이 둘이에요.", "ko-KR"),
+    ("Mi número es 010-2345-6789.", "es-MX", "제 번호는 010-2345-6789예요.", "ko-KR"),
+])
+def test_valid_spanish_pairs(src, sl, tgt, tl):
+    assert v(src, sl, tgt, tl) == []
+
+
+@pytest.mark.parametrize("src,sl,tgt,tl,issue", [
+    ("Póngale gasolina, no de diésel.", "es-US", "휘발유 말고 경유로 넣어 주세요.", "ko-KR", "fuel_polarity_mismatch:fuel_diesel"),
+    ("경유 말고 휘발유 넣어 주세요.", "ko-KR", "Diésel, no gasolina, por favor.", "es-US", "fuel_polarity_mismatch:fuel_gasoline"),
+    ("오후 3시까지 여기 세워도 돼요?", "ko-KR", "¿Puedo estacionarme aquí hasta las 3?", "es-US", "number_missing:15"),
+    ("주차비는 만 오천 원이에요.", "ko-KR", "Son 15,000 dólares.", "es-US", "number_missing:15000"),
+    ("왼쪽으로 가세요.", "ko-KR", "Vaya a la derecha.", "es-US", "direction_mismatch:left"),
+    ("El carril derecho está cerrado.", "es-US", "왼쪽 차선이 막혔어요.", "ko-KR", "direction_missing:right"),
+    ("Espere adentro del carro.", "es-US", "차 밖에서 기다리세요.", "ko-KR", "opposite_mismatch:inside"),
+    ("No hay heridos.", "es-US", "다친 사람이 있어요.", "ko-KR", "negation_mismatch"),
+    ("오후 3시까지 여기 세워도 돼요?", "ko-KR", "Can I park here until 3 p.m.?", "es-US", "wrong_language"),
+    ("Necesito una grúa, por favor, el carro no arranca.", "es-US", "견인차요.", "ko-KR", "too_short"),
+])
+def test_invalid_spanish_pairs(src, sl, tgt, tl, issue):
+    assert issue in v(src, sl, tgt, tl)
+
+
+@pytest.mark.parametrize("text,values", [
+    ("Cuesta treinta y cinco mil wones.", [35000]),
+    ("Son 30 mil wones.", [30000]),
+    ("Le cobro un millón doscientos mil wones.", [1200000]),
+    ("Estaré aquí hasta las 5 menos cuarto.", [4, 45]),
+    ("Llego a las ocho de la mañana.", [8]),
+    ("Tardamos una hora y media.", [90]),
+    ("Es el segundo piso.", [2]),
+    ("Espere un segundo, por favor.", []),
+    ("Son 2,5 litros.", [2.5]),
+    ("Somos dos personas.", [2]),
+    ("Una gasolinera, por favor.", []),
+])
+def test_spanish_number_parsing(text, values):
+    assert [n.value for n in extract_numbers(text, "es-US")] == values
+
+
+def test_spanish_meridiem_fill_and_clarification():
+    from validation import add_meridiem
+    assert add_meridiem("6시까지 돌아올게요.", "Regresamos a las 6 de la tarde.", "es-MX", "ko-KR") == "오후 6시까지 돌아올게요."
+    q = {"status": "clarification_required", "translated_text": None, "clarification_question": "¿Puede repetirlo, por favor?"}
+    assert validate_translation(q, "¿Me lo llena con, eh...?", "es-US", "ko-KR") == []
+    en = {**q, "clarification_question": "Could you say the whole sentence again, please?"}
+    assert validate_translation(en, "¿Me lo llena con, eh...?", "es-US", "ko-KR") == ["clarification_wrong_language"]
+
+
+def test_multiplier_word_is_not_counted_twice():
+    assert [n.value for n in extract_numbers("It is 30 thousand won.", "en-US")] == [30000]
+
+
+# ---------------------------------------------------------------- 리뷰에서 나온 사례(정상 번역은 통과, 뒤집힌 번역은 실패)
+@pytest.mark.parametrize("src,sl,good,bad,issue", [
+    ("Está prohibido estacionarse aquí.", "es-US", "여기는 주차 금지예요.", "여기에 주차할 수 있어요.", "negation_mismatch"),
+    ("Se prohíbe estacionarse aquí.", "es-MX", "여기는 주차 금지예요.", "여기에 주차할 수 있어요.", "negation_mismatch"),
+    ("Parking is prohibited here.", "en-US", "여기는 주차 금지예요.", "여기에 주차할 수 있어요.", "negation_mismatch"),
+    ("No pongas diésel, solo gasolina.", "es-US", "경유는 넣지 말고 휘발유만 넣어 주세요.", "휘발유는 넣지 말고 경유만 넣어 주세요.",
+     "fuel_polarity_mismatch:fuel_diesel"),
+    ("No pongas diésel; la gasolina está prohibida.", "es-US", "경유는 넣지 마세요. 휘발유도 금지예요.",
+     "경유를 넣어 주세요. 휘발유는 금지예요.", "fuel_polarity_mismatch:fuel_diesel"),
+    ("Vuelva a las doce de la noche.", "es-US", "자정에 돌아오세요.", "정오에 돌아오세요.", "number_missing:0"),
+    ("Come back at 12 at night.", "en-US", "밤 12시에 돌아오세요.", "낮 12시에 돌아오세요.", "number_missing:0"),
+    ("Vuelva a las tres y diez de la tarde.", "es-US", "오후 3시 10분에 돌아오세요.", "오후 3시에 돌아오세요.", "number_missing:10"),
+    ("Vuelva a las tres y veinte de la tarde.", "es-US", "오후 3시 20분에 돌아오세요.", "오전 3시 20분에 돌아오세요.",
+     "number_missing:15"),
+    ("Espere una hora y cuarto.", "es-US", "1시간 15분 기다려 주세요.", "1시간 기다려 주세요.", "number_missing:75"),
+    ("It takes an hour and a half.", "en-US", "1시간 30분 걸려요.", "1시간 걸려요.", "number_missing:90"),
+    ("Déselo a las dos personas.", "es-US", "두 사람에게 주세요.", "14명에게 주세요.", "number_added:14"),
+    ("Me duele el hombro derecho.", "es-US", "오른쪽 어깨가 아파요.", "어깨가 아파요.", "direction_missing:right"),
+    ("Está rayado el guardabarros derecho.", "es-MX", "오른쪽 펜더가 긁혔어요.", "펜더가 긁혔어요.", "direction_missing:right"),
+])
+def test_review_cases_good_pass_bad_fail(src, sl, good, bad, issue):
+    assert v(src, sl, good, "ko-KR") == []
+    assert issue in v(src, sl, bad, "ko-KR")
+
+
+@pytest.mark.parametrize("src,sl,tgt", [
+    ("Cárgueme gasoil, por favor.", "es-US", "경유를 넣어 주세요."),
+    ("Póngale bencina, por favor.", "es-US", "휘발유를 넣어 주세요."),
+    ("Siga derecho hasta el semáforo.", "es-US", "신호등까지 직진하세요."),
+    ("Usted tiene derecho a un abogado.", "es-US", "변호사를 부를 권리가 있어요."),
+    ("1시간 30분 걸려요.", "ko-KR", "Tarda una hora y media."),
+    ("밤 9시까지 영업해요.", "ko-KR", "Abrimos hasta las 9 de la noche."),
+    ("Llego a las 15 horas.", "es-US", "15시에 도착해요."),
+])
+def test_review_cases_valid(src, sl, tgt):
+    tl = "es-US" if sl == "ko-KR" else "ko-KR"
+    assert v(src, sl, tgt, tl) == []
+
+
+def test_night_meridiem_is_not_added_twice():
+    from validation import add_meridiem
+    assert add_meridiem("밤 9시에 만나요.", "See you at 9 p.m.", "en-US", "ko-KR") == "밤 9시에 만나요."

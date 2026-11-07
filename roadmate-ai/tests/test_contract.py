@@ -47,7 +47,7 @@ def test_translate_ok_and_ready(client):
     assert r.status_code == 200, r.text
     d = r.json()
     assert d["status"] == "ok" and d["model_id"] == "mock" and d["translated_text"].startswith("[모의 번역]")
-    assert d["prompt_version"] == "translate-v4" and r.headers["content-type"].endswith("charset=utf-8")
+    assert d["prompt_version"] == "translate-v5" and r.headers["content-type"].endswith("charset=utf-8")
     assert client.get("/health/live").json() == {"status": "ok"}
     ready = client.get("/health/ready")
     assert ready.status_code == 200 and ready.json()["ready"] is True
@@ -66,6 +66,7 @@ def test_dedupe_and_conflict():
 @pytest.mark.parametrize("patch,code", [
     ({"target_locale": "en-US"}, "invalid_input"),
     ({"source_locale": "ja-JP"}, "invalid_input"),
+    ({"source_locale": "es-US", "target_locale": "en-US"}, "invalid_input"),  # 통역은 한국어와 외국어 한 쌍
     ({"text": "   "}, "invalid_input"),
     ({"extra": 1}, "invalid_input"),
     ({"engine_bundle": "other"}, "bundle_mismatch"),
@@ -328,3 +329,32 @@ def test_openapi_committed_matches():
     # 백엔드 연동: docs/openapi.json이 실제 서버 계약과 같아야 한다(변경 시 scripts/export_openapi.py)
     committed = json.loads((ROOT / "docs" / "openapi.json").read_text(encoding="utf-8"))
     assert committed == create_app(SETTINGS, MockClient()).openapi()
+
+
+def test_spanish_translate_and_fixed_phrases():
+    fake = FakeLlama(outputs=[ok("경유 말고 휘발유로 3만 원어치 넣어 주세요.")])
+    mock = MockClient()
+    with TestClient(create_app(SETTINGS, fake)) as c:
+        d = c.post("/internal/v1/translate", json=body(source_locale="es-MX",
+                                                     text="Póngale 30,000 wones de gasolina, no de diésel.")).json()
+        assert d["status"] == "ok" and d["translated_text"].startswith("경유 말고")
+    with TestClient(create_app(SETTINGS, mock)) as c:
+        w = c.post("/internal/v1/translate", json=body(source_locale="es-US", text="휘발유 가득 넣어 주세요")).json()
+        assert w["clarification_question"].startswith("Parece que habló en otro idioma") and mock.calls == 0
+    q = {"status": "clarification_required", "translated_text": None, "clarification_question": "다시 말씀해 주세요."}
+    with TestClient(create_app(SETTINGS, FakeLlama(outputs=[q]))) as c:
+        r = c.post("/internal/v1/translate", json=body(source_locale="es-US", text="¿Me lo llena con, eh...?")).json()
+        assert r["clarification_question"] == "Perdón, no le entendí. ¿Puede repetir toda la frase?"
+
+
+def test_spanish_destination_has_spanish_name_and_question():
+    dest = {"intent": "set_destination", "query_original": "playa de Hamdeok", "query_ko_candidate": "함덕해수욕장",
+            "region_hint": None, "category_hint": "beach", "needs_confirmation": False}
+    vague = {**dest, "query_original": "la playa", "query_ko_candidate": None, "needs_confirmation": True}
+    db = {k: v for k, v in body(source_locale="es-MX").items() if k not in ("target_locale", "scenario")}
+    with TestClient(create_app(SETTINGS, FakeLlama(outputs=[dest, vague]))) as c:
+        a = c.post("/internal/v1/parse-destination", json={**db, "text": "Llévenos a la playa de Hamdeok."}).json()
+        assert a["candidates"][0]["poi_id"] == "hamdeok-beach" and a["candidates"][0]["name_es"] == "Playa Hamdeok"
+        assert len(a["candidates"]) == 1
+        b = c.post("/internal/v1/parse-destination", json={**db, "request_id": "r2", "text": "Llévame a la playa."}).json()
+        assert b["status"] == "clarification_required" and b["clarification_question"].startswith("¿A qué lugar")

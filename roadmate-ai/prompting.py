@@ -5,7 +5,8 @@ from functools import lru_cache
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-LANG_KEY = {"en-US": "en", "ko-KR": "ko"}
+LANG_KEY = {"en-US": "en", "ko-KR": "ko", "es-US": "es", "es-MX": "es"}
+LATIN = "A-Za-zÀ-ÿ"
 
 
 def _load_prompt(name: str) -> tuple[str, str]:
@@ -27,7 +28,7 @@ def examples(name: str) -> tuple:
 
 @lru_cache(maxsize=None)
 def glossary() -> dict:
-    return json.loads((ROOT / "packs" / "glossary.ko-en.json").read_text(encoding="utf-8"))
+    return json.loads((ROOT / "packs" / "glossary.json").read_text(encoding="utf-8"))
 
 
 @lru_cache(maxsize=None)
@@ -39,12 +40,20 @@ def _dump(obj) -> str:
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
 
 
+_FOLD = str.maketrans("áéíóúüñàèìòùâêîôûäëïöçÁÉÍÓÚÜÑ", "aeiouunaeiouaeiouaeiocAEIOUUN")
+
+
+def fold(text: str) -> str:
+    # 검증: 스페인어 강세 표기가 빠져도 같은 말로 본다(diésel = diesel). 글자 수가 그대로라 위치를 원문에 쓸 수 있다
+    return text.translate(_FOLD)
+
+
 def _find_terms(text: str, terms: list[str], lang: str) -> list[tuple[int, int, str]]:
     hits = []
     for t in terms:
-        if lang == "en":
-            pat = r"(?<![A-Za-z])" + re.escape(t) + r"(?![A-Za-z])"
-            hits += [(m.start(), m.end(), t) for m in re.finditer(pat, text, re.IGNORECASE)]
+        if lang != "ko":
+            pat = rf"(?<![{LATIN}])" + re.escape(fold(t)) + rf"(?![{LATIN}])"
+            hits += [(m.start(), m.end(), t) for m in re.finditer(pat, fold(text), re.IGNORECASE)]
         else:
             # 검증: 한국어는 띄어쓰기가 달라도 같은 용어로 본다(자차보험 = 자차 보험)
             pat = r"\s?".join(map(re.escape, t.replace(" ", "")))
@@ -74,14 +83,19 @@ def match_concepts(text: str, locale: str, categories: set | None = None) -> dic
 
 
 EN_TIME = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*([ap])(?:\.\s?m\.|\s?m)(?![A-Za-z])", re.IGNORECASE)
+ES_TIME = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(?:([ap])(?:\.\s?m\.|\s?m)(?![A-Za-z])"
+                     r"|(?:de|en|por)\s+la\s+(mañana|madrugada|tarde|noche))", re.IGNORECASE)
 KO_TIME = re.compile(r"(오전|오후)\s?(\d{1,2})시(?:\s?(\d{1,2})분|\s?(반))?")
+# 프론트 연동: 목표 언어별 시각·원화 표기(TTS가 그대로 읽는다)
+PM_FMT = {"en": ("a.m.", "p.m."), "es": ("a. m.", "p. m.")}
+WON = {"en": "won", "es": "wones"}
 
 
 KO_MONEY = re.compile(r"(?<![가-힣\d])([\d,.\s일이삼사오육칠팔구십백천만억]+?)\s?원")
 
 
-def _money_hints(text: str) -> dict[str, str]:
-    # QWEN 구현: 한국어 금액(만 오천 원, 6만 5천 원)은 숫자로 바꿔 알려 준다(15,000 won). 구원·회원 같은 낱말은 제외
+def _money_hints(text: str, tgt: str) -> dict[str, str]:
+    # QWEN 구현: 한국어 금액(만 오천 원, 6만 5천 원)은 숫자로 바꿔 알려 준다(15,000 won / 15,000 wones). 구원·회원 같은 낱말은 제외
     from validation import extract_numbers  # validation이 prompting을 불러서 여기서 늦게 불러온다
     out = {}
     for m in KO_MONEY.finditer(text):
@@ -90,21 +104,29 @@ def _money_hints(text: str) -> dict[str, str]:
             continue
         vals = [n.value for n in extract_numbers(m.group(0), "ko-KR") if n.unit == "KRW"]
         if len(vals) == 1:
-            out[m.group(0).strip()] = f"{vals[0]:,.0f} won"
+            out[m.group(0).strip()] = f"{vals[0]:,.0f} {WON[tgt]}"
     return out
 
 
-def _time_hints(text: str, src: str) -> dict[str, str]:
-    # QWEN 구현: 오전·오후가 붙은 시각은 목표 언어 표기를 직접 알려 준다(6 p.m. = 오후 6시)
+def _time_hints(text: str, src: str, tgt: str) -> dict[str, str]:
+    # QWEN 구현: 오전·오후가 붙은 시각은 목표 언어 표기를 직접 알려 준다(6 p.m. = 오후 6시, 오후 3시 = 3 p. m.)
     out = {}
-    if src == "en":
-        for m in EN_TIME.finditer(text):
+    if src != "ko":
+        for m in (EN_TIME if src == "en" else ES_TIME).finditer(text):
+            h, low = int(m.group(1)), m.group(0).lower()
             minute = f" {int(m.group(2))}분" if m.group(2) and int(m.group(2)) else ""
-            out[m.group(0)] = f"{'오후' if m.group(3).lower() == 'p' else '오전'} {int(m.group(1))}시{minute}"
+            # 12 de la noche = 자정, 밤 1~4시 = 새벽(validation._night_pm과 같은 기준)
+            night = low.endswith("noche")
+            pm = (m.group(3) or "").lower() == "p" or low.endswith("tarde") or (night and not (h == 12 or 1 <= h <= 4))
+            if h == 12:
+                out[m.group(0)] = ("정오" if pm else "자정") if not minute else (f"낮 12시{minute}" if pm else f"0시{minute}")
+            else:
+                out[m.group(0)] = f"{'오후' if pm else '오전'} {h}시{minute}"
     else:
         for m in KO_TIME.finditer(text):
             minute = "30" if m.group(4) else m.group(3)
-            out[m.group(0)] = f"{int(m.group(2))}{':' + minute.zfill(2) if minute else ''} {'p.m.' if m.group(1) == '오후' else 'a.m.'}"
+            am, pm = PM_FMT[tgt]
+            out[m.group(0)] = f"{int(m.group(2))}{':' + minute.zfill(2) if minute else ''} {pm if m.group(1) == '오후' else am}"
     return out
 
 
@@ -115,7 +137,9 @@ def select_glossary(text: str, source_locale: str, target_locale: str) -> dict[s
     out = {surface: by_id[cid][tgt][0] for cid, surface in match_concepts(text, source_locale).items()}
     found = {}
     for p in places():
-        names = [p[f"name_{src}"]] + [a for a in p.get("aliases", []) if bool(re.search("[가-힣]", a)) == (src == "ko")]
+        # 스페인어 화자도 영어 표기(Jeju Airport)를 말할 수 있어 외국어 쪽은 로마자 이름을 모두 본다
+        names = [p[f"name_{src}"]] if src == "ko" else [p["name_en"], p["name_es"]]
+        names += [a for a in p.get("aliases", []) if bool(re.search("[가-힣]", a)) == (src == "ko")]
         hits = sorted(_find_terms(text, names, src), key=lambda h: h[0] - h[1])
         if hits:
             found.setdefault(text[hits[0][0]:hits[0][1]], p[f"name_{tgt}"])
@@ -123,18 +147,26 @@ def select_glossary(text: str, source_locale: str, target_locale: str) -> dict[s
     out = {k: v for k, v in out.items() if not any(k != pk and k in pk for pk in found)}
     for k, v in found.items():
         out.setdefault(k, v)
-    for k, v in _time_hints(text, src).items():
+    for k, v in _time_hints(text, src, tgt).items():
         out.setdefault(k, v)
     if src == "ko":
-        for k, v in _money_hints(text).items():
+        for k, v in _money_hints(text, tgt).items():
             out.setdefault(k, v)
     return out
 
 
-def _few_shot(name: str) -> list[dict]:
+def foreign_lang(source_locale: str, target_locale: str) -> str:
+    return LANG_KEY[target_locale if source_locale == "ko-KR" else source_locale]
+
+
+def _few_shot(name: str, lang: str | None = None) -> list[dict]:
+    # QWEN 구현: 번역 예시는 같은 외국어 쌍(한↔영, 한↔스)만 넣는다. 다른 언어 예시가 섞이면 출력 언어가 흔들린다
     msgs = []
     for ex in examples(name):
-        msgs.append({"role": "user", "content": _dump(ex["input"])})
+        i = ex["input"]
+        if lang and "source_locale" in i and foreign_lang(i["source_locale"], i["target_locale"]) != lang:
+            continue
+        msgs.append({"role": "user", "content": _dump(i)})
         msgs.append({"role": "assistant", "content": _dump(ex["output"])})
     return msgs
 
@@ -149,13 +181,14 @@ def translate_messages(source_locale: str, target_locale: str, scenario: str, te
         "glossary": select_glossary(text, source_locale, target_locale),
         "utterance": text,
     }
-    return [{"role": "system", "content": system}, *_few_shot("translate"), {"role": "user", "content": _dump(payload)}]
+    lang = foreign_lang(source_locale, target_locale)
+    return [{"role": "system", "content": system}, *_few_shot("translate", lang), {"role": "user", "content": _dump(payload)}]
 
 
-def polish_messages(english: str, korean: str, glossary_: dict) -> list[dict]:
-    # QWEN 구현: 영→한 번역 초안을 자연스러운 한국어로 다듬는 2차 요청(뜻·숫자·부정은 그대로)
+def polish_messages(source_locale: str, source: str, korean: str, glossary_: dict) -> list[dict]:
+    # QWEN 구현: 영·스→한 번역 초안을 자연스러운 한국어로 다듬는 2차 요청(뜻·숫자·부정은 그대로)
     _, system = prompt("polish")
-    payload = {"english": english, "korean": korean, "glossary": glossary_}
+    payload = {"source_locale": source_locale, "source": source, "korean": korean, "glossary": glossary_}
     return [{"role": "system", "content": system}, *_few_shot("polish"), {"role": "user", "content": _dump(payload)}]
 
 

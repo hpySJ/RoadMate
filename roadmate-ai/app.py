@@ -18,7 +18,7 @@ from sessions import ModelSlot, TurnRegistry, payload_hash
 from validation import HANGUL
 
 log = logging.getLogger("roadmate.ai")
-API_VERSION = "1.0.0"  # 백엔드 연동: 계약이 바뀌면 올리고 docs/openapi.json 재생성
+API_VERSION = "1.1.0"  # 백엔드 연동: 계약이 바뀌면 올리고 docs/openapi.json 재생성
 
 
 class UTF8JSONResponse(JSONResponse):

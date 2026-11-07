@@ -1,6 +1,6 @@
 # roadmate-ai 사용 안내
 
-설치, 서버 실행, 백엔드·앱 연동 규칙, 평가, 튜닝, 학습, 문제 해결을 모아 둔 문서입니다. 아래 1~11장은 Windows 기준이고 명령은 `roadmate-ai` 폴더에서 PowerShell로 실행합니다. Linux(DLPC 등)는 바로 아래 장을 먼저 봅니다.
+설치, 서버 실행, 백엔드·앱 연동 규칙, 평가, 튜닝, 학습, 문제 해결을 모아 둔 문서입니다. Pleos SDK와 맞닿는 곳은 [`pleos_sdk.md`](pleos_sdk.md)에 따로 정리했습니다. 아래 1~11장은 Windows 기준이고 명령은 `roadmate-ai` 폴더에서 PowerShell로 실행합니다. Linux(DLPC 등)는 바로 아래 장을 먼저 봅니다.
 
 ## Linux(DLPC)에서 실행
 
@@ -129,9 +129,11 @@ POST /internal/v1/translate
 {"request_id":"req-001","session_id":"sess-001","session_epoch":3,"turn_id":1,
  "status":"ok","translated_text":"휘발유로 가득 넣어 주세요.","clarification_question":null,
  "engine_bundle":"roadmate-ko-en-q4-v1","model_id":"roadmate-qwen4b-q4",
- "prompt_version":"translate-v4","glossary_version":"rental-ko-en-v4","latency_ms":850}
+ "prompt_version":"translate-v5","glossary_version":"rental-ko-en-es-v6","latency_ms":850}
 ```
-- `source_locale`/`target_locale`: `ko-KR`, `en-US` / `scenario`: `gas_station`, `parking`, `rental_counter`, `accident`, `general`
+- `source_locale`/`target_locale`: `ko-KR`, `en-US`, `es-US`, `es-MX` 중 한쪽은 반드시 `ko-KR`(한↔영, 한↔스). Pleos STT·TTS locale 값을 그대로 쓴다 / `scenario`: `gas_station`, `parking`, `rental_counter`, `accident`, `general`
+- 스페인어는 `es-US`와 `es-MX`를 같은 말로 처리한다. 번역문은 중남미식 존댓말(usted), 원화는 `30,000 wones`, 시각은 `3 p. m.`.
+- 목적지 후보(`candidates`)에는 `name_ko`, `name_en`, `name_es`가 있다(API 1.1.0). 화면에는 사용자 언어 이름을 쓴다.
 - `status=clarification_required`이면 `clarification_question`(말한 사람의 언어)을 화면에 보여 주고 **번역 음성은 재생하지 않는다**.
 - 차량 좌표·속도·기어·실명은 보내지 않는다. 텍스트는 400자 이하.
 
@@ -196,6 +198,7 @@ APK의 `127.0.0.1`은 PC가 아니다. APK → `http://10.0.2.2:8080`(백엔드)
 
 - `eval/dev.jsonl` 100건(통역 60 · 목적지 25 · 모호/지시 삽입 15): 프롬프트·용어집·추론 설정을 고를 때 사용.
 - `eval/general.jsonl` 180건(영→한 80 · 한→영 80 · 목적지 20): 정답 없이 주유·주차·렌터카·사고·도로·여행·숫자·부정·구어체·긴 문장·외래어 섞인 문장을 고르게 담은 범용 점검용. 요약에 상황(category)별 통과율과 502가 걸린 검사 종류가 나온다. 특정 문장에 맞춘 땜질이 아니라 걸린 검사 종류·상황을 보고 일반적인 규칙으로 고치고, 의미는 `review.csv`에서 사람이 본다.
+- `eval/general_es.jsonl` 100건(스→한 45 · 한→스 45 · 스페인어 목적지 10, `es-US`·`es-MX` 섞음): 스페인어 범용 점검용. 쓰는 법은 general과 같다. 스페인어는 원어민 검토가 따로 필요하다.
 - `eval/test.locked.jsonl` 60건: **설정을 확정한 뒤 한 번만** 실행. 결과를 보고 설정을 바꾸면 그 파일은 회귀용으로 돌리고 새 시험셋을 만든다.
 - 자동 통과는 보조 지표다. `review.csv`의 `human_meaning_ok`, `critical_error`를 원문·번역을 아는 사람이 채운다. 모델 채점으로 통과시키지 않는다.
 - 필수 최소쌍: 휘발유/경유, 5만/15만 원, 가득/3만 원만, 다친 사람 있다/없다, 오세요/오지 마세요, 왼쪽/오른쪽.
@@ -212,11 +215,11 @@ JSON 계약 → 목표 언어 문자 → 설명문 섞임 → 길이 → 숫자�
 | 순서 | 무엇을 | 어디서 |
 |---|---|---|
 | 1 | 번역 지시문·few-shot | `prompts/translate.txt`, `prompts/translate.examples.json` (바꾸면 첫 줄 `prompt_version` 올림) |
-| 2 | 용어집 | `packs/glossary.ko-en.json` (`version` 올림). 발화에 나온 용어만 프롬프트에 들어감 |
+| 2 | 용어집 | `packs/glossary.json` (`version` 올림). 발화에 나온 용어만 프롬프트에 들어감 |
 | 3 | 샘플링 | `prompting.py`의 `TRANSLATE_SAMPLING` 등(기본 temperature 0.2, top_p 0.8, top_k 20) |
 | 4 | 추론 자원 | `models/manifest.json`의 `runtime`(ctx 2048, parallel 1, n_gpu_layers 99, batch 256, ubatch 128) |
 | 5 | 검증 임계값 | `validation.py`(숫자·부정·방향 규칙), `engine.py`의 POI 점수 0.62 |
-| 6 | 영→한 다듬기 | `.env`의 `POLISH_KO=1`. 번역이 검사를 통과하면 `prompts/polish.txt`로 한 번 더 자연스럽게 고쳐 쓰고, 고친 문장도 검사를 통과할 때만 바꾼다(모델 호출 1회, 약 0.3초 추가) |
+| 6 | 영·스→한 다듬기 | `.env`의 `POLISH_KO=1`. 번역이 검사를 통과하면 `prompts/polish.txt`로 한 번 더 자연스럽게 고쳐 쓰고, 고친 문장도 검사를 통과할 때만 바꾼다(모델 호출 1회, 약 0.3초 추가) |
 | 7 | Q5 비교 | Q4에서 의미 오류가 남고 VRAM 여유가 있을 때만(아래) |
 
 변경할 때마다 `eval\evaluate.py --file eval\dev.jsonl --label <이름>`으로 같은 dev 자료를 다시 돌려 비교한다.
@@ -228,6 +231,11 @@ bash scripts/run.sh stop; bash scripts/run.sh start
 bash scripts/run.sh stop; POLISH_KO=1 bash scripts/run.sh start
 .venv/bin/python eval/evaluate.py --file eval/general.jsonl --label polish-on
 .venv/bin/python eval/compare.py eval/results/polish-off-general-<시각> eval/results/polish-on-general-<시각>
+```
+
+스페인어도 같은 방식으로 돌린다.
+```bash
+.venv/bin/python eval/evaluate.py --file eval/general_es.jsonl --label es-base
 ```
 
 느리거나 VRAM이 부족할 때: GPU 사용 확인(시작 로그 offload) → ctx·parallel·출력 상한 확인 → 불필요한 프로세스 종료 → `.\scripts\start_model.ps1 -GpuLayers 30`처럼 레이어 수를 줄이고 지연 재측정 → 그래도 부족하면 모델 PC와 에뮬레이터 PC 분리.
@@ -260,7 +268,7 @@ Q5_K_M 비교:
 - 목적지: `"task":"destination"`, `output`은 `intent, query_original, query_ko_candidate, region_hint, category_hint, needs_confirmation`.
 - 같은 원문·역번역·금액/장소 치환 변형은 같은 `group_id`.
 - 사람이 원문·정답을 대조한 것만 `"review_status":"approved"`. 로컬 모델 초안을 그대로 정답으로 쓰지 않는다. 개인정보 제거.
-- 목표: 검수 1,000~1,500건(번역 1,200 · 목적지 200 · 모호/확인 100), 한→영·영→한 균형.
+- 목표: 검수 1,000~1,500건(번역 1,200 · 목적지 200 · 모호/확인 100), 한↔영·한↔스 균형.
 - `train/data/seed.draft.jsonl`은 형식·스모크 시험용 초안 26건이다.
 
 검수 자료는 손으로 다 쓰지 않고 아래 순서로 만든다. 학습 목표는 숫자·부정·연료를 지키면서 자연스러운 한국어로 옮기는 것이다.

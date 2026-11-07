@@ -25,12 +25,12 @@
     "cache_ram_mib": 0
   },
   "versions": {
-    "translate_prompt": "translate-v4",
-    "destination_prompt": "destination-v2",
-    "polish_prompt": "polish-v2",
-    "glossary": "rental-ko-en-v4",
+    "translate_prompt": "translate-v5",
+    "destination_prompt": "destination-v3",
+    "polish_prompt": "polish-v3",
+    "glossary": "rental-ko-en-es-v6",
     "rules": "rules-v3",
-    "poi": "poi-jeju-demo-v2",
-    "eval": "eval-ko-en-v1"
+    "poi": "poi-jeju-demo-v3",
+    "eval": "eval-ko-en-es-v2"
   }
 }

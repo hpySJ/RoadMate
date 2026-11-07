@@ -2,7 +2,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-Locale = Literal["ko-KR", "en-US"]
+# 프론트 연동: Pleos STT·TTS locale 값(es-US·es-MX는 같은 스페인어). 통역은 한국어와 외국어 한 쌍, fr-CA는 주행 안내만
+Locale = Literal["ko-KR", "en-US", "es-US", "es-MX"]
 Scenario = Literal["gas_station", "parking", "rental_counter", "accident", "general"]
 Ident = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9._:\-]+$")
 
@@ -39,6 +40,8 @@ class TranslateRequest(_Strict):
     def _locales_differ(self):
         if self.source_locale == self.target_locale:
             raise ValueError("source_locale and target_locale must differ")
+        if "ko-KR" not in (self.source_locale, self.target_locale):
+            raise ValueError("one side must be ko-KR (ko-KR <-> en-US / es-US / es-MX)")
         return self
 
 
@@ -77,6 +80,7 @@ class PoiCandidate(BaseModel):
     poi_id: str
     name_ko: str
     name_en: str
+    name_es: str
     region_ko: str
     lat: float
     lon: float

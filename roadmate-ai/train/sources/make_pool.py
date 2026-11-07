@@ -152,7 +152,7 @@ def main():
                 seen.add(norm(json.loads(line)["text"]))
     for name in ("translate", "polish"):
         for e in json.loads((ROOT / "prompts" / f"{name}.examples.json").read_text(encoding="utf-8")):
-            seen.add(norm(e["input"].get("utterance") or e["input"]["english"]))
+            seen.add(norm(e["input"].get("utterance") or e["input"]["source"]))
     for path in (ROOT / "train" / "data").glob("*.jsonl"):  # 이미 학습 자료(시드·승인분)에 있는 문장도 뺀다
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.strip():

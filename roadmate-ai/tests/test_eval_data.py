@@ -14,11 +14,11 @@ def load(name):
     return [json.loads(line) for line in (ROOT / "eval" / name).read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-DEV, TEST, GENERAL = load("dev.jsonl"), load("test.locked.jsonl"), load("general.jsonl")
+DEV, TEST, GENERAL = load("dev.jsonl"), load("test.locked.jsonl"), load("general.jsonl") + load("general_es.jsonl")
 
 
 def test_sizes_and_unique_ids():
-    assert len(DEV) == 100 and len(TEST) == 60 and len(GENERAL) == 180
+    assert len(DEV) == 100 and len(TEST) == 60 and len(GENERAL) == 180 + 100
     ids = [c["id"] for c in DEV + TEST + GENERAL]
     assert len(ids) == len(set(ids))
 
@@ -29,7 +29,7 @@ def test_no_leak_between_splits_and_prompt_examples():
     norm = lambda s: "".join(s.lower().split())  # noqa: E731
     shots = {norm(e["input"]["utterance"]) for e in P.examples("translate")} | {
         norm(e["input"]["utterance"]) for e in P.examples("destination")} | {
-        norm(e["input"]["english"]) for e in P.examples("polish")}
+        norm(e["input"]["source"]) for e in P.examples("polish")}
     texts = [norm(c["text"]) for c in DEV + TEST + GENERAL]
     assert len(texts) == len(set(texts)) and not set(texts) & shots
 
@@ -59,3 +59,10 @@ def test_wrong_language_cases_detected_by_code():
     for c in DEV + TEST:
         if c["group_id"] in ("wrong_lang_ko_in_en", "wrong_lang_en_in_ko", "t_wrong_lang"):
             assert looks_like_other_language(c["text"], c["source_locale"])
+
+
+def test_spanish_set_covers_both_directions_and_locales():
+    es = load("general_es.jsonl")
+    pairs = {(c["source_locale"], c.get("target_locale")) for c in es}
+    assert {("es-US", "ko-KR"), ("es-MX", "ko-KR"), ("ko-KR", "es-US"), ("ko-KR", "es-MX")} <= pairs
+    assert sum(c["task"] == "destination" for c in es) == 10

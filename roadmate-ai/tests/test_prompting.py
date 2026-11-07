@@ -6,7 +6,8 @@ import prompting as P
 def test_messages_shape_and_glossary():
     m = P.translate_messages("en-US", "ko-KR", "gas_station", "Fill it up with gasoline at the gas station.")
     assert m[0]["role"] == "system" and m[-1]["role"] == "user"
-    assert len(m) == 2 + 2 * len(P.examples("translate"))
+    en_examples = [e for e in P.examples("translate") if "en-US" in (e["input"]["source_locale"], e["input"]["target_locale"])]
+    assert len(m) == 2 + 2 * len(en_examples)
     payload = json.loads(m[-1]["content"])
     assert payload["utterance"] == "Fill it up with gasoline at the gas station."
     assert payload["glossary"] == {"gasoline": "휘발유", "gas station": "주유소", "Fill it up": "가득"}
@@ -28,10 +29,11 @@ def test_polish_examples_keep_meaning_checks():
         i, o = ex["input"], ex["output"]
         for ko in (i["korean"], o["text"]):
             out = {"status": "ok", "translated_text": ko, "clarification_question": None}
-            assert validate_translation(out, i["english"], "en-US", "ko-KR") == [], ko
-        assert P.select_glossary(i["english"], "en-US", "ko-KR") == i["glossary"]
-    m = P.polish_messages("Hi.", "안녕하세요.", {})
-    assert m[0]["role"] == "system" and json.loads(m[-1]["content"]) == {"english": "Hi.", "korean": "안녕하세요.", "glossary": {}}
+            assert validate_translation(out, i["source"], i["source_locale"], "ko-KR") == [], ko
+        assert P.select_glossary(i["source"], i["source_locale"], "ko-KR") == i["glossary"]
+    m = P.polish_messages("es-US", "Hola.", "안녕하세요.", {})
+    assert m[0]["role"] == "system" and json.loads(m[-1]["content"]) == {
+        "source_locale": "es-US", "source": "Hola.", "korean": "안녕하세요.", "glossary": {}}
 
 
 def test_place_hint_wins_over_area_inside_it():
@@ -71,3 +73,29 @@ def test_examples_pass_own_validators():
         i = ex["input"]
         assert validate_translation(ex["output"], i["utterance"], i["source_locale"], i["target_locale"]) == []
         assert P.select_glossary(i["utterance"], i["source_locale"], i["target_locale"]) == i["glossary"]
+
+
+def test_spanish_glossary_hints():
+    assert P.select_glossary("Póngale diesel, por favor.", "es-MX", "ko-KR") == {"diesel": "경유"}  # 강세 없이 말해도
+    assert P.select_glossary("Tengo una llanta ponchada.", "es-US", "ko-KR") == {"llanta ponchada": "펑크"}
+    assert P.select_glossary("Nos vemos a las 3 de la tarde.", "es-US", "ko-KR") == {"3 de la tarde": "오후 3시"}
+    assert P.select_glossary("Llévenos al Aeropuerto de Jeju.", "es-US", "ko-KR") == {"Aeropuerto de Jeju": "제주국제공항"}
+    assert P.select_glossary("함덕해수욕장 가 주세요.", "ko-KR", "es-US") == {"함덕해수욕장": "Playa Hamdeok"}
+    assert P.select_glossary("오후 3시 반에 만나요.", "ko-KR", "es-US") == {"오후 3시 반": "3:30 p. m."}
+    assert P.select_glossary("만 오천 원 거슬러 드릴게요.", "ko-KR", "es-MX") == {"만 오천 원": "15,000 wones"}
+
+
+def test_few_shot_uses_same_language_pair_only():
+    for src, tgt, other in (("es-US", "ko-KR", "en-US"), ("ko-KR", "es-MX", "en-US"), ("en-US", "ko-KR", "es-US")):
+        shots = [json.loads(m["content"]) for m in P.translate_messages(src, tgt, "general", "x")[1:-1] if m["role"] == "user"]
+        assert shots and not [s for s in shots if other in (s["source_locale"], s["target_locale"])]
+
+
+def test_midnight_hints_and_ambiguous_spanish_words():
+    assert P.select_glossary("Vuelva a las 12 de la noche.", "es-US", "ko-KR") == {"12 de la noche": "자정"}
+    assert P.select_glossary("Come back at 12 p.m.", "en-US", "ko-KR") == {"12 p.m.": "정오"}
+    # 검증: 문맥 없이는 뜻이 갈리는 단어(통행료/요금소, 연료통/보증금)와 보장 범위가 다른 보험 이름은 힌트로 강제하지 않는다
+    assert P.select_glossary("Me cobraron un peaje.", "es-US", "ko-KR") == {}
+    assert P.select_glossary("El depósito está vacío.", "es-US", "ko-KR") == {}
+    assert "cobertura amplia" not in P.select_glossary("Quiero cobertura amplia.", "es-US", "ko-KR")
+    assert P.select_glossary("보증금은 30만 원이에요.", "ko-KR", "es-US")["보증금"] == "depósito de garantía"

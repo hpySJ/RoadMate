@@ -33,6 +33,10 @@ def main() -> int:
         ("/internal/v1/translate", {"source_locale": "ko-KR", "target_locale": "en-US", "scenario": "accident",
                                     "text": "다친 사람은 없어요. 렌터카 회사에 연락해 주세요."}),
         ("/internal/v1/parse-destination", {"source_locale": "en-US", "text": "Take me to Seongsan Sunrise Peak, please."}),
+        ("/internal/v1/translate", {"source_locale": "es-MX", "target_locale": "ko-KR", "scenario": "gas_station",
+                                    "text": "Póngale 50,000 wones de gasolina, no de diésel, por favor."}),
+        ("/internal/v1/translate", {"source_locale": "ko-KR", "target_locale": "es-US", "scenario": "parking",
+                                    "text": "오후 6시 이후에는 주차비가 무료예요."}),
     ]
     for i, (path, extra) in enumerate(cases):
         t0 = time.perf_counter()
