@@ -146,8 +146,8 @@ def expand(templates):
 def main():
     norm = lambda s: "".join(s.lower().split())  # noqa: E731
     seen = set()
-    for name in ("dev.jsonl", "test.locked.jsonl", "general.jsonl"):
-        for line in (ROOT / "eval" / name).read_text(encoding="utf-8").splitlines():
+    for path in (ROOT / "eval").glob("*.jsonl"):
+        for line in path.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 seen.add(norm(json.loads(line)["text"]))
     for name in ("translate", "polish"):

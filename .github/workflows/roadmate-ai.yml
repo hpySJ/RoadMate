@@ -4,7 +4,7 @@ on:
   pull_request:
     paths: ["roadmate-ai/**", ".github/workflows/roadmate-ai.yml"]
   push:
-    branches: [main]
+    branches: [main, feat/roadmate-ai-server, 'codex/**']
     paths: ["roadmate-ai/**", ".github/workflows/roadmate-ai.yml"]
 jobs:
   test:
@@ -18,5 +18,4 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r requirements.lock.txt
-      - run: python -m pytest -q
-      - run: python guidance.py
+      - run: python scripts/verify_mvp.py --local

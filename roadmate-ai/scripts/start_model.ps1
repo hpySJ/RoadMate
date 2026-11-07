@@ -9,7 +9,7 @@ if (-not (Test-Path $exe)) { throw "tools\llama\llama-server.exe missing: run sc
 if (-not (Test-Path $model)) { throw "model missing: run .venv\Scripts\python.exe scripts\download_model.py" }
 $ngl = if ($GpuLayers -ge 0) { $GpuLayers } else { $r.n_gpu_layers }
 
-# 파라미터 튜닝: 문맥 2048, 슬롯 1, 출력 상한 256, GPU 레이어, 배치, RAM 프롬프트 캐시 끔
+# 파라미터 튜닝: 문맥은 manifest, 슬롯 1, 출력 상한 256, GPU 레이어, 배치, RAM 프롬프트 캐시 끔
 $a = @(
     "-m", $model, "--alias", $m.model.alias,
     "-c", $r.ctx, "-np", $r.parallel, "-n", $r.n_predict,

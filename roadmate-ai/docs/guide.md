@@ -129,7 +129,7 @@ POST /internal/v1/translate
 {"request_id":"req-001","session_id":"sess-001","session_epoch":3,"turn_id":1,
  "status":"ok","translated_text":"휘발유로 가득 넣어 주세요.","clarification_question":null,
  "engine_bundle":"roadmate-ko-en-q4-v1","model_id":"roadmate-qwen4b-q4",
- "prompt_version":"translate-v5","glossary_version":"rental-ko-en-es-v6","latency_ms":850}
+ "prompt_version":"translate-v6","glossary_version":"rental-ko-en-es-v7","latency_ms":850}
 ```
 - `source_locale`/`target_locale`: `ko-KR`, `en-US`, `es-US`, `es-MX` 중 한쪽은 반드시 `ko-KR`(한↔영, 한↔스). Pleos STT·TTS locale 값을 그대로 쓴다 / `scenario`: `gas_station`, `parking`, `rental_counter`, `accident`, `general`
 - 스페인어는 `es-US`와 `es-MX`를 같은 말로 처리한다. 번역문은 중남미식 존댓말(usted), 원화는 `30,000 wones`, 시각은 `3 p. m.`.
@@ -165,7 +165,7 @@ APK의 `127.0.0.1`은 PC가 아니다. APK → `http://10.0.2.2:8080`(백엔드)
 
 ## 5. 앱 연동(주행 안내 규칙·정차 잠금)
 
-주행 안내는 LLM이 아니라 **검수된 규칙과 문구**로 APK 안에서 실행한다. `guidance.py`가 기준 구현이고, 앱 담당이 Kotlin으로 포팅한 뒤 같은 fixture로 동등성을 시험한다.
+주행 안내는 LLM이 아니라 **고정 규칙과 문구(현재 draft, 출시 전 검수 필요)**로 APK 안에서 실행한다. `guidance.py`가 기준 구현이고, 앱 담당이 Kotlin으로 포팅한 뒤 같은 fixture로 동등성을 시험한다.
 
 - 규칙·문구: `packs/rules.json` (스쿨존 현재 구간 과속, 스쿨존 접근, 제한값 미상 접근, 우회전 조건부 안내, 출발 브리핑)
 - 시나리오 fixture: `packs/fixtures/guidance_scenarios.json` → `.\.venv\Scripts\python.exe guidance.py`로 전부 OK 확인
@@ -175,7 +175,7 @@ APK의 `127.0.0.1`은 PC가 아니다. APK → `http://10.0.2.2:8080`(백엔드)
   - 이미 제한속도 이하이면 말하지 않는다. 과속은 +3km/h가 2초 지속될 때만.
   - 우회전은 우측 깜빡이 + TBT 우회전 맥락(10~150m)일 때만. 비상등·차로 변경은 제외. 신호색을 단정하지 않는다.
   - 오래된 신호(속도 1.5초, 내비 5초)·`status≠valid`는 사용하지 않는다.
-  - 하루 2회 제한은 교육성 설명(제한값 미상 접근, 우회전 안내)에만 적용한다. 실제 과속 경고(스쿨존 안 과속, 과속하며 접근)는 횟수 제한 없이 120초 간격·구역당 1회로만 거른다(규칙 팩의 `daily_explanation_limit: null`). **실제 재생 완료 콜백(`mark_played`)에서만 카운트**.
+  - 하루 2회 제한은 교육성 설명(우회전·비보호 좌회전 안내)에만 적용한다. 실제 과속 경고(스쿨존 안 과속, 과속하며 접근)는 횟수 제한 없이 120초 간격·구역당 1회로만 거른다(규칙 팩의 `daily_explanation_limit: null`). **실제 재생 완료 콜백(`mark_played`)에서만 카운트**.
   - 발화 큐는 규칙별 최신 1건, 재생 직전 `revalidate`로 지난 구역 안내 폐기.
 - 정차 잠금 `StopLock`: 기어 P(status valid) + 유효 속도 |v| ≤ 0.1m/s가 1초 유지일 때만 통역 버튼 활성. STT 시작·전송·번역 도착·TTS 직전에 다시 확인.
 - 온보딩 프로필: 앱이 시작 화면에서 받은 값을 `GuidanceEngine(pack, 언어, profile=DriverProfile(국가, 경험))`로 넘긴다.
@@ -325,7 +325,7 @@ POLISH_KO=1 bash scripts/run.sh start              # 다듬기를 켠 서버로 
 | `/health/ready` 503, `model_server: false` | `logs\llama.err.log`, 8081 포트 충돌, 모델 파일 경로 |
 | `model_alias: false` | manifest `model.alias`와 llama-server `--alias` 일치 |
 | 시작 로그에 GPU offload 없음 | CUDA 빌드 설치 여부, 드라이버, `nvidia-smi` |
-| CUDA out of memory | 에뮬레이터 그래픽 설정, `-GpuLayers` 축소, ctx 유지(2048) |
+| CUDA out of memory | 에뮬레이터 그래픽 설정, `-GpuLayers` 축소, ctx 유지(4096) |
 | 429 `busy`가 잦음 | 앱에서 같은 세션 중복 호출, 버튼 연타 방지 |
 | 취소·504 뒤 계속 429 | llama-server가 아직 계산 중이면 슬롯을 열지 않는다(`logs\ai.err.log`에 `still processing`). 계속되면 `stop_all.ps1` → `start_all.ps1` |
 | `already running` / `port ... in use` | 이전 서버가 남아 있음. `stop_all.ps1`, 그래도 남으면 `netstat -ano \| findstr :8000`(또는 8081)의 PID 종료 |
@@ -345,19 +345,21 @@ POLISH_KO=1 bash scripts/run.sh start              # 다듬기를 켠 서버로 
 
 ## 11. 검증 상태
 
-작성 PC(GPU 없음)에서 확인한 것과 실행 PC에서 처음 확인해야 할 것을 구분한다.
+현재 버전은 `python scripts/verify_mvp.py --local`로 API·번역 검증·학습 경계·개인화 회귀 715건과 시나리오를 통과했다. 결과는 `run/verify-*/`에 기록한다. 이 명령은 실제 모델 번역이나 SDK 기기 시험이 아니다.
 
-**확인함**
-- `pytest` 259건 통과: API 계약·오류 코드·중복/충돌·epoch 취소(진행 중 취소·늦은 취소·슬롯 대기 중 취소)·busy 429·timeout 504·모델 계산 중 슬롯 유지·검증 실패 502·교정 재시도·목적지 매칭·OpenAPI 일치, 검증기 최소쌍(연료 긍정·부정, 오전·오후, 통화 포함), 규칙 엔진 fixture 33단계(관측 공백·미래 시각 포함), 발화 큐 반복 제한, 평가 데이터 117개 정답이 검증기를 통과하고 누수 없음.
-- `start_all.ps1 -Mock` → `smoke.py` → `evaluate.py` → `stop_all.ps1` 실제 실행. 중복 시작·포트 점유 시 시작 거부 확인.
-- `train_qlora.py`의 데이터 manifest 검사는 작성 PC에 torch 환경이 없어 실행하지 못했다(`prepare_data.py`·`convert_adapter.py`의 검사는 실행 확인).
-- 실제 Qwen 토크나이저로 프롬프트 길이 측정(translate-v1 약 980토큰, 목적지 약 480토큰). translate-v3는 약 1,250토큰으로 추정하며 DLPC에서 `prepare_data.py --tokenizer`로 다시 잰다.
-- 학습 파이프라인(transformers 5.22.1, trl 1.17.1, peft 0.21.2 실제 버전)을 CPU·초소형 Qwen3 구조로 끝까지 실행: 데이터 준비 → completion 마스크 검사 → 학습 2 step → 평가 → 어댑터 저장 → 생성 → `eval_hf.py`.
-- llama.cpp b12076 릴리스 자산 이름, `/slots`·`--lora`·`--cache-ram`·`--jinja` 옵션, `response_format` 파싱 방식을 소스·문서에서 확인.
+실제 모델 품질의 완료 기준과 실행 순서는 [mvp_acceptance.md](mvp_acceptance.md)에 있다. 평가기는 mock을 기본 거절하고, 실제 서버의 코드·팩 해시와 실행 설정을 기록한다. 자연스러움과 의미 보존은 review.csv에 별도로 검토해야 한다. 기존 버전의 모델 평가 수치를 이번 버전의 성적으로 쓰지 않는다.
 
-**실행 PC(RTX 4060)에서 처음 확인할 것**
-1. `setup_llama.ps1` CUDA 빌드 설치와 GPU offload, VRAM 실측(`check_env.py`)
-2. 실제 Qwen Q4 번역 품질·지연: `evaluate.py` dev 실행 후 `review.csv` 사람 판정
-3. NF4 4비트 로딩(bitsandbytes CUDA)과 `--smoke`의 `peak_vram_gib`(8GB 안인지)
-4. LoRA → GGUF 변환(`convert_adapter.py`)과 `--lora` 로딩 — 작성 PC에서는 외부 코드 실행이 막혀 미검증
-5. 에뮬레이터·Pleos STT/TTS와 동시 30분 실행
+현재 기본 모델은 Qwen3-4B-Instruct-2507 Q4_K_M, 다듬기는 기본 꺼짐이다. 문맥은 4096으로 늘렸다. 실제 토크나이저로 개발 문장·400자 입력·교정 재시도·다듬기 926개 조합을 측정했고, 최대 예약 3184토큰으로 모두 문맥 안에 들어왔다. 이는 측정 사례의 결과이며 모든 400자 문자열에 대한 상한 증명은 아니다. GPU 메모리·지연은 재측정해야 한다.
+
+토큰 예산 재검사에는 모델 가중치 대신 해당 base_revision의 tokenizer 파일만 필요하다. `tokenizers`, `Jinja2`가 설치된 Python에서 다음 명령을 쓴다.
+
+```bash
+python scripts/check_prompt_budget.py --tokenizer-dir <고정_revision의_tokenizer_디렉터리>
+```
+
+실행 PC에서 남은 확인:
+
+1. 실제 Qwen Q4의 한↔영·한↔스 의미 보존·자연스러움·지연. 개발 평가로 설정 확정 후 잠근 시험은 `--final`로 실행한다.
+2. 승인 학습 자료 1000건 이상과 GPU가 준비되면 기존 QLoRA 경로 실행, 기본 모델과 같은 자료로 비교. 초안 본학습 금지.
+3. Pleos STT/TTS·기어·속도·방향지시등·NaviHelper·FusedLocation 입력을 실제 SDK에서 연결하고 fixture와 동등성 확인.
+4. 에뮬레이터와 모델 서버를 30분 함께 실행해 메모리·VRAM·취소·언어 전환을 확인.

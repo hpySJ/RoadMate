@@ -1,12 +1,17 @@
 import json
+import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "train"))
 
 import prepare_data  # noqa: E402
 import review_data  # noqa: E402
+import train_qlora  # noqa: E402
 
 
 def row(**kw):
@@ -56,7 +61,137 @@ def test_prepare_rejects_same_text_in_two_groups():
 def test_pool_has_no_eval_overlap():
     norm = lambda s: "".join(s.lower().split())  # noqa: E731
     pool = [json.loads(x) for x in (ROOT / "train" / "sources" / "pool.jsonl").read_text(encoding="utf-8").splitlines()]
-    evals = {norm(json.loads(x)["text"]) for n in ("dev.jsonl", "test.locked.jsonl", "general.jsonl")
-             for x in (ROOT / "eval" / n).read_text(encoding="utf-8").splitlines() if x.strip()}
+    evals = {norm(json.loads(x)["text"]) for path in (ROOT / "eval").glob("*.jsonl")
+             for x in path.read_text(encoding="utf-8").splitlines() if x.strip()}
     assert pool and not {norm(p["text"]) for p in pool} & evals
     assert len({p["id"] for p in pool}) == len(pool)
+
+
+def test_seed_variants_share_pool_template_groups():
+    seed = prepare_data.load_jsonl(ROOT / "train" / "data" / "seed.draft.jsonl")
+    expected = {
+        "Just 10,000 won of diesel, please.": "t_amount_fuel",
+        "It's a gasoline car. Please don't put diesel in it.": "t_not_fuel",
+        "Can I park here until 8 p.m.?": "t_en_park_until",
+        "내일 오전 10시까지 반납해 주세요.": "t_return_time",
+    }
+    pool_groups = {r["group_id"] for r in prepare_data.load_jsonl(ROOT / "train" / "sources" / "pool.jsonl")}
+    for text, group in expected.items():
+        rec = next(r for r in seed if r["text"] == text)
+        assert rec["group_id"] == group and group in pool_groups
+    assert all(r["review_status"] == "draft" for r in seed)
+
+
+@pytest.mark.parametrize("eval_name", ["general_es.jsonl", "naturalness.dev.jsonl", "test.locked.jsonl"])
+def test_training_excludes_all_evaluation_files(monkeypatch, tmp_path, capsys, eval_name):
+    from sources import make_pool
+
+    for directory in ("eval", "prompts", "train/data", "train/sources"):
+        (tmp_path / directory).mkdir(parents=True, exist_ok=True)
+    text = "평가에 쓰는 문장입니다."
+    (tmp_path / "eval" / eval_name).write_text(json.dumps({"text": text}) + "\n", encoding="utf-8")
+    for name in ("translate", "polish"):
+        (tmp_path / "prompts" / f"{name}.examples.json").write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(make_pool, "ROOT", tmp_path)
+    monkeypatch.setattr(make_pool, "KO", [("general", text)])
+    for name in ("EN", "EN_T", "KO_T"):
+        monkeypatch.setattr(make_pool, name, [])
+    make_pool.main()
+    assert prepare_data.load_jsonl(tmp_path / "train/sources/pool.jsonl") == []
+    rec = {"group_id": "eval-leak", "task": "translate", "source_locale": "ko-KR", "target_locale": "en-US",
+           "scenario": "general", "text": text, "review_status": "approved",
+           "output": {"status": "ok", "translated_text": "This sentence is for evaluation.", "clarification_question": None}}
+    (tmp_path / "train/data/input.jsonl").write_text(json.dumps(rec) + "\n", encoding="utf-8")
+    (tmp_path / "train/training_config.json").write_text('{"max_length":1536}', encoding="utf-8")
+    monkeypatch.setattr(prepare_data, "ROOT", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["prepare_data.py"])
+    monkeypatch.setattr(sys.stdout, "reconfigure", lambda **kw: None, raising=False)
+    with pytest.raises(SystemExit, match="1 invalid records"):
+        prepare_data.main()
+    assert "leak:" in capsys.readouterr().out
+    assert not (tmp_path / "train/out").exists()
+
+
+@pytest.mark.parametrize("case, message", [("draft", "no records"), ("polish", "leak:"),
+                                           ("validation_only", "train split is empty")])
+def test_prepare_rejects_unusable_training_data(tmp_path, case, message):
+    rec = prepare_data.load_jsonl(ROOT / "train" / "data" / "seed.draft.jsonl")[0]
+    if case != "draft":
+        rec["review_status"] = "approved"
+    if case == "polish":
+        ex = prepare_data.P.examples("polish")[0]
+        rec.update(text=ex["input"]["source"], source_locale=ex["input"]["source_locale"],
+                   output={"status": "ok", "translated_text": ex["output"]["text"], "clarification_question": None})
+    elif case == "validation_only":
+        rec["group_id"] = "s_rental_return_10am"
+    source, output = tmp_path / "input.jsonl", tmp_path / "out"
+    source.write_text(json.dumps(rec, ensure_ascii=False) + "\n", encoding="utf-8")
+    result = subprocess.run([sys.executable, "-B", str(ROOT / "train/prepare_data.py"),
+                             "--inputs", str(source), "--out", str(output)], capture_output=True)
+    assert result.returncode != 0 and message.encode() in result.stdout + result.stderr
+    assert not output.exists()
+
+
+def test_draft_does_not_overwrite_human_review(monkeypatch, tmp_path):
+    pool = tmp_path / "pool.jsonl"
+    pool.write_text("", encoding="utf-8")
+    review = tmp_path / "batch1.review.csv"
+    review.write_text("human review already saved", encoding="utf-8")
+    monkeypatch.setattr(review_data, "DRAFTS", tmp_path)
+    with pytest.raises(FileExistsError):
+        review_data.draft(SimpleNamespace(pool=pool, limit=0, name="batch1", url="http://127.0.0.1:1"))
+    assert review.read_text(encoding="utf-8") == "human review already saved"
+
+
+@pytest.mark.parametrize("case, message", [("missing", "run train/prepare_data.py first"),
+                                           ("draft", "smoke only"), ("changed", "changed after prepare_data.py"),
+                                           ("prompt", "prompt/glossary versions changed"),
+                                           ("glossary", "prompt/glossary versions changed")])
+def test_training_rejects_bad_data_before_loading_model(tmp_path, case, message):
+    cfg = json.loads((ROOT / "train/training_config.json").read_text(encoding="utf-8"))
+    cfg.update(data_dir=str(tmp_path), base_model=str(tmp_path / "no-model"))
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps(cfg), encoding="utf-8")
+    if case != "missing":
+        (tmp_path / "train.jsonl").write_text("changed", encoding="utf-8")
+        manifest = {"allow_draft": case == "draft", "outputs": {"train.jsonl": "incorrect_hash"}}
+        if case in ("prompt", "glossary"):
+            manifest.update(outputs={"train.jsonl": prepare_data.sha(tmp_path / "train.jsonl")},
+                            prompt_versions={n: prepare_data.P.prompt(n)[0] for n in ("translate", "destination")},
+                            glossary_version=prepare_data.P.glossary()["version"])
+            if case == "prompt":
+                manifest["prompt_versions"]["translate"] = "outdated"
+            else:
+                manifest["glossary_version"] = "outdated"
+        (tmp_path / "dataset_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    result = subprocess.run([sys.executable, "-B", str(ROOT / "train/train_qlora.py"), "--config", str(config)],
+                            capture_output=True)
+    assert result.returncode != 0 and message.encode() in result.stdout + result.stderr
+    assert b"ModuleNotFoundError" not in result.stderr
+
+
+@pytest.mark.parametrize("case, message", [("exact", None), ("train_empty", "train split is empty"),
+                                           ("validation_empty", "validation split is empty"),
+                                           ("train_long", "train:1 has 7 tokens"),
+                                           ("validation_long", "validation:1 has 7 tokens")])
+def test_training_checks_full_chat_length_without_truncation(case, message):
+    class Tokenizer:
+        def apply_chat_template(self, messages, *, tokenize):
+            assert tokenize is False
+            return " ".join(f"<{m['role']}> {m['content']} </{m['role']}>" for m in messages)
+
+        def __call__(self, text, *, add_special_tokens, truncation):
+            assert add_special_tokens is False and truncation is False
+            return {"input_ids": text.split()}
+
+    ds = {s: [{"prompt": [{"role": "user", "content": "question"}],
+               "completion": [{"role": "assistant", "content": "answer"}]}] for s in ("train", "validation")}
+    if case.endswith("_empty"):
+        ds[case.removesuffix("_empty")] = []
+    elif case.endswith("_long"):
+        ds[case.removesuffix("_long")][0]["completion"][0]["content"] = "long answer"
+    if message:
+        with pytest.raises(SystemExit, match=message):
+            train_qlora.check_lengths(ds, Tokenizer(), 6)
+    else:
+        train_qlora.check_lengths(ds, Tokenizer(), 6)

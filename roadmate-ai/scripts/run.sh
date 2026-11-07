@@ -80,7 +80,7 @@ model_args() {
     local model adapter
     model="$ROOT/models/$(mf model.gguf_file)"
     [ -f "$model" ] || die "model missing: .venv/bin/python scripts/download_model.py"
-    # 파라미터 튜닝: 문맥 2048, 슬롯 1, 출력 상한 256, GPU 레이어(GPU_LAYERS로 덮어씀), 배치, RAM 프롬프트 캐시 끔
+    # 파라미터 튜닝: 문맥은 manifest, 슬롯 1, 출력 상한 256, GPU 레이어(GPU_LAYERS로 덮어씀), 배치, RAM 프롬프트 캐시 끔
     ARGS=(-m "$model" --alias "$(mf model.alias)"
         -c "$(mf runtime.ctx)" -np "$(mf runtime.parallel)" -n "$(mf runtime.n_predict)"
         -ngl "${GPU_LAYERS:-$(mf runtime.n_gpu_layers)}" -b "$(mf runtime.batch)" -ub "$(mf runtime.ubatch)"

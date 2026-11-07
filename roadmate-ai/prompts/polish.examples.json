@@ -22,5 +22,13 @@
   {
     "input": {"source_locale": "es-MX", "source": "No encuentro la tapa del tanque. ¿Cómo se abre?", "korean": "나는 주유구를 찾을 수 없습니다. 그것은 어떻게 열립니까?", "glossary": {"tapa del tanque": "주유구"}},
     "output": {"text": "주유구를 못 찾겠어요. 어떻게 여는 거예요?"}
+  },
+  {
+    "input": {"source_locale": "en-US", "source": "Could you give me a hand loading this suitcase?", "korean": "이 여행 가방을 싣는 데 저에게 손을 주실 수 있나요?", "glossary": {}},
+    "output": {"text": "이 여행 가방 싣는 것 좀 도와주시겠어요?"}
+  },
+  {
+    "input": {"source_locale": "es-US", "source": "¿Me puede avisar cuando esté listo?", "korean": "그것이 준비되었을 때 저에게 통지할 수 있나요?", "glossary": {}},
+    "output": {"text": "준비되면 알려 주시겠어요?"}
   }
 ]

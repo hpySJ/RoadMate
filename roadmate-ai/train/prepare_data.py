@@ -78,9 +78,9 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     a = ap.parse_args()
 
-    blocked = {norm(c["text"]) for f in ("dev.jsonl", "test.locked.jsonl", "general.jsonl", "general_es.jsonl")
-               for c in load_jsonl(ROOT / "eval" / f)}
+    blocked = {norm(c["text"]) for path in (ROOT / "eval").glob("*.jsonl") for c in load_jsonl(path)}
     blocked |= {norm(e["input"]["utterance"]) for n in ("translate", "destination") for e in P.examples(n)}
+    blocked |= {norm(e["input"]["source"]) for e in P.examples("polish")}
     recs, errors = [], []
     for path in map(Path, a.inputs):
         for i, r in enumerate(load_jsonl(path)):
@@ -115,8 +115,9 @@ def main():
             sys.exit(f"{len(too_long)} rows exceed max_length (정답 잘림 방지): {too_long[:10]}")
 
     assign = split_groups(list({r["meta"]["group_id"] for r in rows}), a.seed)
-    if "validation" not in assign.values():
-        sys.exit(f"validation split is empty ({len(assign)} groups): add more groups or change --seed")
+    for split in ("train", "validation"):
+        if split not in assign.values():
+            sys.exit(f"{split} split is empty ({len(assign)} groups): add more groups or change --seed")
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     counts = {}

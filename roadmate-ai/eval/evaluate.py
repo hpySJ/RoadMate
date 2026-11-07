@@ -5,6 +5,7 @@
 """
 import argparse
 import csv
+import hashlib
 import json
 import os
 import statistics
@@ -18,7 +19,7 @@ import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from config import load_dotenv  # noqa: E402
+from config import artifact_hashes, load_dotenv  # noqa: E402
 
 load_dotenv()
 
@@ -64,16 +65,28 @@ def main():
     ap.add_argument("--file", default=str(ROOT / "eval" / "dev.jsonl"))
     ap.add_argument("--url", default=os.environ.get("AI_URL", "http://127.0.0.1:8000"))
     ap.add_argument("--label", default="run")
+    ap.add_argument("--allow-mock", action="store_true", help="계약 점검 전용. 모델 품질 평가로 사용할 수 없음")
+    ap.add_argument("--final", action="store_true", help="설정 확정 후 잠근 시험을 실행함을 명시")
     a = ap.parse_args()
+
+    if Path(a.file).name == "test.locked.jsonl" and not a.final:
+        ap.error("잠근 시험은 튜닝 종료 후 --final로 한 번만 실행하세요")
 
     bundle = json.loads((ROOT / "models" / "manifest.json").read_text(encoding="utf-8"))["engine_bundle"]
     headers = {"X-Internal-Token": os.environ["AI_INTERNAL_TOKEN"]} if os.environ.get("AI_INTERNAL_TOKEN") else {}
     cases = [json.loads(x) for x in Path(a.file).read_text(encoding="utf-8").splitlines() if x.strip()]
     stamp = time.strftime("%Y%m%d-%H%M%S")
     out_dir = ROOT / "eval" / "results" / f"{a.label}-{Path(a.file).stem}-{stamp}"
-    out_dir.mkdir(parents=True, exist_ok=True)
     client = httpx.Client(timeout=60, headers=headers)
-    ready = client.get(f"{a.url}/health/ready").json()
+    response = client.get(f"{a.url}/health/ready")
+    ready = response.json()
+    if response.status_code != 200 or not ready.get("ready"):
+        raise SystemExit("model is not ready; evaluation not started")
+    if (ready.get("backend") == "mock" or ready.get("model_id") == "mock") and not a.allow_mock:
+        raise SystemExit("mock is not a translation quality evaluation; use --allow-mock only for contract checks")
+    if ready.get("artifact_hashes") != artifact_hashes():
+        raise SystemExit("server artifacts differ from this checkout; restart/deploy matching code before evaluation")
+    out_dir.mkdir(parents=True, exist_ok=False)
 
     rows = []
     for i, c in enumerate(cases):
@@ -97,6 +110,9 @@ def main():
         rows.append({"case": c, "http": r.status_code, "body": body, "wall_ms": wall, "pass": passed, "flags": flags})
         print(f"[{i + 1}/{len(cases)}] {'PASS' if passed else 'FAIL'} {c['id']} {wall}ms {' '.join(flags)}")
 
+    ready_end_response = client.get(f"{a.url}/health/ready")
+    ready_end = ready_end_response.json()
+
     with (out_dir / "results.jsonl").open("w", encoding="utf-8") as f:
         for row in rows:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -104,14 +120,20 @@ def main():
     with (out_dir / "review.csv").open("w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)
         w.writerow(["id", "task", "direction", "text", "reference", "output", "auto_pass", "flags",
-                    "human_meaning_ok", "critical_error", "notes"])
+                    "human_meaning_ok", "human_naturalness_ok", "critical_error", "notes"])
         for row in rows:
             c, b = row["case"], row["body"]
             output = b.get("translated_text") or b.get("clarification_question") or b.get("error_code") or ""
             if c["task"] == "destination":
                 output = json.dumps({k: b.get(k) for k in ("status", "query_ko_candidate", "candidates")}, ensure_ascii=False)
             w.writerow([c["id"], c["task"], f"{c['source_locale']}>{c.get('target_locale', '')}", c["text"],
-                        c.get("reference", ""), output, row["pass"], " ".join(row["flags"]), "", "", ""])
+                        c.get("reference", ""), output, row["pass"], " ".join(row["flags"]), "", "", "", ""])
+
+    meta = {"dataset": Path(a.file).name, "dataset_sha256": hashlib.sha256(Path(a.file).read_bytes()).hexdigest(),
+            "ready": ready, "ready_end": ready_end, "label": a.label, "timestamp": stamp,
+            "results_sha256": hashlib.sha256((out_dir / "results.jsonl").read_bytes()).hexdigest()}
+    (out_dir / "run.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    client.close()
 
     lines = [f"# 평가 결과 {a.label} ({Path(a.file).name}, {stamp})", "",
              f"- engine_bundle: {bundle}", f"- ready: {json.dumps(ready, ensure_ascii=False)}", ""]

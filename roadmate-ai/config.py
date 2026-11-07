@@ -1,10 +1,19 @@
 import json
+import hashlib
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+
+
+def artifact_hashes() -> dict[str, str]:
+    """평가한 서버와 제출 코드·문구가 같은지 비교한다. .env·개인정보는 포함하지 않는다."""
+    paths = [*ROOT.glob("*.py"), *sorted((ROOT / "prompts").glob("*.*")),
+             *sorted((ROOT / "packs").glob("*.json")), ROOT / "models" / "manifest.json"]
+    return {p.relative_to(ROOT).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in sorted(paths) if p.is_file()}
 
 
 def load_dotenv(path: Path = ROOT / ".env"):
@@ -59,6 +68,6 @@ class Settings:
             manifest=m,
             # 검증: 개발·평가 전용. 1이면 검사에 걸린 원문과 모델 출력을 로그에 남긴다(실사용 금지, 개인정보)
             log_rejected=env("LOG_REJECTED", "0") == "1",
-            # 파라미터 튜닝: 1이면 영→한 번역을 한 번 더 자연스럽게 다듬는다(모델 호출 1회 추가, 검사 통과 시에만 교체)
+            # 파라미터 튜닝: 1이면 영·스→한 번역을 한 번 더 다듬는다(실제 품질 비교 후 선택)
             polish_ko=env("POLISH_KO", "0") == "1",
         )

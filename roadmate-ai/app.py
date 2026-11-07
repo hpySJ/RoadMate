@@ -3,13 +3,14 @@ import asyncio
 import hmac
 import logging
 import time
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from config import Settings
+from config import Settings, artifact_hashes
 from engine import Engine
 from inference import LlamaClient, MockClient, ModelError, ModelTimeout
 from schemas import (CancelRequest, CancelResponse, DestinationRequest, DestinationResponse, ErrorBody,
@@ -18,7 +19,7 @@ from sessions import ModelSlot, TurnRegistry, payload_hash
 from validation import HANGUL
 
 log = logging.getLogger("roadmate.ai")
-API_VERSION = "1.1.0"  # 백엔드 연동: 계약이 바뀌면 올리고 docs/openapi.json 재생성
+API_VERSION = "1.2.0"  # 백엔드 연동: 계약이 바뀌면 올리고 docs/openapi.json 재생성
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -46,7 +47,7 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
     async def lifespan(_app):
         c = client or (MockClient() if s.model_backend == "mock" else LlamaClient(s.model_base_url, s.model_id))
         st.update(client=c, engine=Engine(c, s), registry=TurnRegistry(s.dedupe_ttl_s), slot=ModelSlot(),
-                  self_check=None, settle=None)
+                  self_check=None, settle=None, artifact_hashes=artifact_hashes(), instance_id=uuid.uuid4().hex)
         log.info("ai server up: backend=%s bundle=%s", s.model_backend, s.engine_bundle)
         yield
         for t in [f.task for f in st["registry"].inflight.values()] + [st["settle"]]:
@@ -247,7 +248,11 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
         is_ready = all(v is True for k, v in checks.items() if k != "self_check") and checks["self_check"] in (
             "ok", "skipped_busy")
         body = {"ready": is_ready, "checks": checks, "engine_bundle": s.engine_bundle, "model_id": c.model_id,
-                "backend": s.model_backend, "versions": s.manifest["versions"]}
+                "instance_id": st["instance_id"],
+                "backend": s.model_backend, "versions": s.manifest["versions"], "polish_ko": s.polish_ko,
+                "runtime_config": {"model_id": c.model_id, "polish_ko": s.polish_ko,
+                                   "model_timeout_s": s.model_timeout_s, "max_text_chars": s.max_text_chars},
+                "artifact_hashes": st["artifact_hashes"]}
         return UTF8JSONResponse(body, status_code=200 if is_ready else 503)
 
     return app

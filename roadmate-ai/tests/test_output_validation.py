@@ -263,3 +263,59 @@ def test_review_cases_valid(src, sl, tgt):
 def test_night_meridiem_is_not_added_twice():
     from validation import add_meridiem
     assert add_meridiem("밤 9시에 만나요.", "See you at 9 p.m.", "en-US", "ko-KR") == "밤 9시에 만나요."
+
+
+@pytest.mark.parametrize("locale", ["es-US", "es-MX"])
+@pytest.mark.parametrize("source,good,bad,issue", [
+    ("Siga derecho hasta el semáforo.", "신호등까지 직진하세요.", "신호등까지 우회전하세요.", "direction_mismatch:right"),
+    ("Usted tiene derecho a un abogado.", "변호사를 부를 권리가 있어요.", "오른쪽 변호사를 부를 권리가 있어요.",
+     "direction_mismatch:right"),
+    ("El retrovisor derecho del carro está roto.", "차의 오른쪽 사이드미러가 부서졌어요.", "차의 사이드미러가 부서졌어요.",
+     "direction_missing:right"),
+    ("No se puede poner diésel, solo gasolina.", "경유는 넣지 말고 휘발유만 넣어 주세요.",
+     "휘발유는 넣지 말고 경유만 넣어 주세요.", "fuel_polarity_mismatch:fuel_diesel"),
+    ("No quiero que le pongan diésel, solo gasolina.", "경유는 넣지 말고 휘발유만 넣어 주세요.",
+     "휘발유는 넣지 말고 경유만 넣어 주세요.", "fuel_polarity_mismatch:fuel_diesel"),
+    ("No vaya a poner diésel, solo gasolina.", "경유는 넣지 말고 휘발유만 넣어 주세요.",
+     "휘발유는 넣지 말고 경유만 넣어 주세요.", "fuel_polarity_mismatch:fuel_diesel"),
+    ("Vuelva a las 3 y 10 de la tarde.", "오후 3시 10분에 돌아오세요.", "오후 3시와 오후 10시에 돌아오세요.",
+     "number_missing:10"),
+    ("Vuelva a las 3 y 10 de la tarde.", "오후 3시 10분에 돌아오세요.", "오후 3시와 오전 10시에 돌아오세요.",
+     "number_missing:10"),
+    ("Es un cuarto para las tres de la tarde.", "오후 2시 45분이에요.", "오후 3시예요.", "number_missing:14"),
+    ("Son cinco para las tres de la tarde.", "오후 2시 55분이에요.", "오후 3시 5분이에요.", "number_missing:14"),
+    ("Vuelva a un cuarto para las doce de la noche.", "오후 11시 45분에 돌아오세요.", "자정에 돌아오세요.",
+     "number_missing:23"),
+    ("Espere dos horas y un cuarto.", "2시간 15분 기다려 주세요.", "2시간 기다려 주세요.", "number_missing:135"),
+    ("Espere una hora y un cuarto.", "1시간 15분 기다려 주세요.", "1시간 기다려 주세요.", "number_missing:75"),
+    ("Vuelva a las tres y un minuto de la tarde.", "오후 3시 1분에 돌아오세요.", "오후 3시에 돌아오세요.", "number_missing:1"),
+    ("Vuelva a las 3:01 de la tarde.", "오후 3시 1분에 돌아오세요.", "오후 3시에 돌아오세요.", "number_missing:1"),
+    ("Vuelva a las quince horas.", "15시에 돌아오세요.", "15시간 후에 돌아오세요.", "number_missing:15"),
+])
+def test_spanish_review_regressions_in_both_directions(locale, source, good, bad, issue):
+    assert v(source, locale, good, "ko-KR") == []
+    assert v(good, "ko-KR", source, locale) == []
+    assert issue in v(source, locale, bad, "ko-KR")
+    assert v(bad, "ko-KR", source, locale)
+
+
+@pytest.mark.parametrize("locale", ["es-US", "es-MX"])
+@pytest.mark.parametrize("source,target", [
+    ("Puede poner diésel, pero no gasolina.", "경유는 넣어도 되지만 휘발유는 넣지 마세요."),
+    ("No sé si es diésel o gasolina.", "경유인지 휘발유인지 모르겠어요."),
+    ("A las dos horas de salir, llegamos.", "출발한 지 두 시간 뒤에 도착했어요."),
+    ("Déselo a las dos personas.", "두 사람에게 주세요."),
+    ("Son cinco para las dos personas.", "두 사람 몫이 다섯 개예요."),
+    ("Vuelva a las doce menos cuarto de la noche.", "오후 11시 45분에 돌아오세요."),
+    ("Espere dos horas y media.", "2시간 30분 기다려 주세요."),
+])
+def test_spanish_nearby_valid_forms(locale, source, target):
+    assert v(source, locale, target, "ko-KR") == []
+    assert v(target, "ko-KR", source, locale) == []
+
+
+def test_english_clock_minutes_are_not_another_hour():
+    assert v("Come back at 3:10 p.m.", "en-US", "오후 3시 10분에 돌아오세요.", "ko-KR") == []
+    assert "number_missing:10" in v("Come back at 3:10 p.m.", "en-US", "오후 3시와 오후 10시에 돌아오세요.", "ko-KR")
+    assert "number_missing:10" in v("Come back at 3:10 p.m.", "en-US", "오후 3시와 오전 10시에 돌아오세요.", "ko-KR")
+    assert v("Come back at 3:01 p.m.", "en-US", "오후 3시 1분에 돌아오세요.", "ko-KR") == []

@@ -12,16 +12,28 @@ import sys
 import time
 from pathlib import Path
 
-import torch
-from datasets import load_dataset
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, set_seed
-from trl import SFTConfig, SFTTrainer
-
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+import prompting as P  # noqa: E402
+
+
+def check_lengths(ds, tok, max_length: int) -> None:
+    for split in ("train", "validation"):
+        if not len(ds[split]):
+            raise SystemExit(f"{split} split is empty: re-run train/prepare_data.py")
+        for i, row in enumerate(ds[split], 1):
+            text = tok.apply_chat_template(row["prompt"] + row["completion"], tokenize=False)
+            n = len(tok(text, add_special_tokens=False, truncation=False)["input_ids"])
+            if n > max_length:
+                raise SystemExit(f"{split}:{i} has {n} tokens > max_length={max_length}: completion would be truncated")
 
 
 def load_model(cfg: dict, use_4bit: bool):
+    import torch
+    from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+    from transformers import AutoModelForCausalLM, BitsAndBytesConfig
+
     cuda = torch.cuda.is_available()
     dtype = getattr(torch, cfg["compute_dtype"]) if cuda else torch.float32
     if cuda and dtype == torch.bfloat16 and not torch.cuda.is_bf16_supported():
@@ -72,20 +84,9 @@ def main():
     cfg = json.loads(Path(a.config).read_text(encoding="utf-8"))
     if a.base_model:
         cfg["base_model"], cfg["base_revision"] = a.base_model, None
-    set_seed(cfg["seed"])
     use_4bit = cfg["load_in_4bit"] and not a.no_4bit
     out_dir = ROOT / cfg["output_dir"] / ("smoke" if a.smoke else "")
     data_dir = ROOT / cfg["data_dir"]
-
-    tok = AutoTokenizer.from_pretrained(cfg["base_model"], revision=cfg.get("base_revision"))
-    if tok.pad_token is None:
-        tok.pad_token = tok.eos_token
-    model, dtype = load_model(cfg, use_4bit)
-    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    total = sum(p.numel() for p in model.parameters())
-    if not 0 < trainable < total:
-        raise SystemExit("trainable parameter check failed")
-    print(f"trainable={trainable:,} total={total:,} ({trainable / total:.4%}) dtype={dtype} 4bit={use_4bit}")
 
     # 검증: 본학습은 검수(approved) 자료만, prepare_data.py 이후 바뀐 파일이 없는지 manifest 해시로 확인
     dm_path = data_dir / "dataset_manifest.json"
@@ -97,9 +98,29 @@ def main():
     for name, digest in dm["outputs"].items():
         if hashlib.sha256((data_dir / name).read_bytes()).hexdigest() != digest:
             raise SystemExit(f"{name} changed after prepare_data.py: re-run it")
+    current_prompts = {name: P.prompt(name)[0] for name in ("translate", "destination")}
+    if dm.get("prompt_versions") != current_prompts or dm.get("glossary_version") != P.glossary()["version"]:
+        raise SystemExit("prompt/glossary versions changed: re-run train/prepare_data.py")
 
+    # 검수·무결성 확인 전에는 학습 의존성이나 모델을 불러오지 않는다.
+    import torch
+    from datasets import load_dataset
+    from transformers import AutoTokenizer, set_seed
+    from trl import SFTConfig, SFTTrainer
+
+    set_seed(cfg["seed"])
     files = {"train": str(data_dir / "train.jsonl"), "validation": str(data_dir / "validation.jsonl")}
     ds = load_dataset("json", data_files=files).select_columns(["prompt", "completion"])
+    tok = AutoTokenizer.from_pretrained(cfg["base_model"], revision=cfg.get("base_revision"))
+    if tok.pad_token is None:
+        tok.pad_token = tok.eos_token
+    check_lengths(ds, tok, cfg["max_length"])
+    model, dtype = load_model(cfg, use_4bit)
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total = sum(p.numel() for p in model.parameters())
+    if not 0 < trainable < total:
+        raise SystemExit("trainable parameter check failed")
+    print(f"trainable={trainable:,} total={total:,} ({trainable / total:.4%}) dtype={dtype} 4bit={use_4bit}")
 
     cuda = torch.cuda.is_available()
     ga = 2 if a.smoke else cfg["gradient_accumulation_steps"]

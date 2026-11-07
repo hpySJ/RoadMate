@@ -83,8 +83,6 @@ def match_concepts(text: str, locale: str, categories: set | None = None) -> dic
 
 
 EN_TIME = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*([ap])(?:\.\s?m\.|\s?m)(?![A-Za-z])", re.IGNORECASE)
-ES_TIME = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(?:([ap])(?:\.\s?m\.|\s?m)(?![A-Za-z])"
-                     r"|(?:de|en|por)\s+la\s+(mañana|madrugada|tarde|noche))", re.IGNORECASE)
 KO_TIME = re.compile(r"(오전|오후)\s?(\d{1,2})시(?:\s?(\d{1,2})분|\s?(반))?")
 # 프론트 연동: 목표 언어별 시각·원화 표기(TTS가 그대로 읽는다)
 PM_FMT = {"en": ("a.m.", "p.m."), "es": ("a. m.", "p. m.")}
@@ -112,16 +110,19 @@ def _time_hints(text: str, src: str, tgt: str) -> dict[str, str]:
     # QWEN 구현: 오전·오후가 붙은 시각은 목표 언어 표기를 직접 알려 준다(6 p.m. = 오후 6시, 오후 3시 = 3 p. m.)
     out = {}
     if src != "ko":
-        for m in (EN_TIME if src == "en" else ES_TIME).finditer(text):
-            h, low = int(m.group(1)), m.group(0).lower()
-            minute = f" {int(m.group(2))}분" if m.group(2) and int(m.group(2)) else ""
-            # 12 de la noche = 자정, 밤 1~4시 = 새벽(validation._night_pm과 같은 기준)
-            night = low.endswith("noche")
-            pm = (m.group(3) or "").lower() == "p" or low.endswith("tarde") or (night and not (h == 12 or 1 <= h <= 4))
-            if h == 12:
-                out[m.group(0)] = ("정오" if pm else "자정") if not minute else (f"낮 12시{minute}" if pm else f"0시{minute}")
+        if src == "es":
+            from validation import spanish_times
+            times = [(text[start:end], int(hour.value) % 24, mins)
+                     for start, end, hour, mins in spanish_times(text) if hour.exact]
+        else:
+            times = [(m.group(0), int(m.group(1)) % 12 + (12 if m.group(3).lower() == "p" else 0),
+                      int(m.group(2) or 0)) for m in EN_TIME.finditer(text)]
+        for surface, h, mins in times:
+            minute = f" {mins}분" if mins else ""
+            if h in (0, 12):
+                out[surface] = ("정오" if h else "자정") if not minute else (f"낮 12시{minute}" if h else f"0시{minute}")
             else:
-                out[m.group(0)] = f"{'오후' if pm else '오전'} {h}시{minute}"
+                out[surface] = f"{'오후' if h >= 12 else '오전'} {h % 12}시{minute}"
     else:
         for m in KO_TIME.finditer(text):
             minute = "30" if m.group(4) else m.group(3)

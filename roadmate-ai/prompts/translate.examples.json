@@ -58,5 +58,21 @@
   {
     "input": {"source_locale": "es-US", "target_locale": "ko-KR", "scenario": "gas_station", "glossary": {}, "utterance": "¿Me lo puede llenar con, eh, el...?"},
     "output": {"status": "clarification_required", "translated_text": null, "clarification_question": "Perdón, no entendí con qué quiere llenarlo. ¿Puede repetir toda la frase?"}
+  },
+  {
+    "input": {"source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "glossary": {}, "utterance": "Could you give me a hand loading this suitcase?"},
+    "output": {"status": "ok", "translated_text": "이 여행 가방 싣는 것 좀 도와주시겠어요?", "clarification_question": null}
+  },
+  {
+    "input": {"source_locale": "ko-KR", "target_locale": "en-US", "scenario": "rental_counter", "glossary": {}, "utterance": "말씀 좀 천천히 해 주시겠어요?"},
+    "output": {"status": "ok", "translated_text": "Could you speak a little more slowly, please?", "clarification_question": null}
+  },
+  {
+    "input": {"source_locale": "es-MX", "target_locale": "ko-KR", "scenario": "rental_counter", "glossary": {}, "utterance": "Se me quedó la llave adentro del carro."},
+    "output": {"status": "ok", "translated_text": "차 안에 열쇠를 두고 왔어요.", "clarification_question": null}
+  },
+  {
+    "input": {"source_locale": "ko-KR", "target_locale": "es-MX", "scenario": "rental_counter", "glossary": {}, "utterance": "좀 더 크게 말씀해 주시겠어요?"},
+    "output": {"status": "ok", "translated_text": "¿Podría hablar un poco más fuerte, por favor?", "clarification_question": null}
   }
 ]

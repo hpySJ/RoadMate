@@ -16,7 +16,7 @@
     "llama_cpp_tag": "b12076",
     "llama_cpp_backend": "cuda-12.4",
     "port": 8081,
-    "ctx": 2048,
+    "ctx": 4096,
     "parallel": 1,
     "n_predict": 256,
     "n_gpu_layers": 99,
@@ -25,11 +25,11 @@
     "cache_ram_mib": 0
   },
   "versions": {
-    "translate_prompt": "translate-v5",
+    "translate_prompt": "translate-v6",
     "destination_prompt": "destination-v3",
-    "polish_prompt": "polish-v3",
-    "glossary": "rental-ko-en-es-v6",
-    "rules": "rules-v3",
+    "polish_prompt": "polish-v4",
+    "glossary": "rental-ko-en-es-v7",
+    "rules": "rules-v4",
     "poi": "poi-jeju-demo-v3",
     "eval": "eval-ko-en-es-v2"
   }

@@ -1,6 +1,34 @@
 import json
 
+import pytest
+
 import prompting as P
+
+
+def test_manifest_versions_match_served_artifacts():
+    from config import load_manifest
+    from guidance import load_pack
+    versions = load_manifest()["versions"]
+    for name in ("translate", "destination", "polish"):
+        assert versions[f"{name}_prompt"] == P.prompt(name)[0]
+    assert versions["glossary"] == P.glossary()["version"]
+    assert versions["rules"] == load_pack()["version"]
+
+
+@pytest.mark.parametrize("locale", ["es-US", "es-MX"])
+@pytest.mark.parametrize("source,surface,korean", [
+    ("Vuelva a las 3 y 10 de la tarde.", "3 y 10 de la tarde", "오후 3시 10분"),
+    ("Vuelva a las tres y diez de la tarde.", "tres y diez de la tarde", "오후 3시 10분"),
+    ("Vuelva a las 3:01 de la tarde.", "3:01 de la tarde", "오후 3시 1분"),
+    ("Es un cuarto para las tres de la tarde.", "un cuarto para las tres de la tarde", "오후 2시 45분"),
+    ("Vuelva a un cuarto para las doce de la noche.", "un cuarto para las doce de la noche", "오후 11시 45분"),
+    ("Vuelva a las quince horas.", "quince", "오후 3시"),
+])
+def test_spanish_time_hints_use_the_whole_clock_expression(locale, source, surface, korean):
+    from validation import validate_translation
+    assert P.select_glossary(source, locale, "ko-KR") == {surface: korean}
+    out = {"status": "ok", "translated_text": korean, "clarification_question": None}
+    assert validate_translation(out, source, locale, "ko-KR") == []
 
 
 def test_messages_shape_and_glossary():

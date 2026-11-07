@@ -64,6 +64,8 @@ class GuidanceEngine:
         if not allow_draft and pack["review"]["status"] != "approved":
             raise ValueError("rules pack is not approved for release")
         self.profile = profile or DriverProfile()
+        if not isinstance(self.profile.country, str) or self.profile.country not in pack["mvp_countries"]:
+            raise ValueError(f"unknown country {self.profile.country}")
         if self.profile.experience not in pack["experience_levels"]:
             raise ValueError(f"unknown experience {self.profile.experience}")
         self.pack, self.locale = pack, locale
@@ -72,16 +74,21 @@ class GuidanceEngine:
         experienced = self.profile.experience == "experienced"
         rules = [r for r in pack["rules"] if not (experienced and r["kind"] == "explanation")]
         self.rules = sorted(rules, key=lambda r: r["priority"])
-        self.over_since: dict[str, int] = {}
+        self.over_since: dict[str, tuple[int, int, str | None]] = {}
         self.last_played: dict[str, int] = {}
         self.played: dict[tuple[str, str], int] = {}
-        self.announced_zones: set[tuple[str, str]] = set()
+        self.announced_zones: set[tuple[str, str, str]] = set()
 
     # ------------------------------------------------------------ 조건(순수 함수)
     def _cond(self, rule: dict, snap: dict) -> tuple[dict, str | None] | None:
         now, t, h = snap["now_ms"], rule.get("trigger", {}), rule["handler"]
         speed = _fresh(snap.get("speed"), now, self.fresh["speed"])
         zone = _fresh(snap.get("school_zone"), now, self.fresh["school_zone"])
+        if h == "school_zone_entry":
+            if (zone and zone.get("state") == "inside" and isinstance(zone.get("zone_id"), str)
+                    and zone["zone_id"]):
+                return {}, zone["zone_id"]
+            return None
         if h == "school_zone_current_speed":
             lim = _fresh(snap.get("current_speed_limit"), now, self.fresh["current_speed_limit"])
             if not (zone and zone["state"] == "inside" and lim and speed):
@@ -116,6 +123,19 @@ class GuidanceEngine:
             if d is None or not t["min_distance_m"] <= float(d) <= t["max_distance_m"]:
                 return None
             return {}, None
+        if h == "unprotected_left":
+            context = _fresh(snap.get("unprotected_left"), now, self.fresh["unprotected_left"])
+            tbt = _fresh(snap.get("tbt"), now, self.fresh["tbt"])
+            # 비보호 표지·경로가 확인된 같은 교차로만 사용한다. 좌회전 TBT만으로 추측하지 않는다.
+            if not (context and context.get("value") is True and context.get("on_route") is True
+                    and isinstance(context.get("intersection_id"), str) and context["intersection_id"]
+                    and tbt and tbt.get("value") == "left"
+                    and tbt.get("intersection_id") == context["intersection_id"]):
+                return None
+            d = tbt.get("distance_m")
+            if d is None or not t["min_distance_m"] <= float(d) <= t["max_distance_m"]:
+                return None
+            return {}, context["intersection_id"]
         raise ValueError(f"unknown handler {h}")
 
     def _render(self, rule: dict, slots: dict) -> str:
@@ -127,9 +147,14 @@ class GuidanceEngine:
     def _blocked(self, rule: dict, day_key: str, now: int, zone_id: str | None) -> bool:
         # 검증: 일일 횟수(교육성 설명만, 과속 경고는 null로 제한 없음)·재생 간격·구역당 1회. 생성 시와 큐에서 꺼낼 때 모두 검사
         rid, limit = rule["rule_id"], rule["daily_explanation_limit"]
+        zone_repeat = (day_key, rid, zone_id) in self.announced_zones
+        if rid == "school_zone_entry":
+            zone_repeat = any(day == day_key and z == zone_id and r.startswith("school_zone_")
+                              for day, r, z in self.announced_zones)
         return ((limit is not None and self.played.get((day_key, rid), 0) >= limit)
                 or now - self.last_played.get(rid, -10**12) < rule["cooldown_seconds"] * 1000
-                or bool(zone_id and rid.startswith("school_zone_approach") and (rid, zone_id) in self.announced_zones))
+                or bool(zone_id and (rid.startswith("school_zone_approach") or rid == "school_zone_entry")
+                        and zone_repeat))
 
     # ------------------------------------------------------------ 평가
     def evaluate(self, snap: dict, day_key: str) -> list[Utterance]:
@@ -144,7 +169,11 @@ class GuidanceEngine:
             slots, zone_id = hit
             sustain = rule.get("trigger", {}).get("sustain_seconds", 0) * 1000
             if sustain:
-                since = self.over_since.setdefault(rid, now)
+                prev = self.over_since.get(rid)
+                observed_ms = int(snap["speed"]["ts_ms"])
+                since = (prev[0] if prev and prev[2] == zone_id
+                         and 0 <= observed_ms - prev[1] <= self.fresh["speed"] else now)
+                self.over_since[rid] = (since, observed_ms, zone_id)
                 if now - since < sustain:
                     continue
             if self._blocked(rule, day_key, now, zone_id):
@@ -155,13 +184,22 @@ class GuidanceEngine:
 
     def revalidate(self, utt: Utterance, snap: dict) -> Utterance | None:
         # 프론트 연동: TTS 재생 직전에 조건·횟수·간격을 다시 확인(재생 중 들어온 같은 안내 폐기), 지난 구역 안내는 폐기
-        if snap["now_ms"] > utt.created_ms + utt.ttl_ms:
+        if not utt.created_ms <= snap["now_ms"] <= utt.created_ms + utt.ttl_ms:
             return None
         rule = next(r for r in self.rules if r["rule_id"] == utt.rule_id)
         hit = self._cond(rule, snap)
         if hit is None:
+            self.over_since.pop(utt.rule_id, None)
             return None
         slots, zone_id = hit
+        if zone_id != utt.zone_id:
+            return None
+        sustain = rule.get("trigger", {}).get("sustain_seconds", 0) * 1000
+        if sustain:
+            prev = self.over_since.get(utt.rule_id)
+            if not (prev and prev[2] == zone_id and 0 <= snap["now_ms"] - prev[1] <= self.fresh["speed"]
+                    and snap["now_ms"] - prev[0] >= sustain):
+                return None
         if self._blocked(rule, utt.day_key, snap["now_ms"], zone_id):
             return None
         return Utterance(utt.rule_id, utt.priority, self._render(rule, slots), slots, utt.created_ms, utt.ttl_ms, zone_id,
@@ -173,7 +211,7 @@ class GuidanceEngine:
         self.played[key] = self.played.get(key, 0) + 1
         self.last_played[utt.rule_id] = now_ms
         if utt.zone_id:
-            self.announced_zones.add((utt.rule_id, utt.zone_id))
+            self.announced_zones.add((day_key, utt.rule_id, utt.zone_id))
 
     def briefing(self) -> list[str]:
         # 프론트 연동: 출발 전(정차 중) 한 번 읽어 주는 안내. 기획서 3.3 표의 조합을 프로필로 고른다

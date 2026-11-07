@@ -1,6 +1,6 @@
 {
-  "version": "rental-ko-en-es-v6",
-  "review": {"status": "draft", "reviewer": null, "checked_at": "2026-11-07"},
+  "version": "rental-ko-en-es-v7",
+  "review": {"status": "draft", "reviewer": null, "checked_at": "2026-11-08"},
   "entries": [
     {"id": "fuel_gasoline", "category": "fuel", "critical": true, "en": ["gasoline", "petrol", "unleaded"], "es": ["gasolina", "nafta", "bencina", "gasolina regular", "gasolina sin plomo", "magna"], "ko": ["휘발유"]},
     {"id": "fuel_premium", "category": "fuel", "critical": true, "en": ["premium gasoline", "premium petrol", "premium unleaded"], "es": ["gasolina premium", "gasolina súper", "gasolina de alto octanaje"], "ko": ["고급 휘발유", "고급휘발유"]},
@@ -12,7 +12,6 @@
     {"id": "receipt", "category": "document", "critical": false, "en": ["receipt"], "es": ["recibo", "comprobante"], "ko": ["영수증"]},
     {"id": "rental_agreement", "category": "document", "critical": false, "en": ["rental agreement", "rental contract"], "es": ["contrato de renta", "contrato de alquiler", "contrato de arrendamiento"], "ko": ["대여계약서", "렌터카 계약서"]},
     {"id": "idp", "category": "document", "critical": false, "en": ["international driving permit", "international driver's license", "IDP"], "es": ["permiso internacional de conducir", "licencia internacional de conducir", "licencia internacional"], "ko": ["국제운전면허증"]},
-    {"id": "insurance_full", "category": "insurance", "critical": false, "en": ["full coverage", "full insurance"], "es": ["cobertura total", "seguro total"], "ko": ["완전자차"]},
     {"id": "insurance_cdw", "category": "insurance", "critical": false, "en": ["collision damage waiver", "CDW"], "es": ["seguro contra colisión", "exención de daños por colisión", "CDW"], "ko": ["자차보험"]},
     {"id": "deductible", "category": "insurance", "critical": false, "en": ["deductible", "excess"], "es": ["deducible", "franquicia"], "ko": ["면책금", "자기부담금"]},
     {"id": "hipass", "category": "toll", "critical": false, "en": ["Hi-Pass", "Hipass"], "es": ["Hi-Pass", "Hipass"], "ko": ["하이패스"]},

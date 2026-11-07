@@ -15,11 +15,13 @@ def load(name):
 
 
 DEV, TEST, GENERAL = load("dev.jsonl"), load("test.locked.jsonl"), load("general.jsonl") + load("general_es.jsonl")
+NATURAL = load("naturalness.dev.jsonl")
 
 
 def test_sizes_and_unique_ids():
     assert len(DEV) == 100 and len(TEST) == 60 and len(GENERAL) == 180 + 100
-    ids = [c["id"] for c in DEV + TEST + GENERAL]
+    assert len(NATURAL) == 20
+    ids = [c["id"] for c in DEV + TEST + GENERAL + NATURAL]
     assert len(ids) == len(set(ids))
 
 
@@ -30,16 +32,16 @@ def test_no_leak_between_splits_and_prompt_examples():
     shots = {norm(e["input"]["utterance"]) for e in P.examples("translate")} | {
         norm(e["input"]["utterance"]) for e in P.examples("destination")} | {
         norm(e["input"]["source"]) for e in P.examples("polish")}
-    texts = [norm(c["text"]) for c in DEV + TEST + GENERAL]
+    texts = [norm(c["text"]) for c in DEV + TEST + GENERAL + NATURAL]
     assert len(texts) == len(set(texts)) and not set(texts) & shots
 
 
 def test_general_set_is_in_declared_language():
     # 검증: 일반 평가셋 문장이 버튼 언어와 같아야 정상 번역 경로를 시험한다
-    assert not [c["id"] for c in GENERAL if looks_like_other_language(c["text"], c["source_locale"])]
+    assert not [c["id"] for c in GENERAL + NATURAL if looks_like_other_language(c["text"], c["source_locale"])]
 
 
-@pytest.mark.parametrize("c", [c for c in DEV + TEST if c["task"] == "translate" and c.get("reference")], ids=lambda c: c["id"])
+@pytest.mark.parametrize("c", [c for c in DEV + TEST + NATURAL if c["task"] == "translate" and c.get("reference")], ids=lambda c: c["id"])
 def test_references_pass_validators(c):
     out = {"status": "ok", "translated_text": c["reference"], "clarification_question": None}
     assert validate_translation(out, c["text"], c["source_locale"], c["target_locale"]) == []

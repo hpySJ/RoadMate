@@ -32,10 +32,10 @@ def draft(a):
     pool = pool[: a.limit] if a.limit else pool
     bundle = json.loads((ROOT / "models" / "manifest.json").read_text(encoding="utf-8"))["engine_bundle"]
     headers = {"X-Internal-Token": os.environ["AI_INTERNAL_TOKEN"]} if os.environ.get("AI_INTERNAL_TOKEN") else {}
-    client = httpx.Client(timeout=60, headers=headers)
     DRAFTS.mkdir(parents=True, exist_ok=True)
     out = DRAFTS / f"{a.name}.review.csv"
-    with out.open("w", encoding="utf-8-sig", newline="") as f:
+    # 검수 중인 CSV를 같은 배치 이름의 초안으로 덮어쓰지 않는다.
+    with out.open("x", encoding="utf-8-sig", newline="") as f, httpx.Client(timeout=60, headers=headers) as client:
         w = csv.DictWriter(f, fieldnames=FIELDS)
         w.writeheader()
         for i, c in enumerate(pool):

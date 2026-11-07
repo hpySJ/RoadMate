@@ -123,21 +123,23 @@ _ES_TOKEN = (rf"(?:(?:{_ES_TENS})\s+y\s+(?:{_ES_ONES})|"
 ES_WORD_RE = re.compile(rf"\b{_ES_TOKEN}(?:\s+{_ES_TOKEN})*\b", re.IGNORECASE)
 _ES_DAYPART = r"(?:de|en|por)\s+la\s+(manana|madrugada|tarde|noche)"
 ES_TIME_TAIL = re.compile(rf"\s*(?:en\s+punto(?:\s+{_ES_DAYPART})?|([ap])\.?\s?m\.?(?![a-z])|{_ES_DAYPART})", re.IGNORECASE)
-_ES_HOUR = r"\d{1,2}|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce"
+_ES_HOUR = r"\d{1,2}|" + "|".join(sorted([w for w, v in ES_UNITS.items() if 1 <= v <= 24], key=len, reverse=True))
 # 검증: "a las tres y media", "hasta las 5 menos cuarto"처럼 la/las가 붙은 말만 시각으로 본다(las dos personas는 숫자)
 _ES_MIN = "|".join(["media", "cuarto", r"\d{1,2}", rf"(?:{_ES_TENS})\s+y\s+(?:{_ES_ONES})",
-                    *sorted([w for w, v in ES_UNITS.items() if 2 <= v < 60], key=len, reverse=True)])
+                    *sorted([w for w, v in ES_UNITS.items() if 1 <= v < 60], key=len, reverse=True)])
 # 검증: 시·분·때를 한 덩어리로 읽는다(a las tres y diez de la tarde = 15:10, cinco menos cuarto = 4:45)
-ES_HOUR_RE = re.compile(rf"\b(?:a|hasta|desde|son|es|para|de|entre|y|tipo|sobre|por)\s+las?\s+({_ES_HOUR})\b"
-                        rf"(?:\s+(y|menos)\s+({_ES_MIN})\b(?:\s+minutos?\b)?)?", re.IGNORECASE)
+ES_HOUR_RE = re.compile(rf"\b(?:a|hasta|desde|son|es|para|de|entre|y|tipo|sobre|por)\s+las?\s+(?P<hour>{_ES_HOUR})\b"
+                        rf"(?:\s+(?P<op>y|menos)\s+(?P<minute>{_ES_MIN})\b(?:\s+minutos?\b)?)?", re.IGNORECASE)
+ES_TO_RE = re.compile(rf"\b(?:un\s+)?(?P<minute>{_ES_MIN})\b(?:\s+minutos?)?\s+para\s+las?\s+"
+                      rf"(?P<hour>{_ES_HOUR})\b", re.IGNORECASE)
 # 검증: "a las dos personas"(두 사람에게)처럼 뒤에 세는 말이 오면 시각이 아니다
 ES_COUNT_AFTER = re.compile(r"\s+(?:personas?|gente|adultos?|ninos?|ninas?|bebes?|senoras?|senores?|hombres?|mujeres"
                             r"|clientes?|pasajeros?|amigos?|chicos?|chicas?|carros?|autos?|coches?|maletas?|llaves?"
                             r"|tarjetas?|cosas?|veces|noches|dias?|semanas?|meses|anos?|litros?|asientos?|lugares?)\b",
                             re.IGNORECASE)
-ES_SPAN_RE = re.compile(r"\b(?:(media)\s+hora|(?:un\s+)?(cuarto)\s+de\s+hora|(?:una\s+)?hora\s+y\s+(media|cuarto)"
+ES_SPAN_RE = re.compile(r"\b(?:(media)\s+hora|(?:un\s+)?(cuarto)\s+de\s+hora|(?:una\s+)?hora\s+y\s+(media|(?:un\s+)?cuarto)"
                         r"|una\s+hora)\b", re.IGNORECASE)
-DUR_ES = re.compile(r"\s?(?:(minutos?|mins?)|(horas?|hrs?)(\s+y\s+(?:media|cuarto))?)\b", re.IGNORECASE)
+DUR_ES = re.compile(r"\s?(?:(minutos?|mins?)|(horas?|hrs?)(\s+y\s+(?:media|(?:un\s+)?cuarto))?)\b", re.IGNORECASE)
 CUR_ES = re.compile(r"\s?(?:mil|millones|millon)?\s?(?:de\s+)?(wones|wons?|krw|dolares|dolar|usd)\b", re.IGNORECASE)
 ES_ORD = {"primer": 1, "primero": 1, "primera": 1, "segundo": 2, "segunda": 2, "tercer": 3, "tercero": 3,
           "tercera": 3, "cuarto": 4, "cuarta": 4, "quinto": 5, "quinta": 5, "sexto": 6, "sexta": 6, "septimo": 7,
@@ -283,6 +285,40 @@ def _mask(text: str, spans: list[tuple[int, int]]) -> str:
     return "".join(chars)
 
 
+def spanish_times(text: str):
+    """검증과 프롬프트 힌트가 같은 시각·원문 범위를 쓴다. 반환: (시작, 끝, 시각, 분)."""
+    text = fold(text)
+    for pattern in (CLOCK_RE, ES_TO_RE, ES_HOUR_RE):
+        spans = []
+        for m in pattern.finditer(text):
+            if pattern is CLOCK_RE:
+                h, mins, start, subtract = int(m.group(1)), int(m.group(2)), m.start(), False
+            else:
+                g, w = m.group("hour"), m.group("minute")
+                h = int(g) if g.isdigit() else ES_UNITS[g.lower()]
+                after = re.match(r"\s+(horas?|minutos?)\b", text[m.end():], re.I)
+                if ES_COUNT_AFTER.match(text, m.end()) or (not w and after and h <= 12):
+                    continue
+                mins = (None if not w else 30 if w.lower() == "media" else 15 if w.lower() == "cuarto"
+                        else int(w) if w.isdigit() else _parse_es_words(w))
+                start = m.start() if pattern is ES_TO_RE else m.start("hour")
+                subtract = pattern is ES_TO_RE or m.group("op") == "menos"
+            t = ES_TIME_TAIL.match(text, m.end())
+            anchor = _time(h, _es_pm(t, h))
+            if subtract:
+                val = (anchor.value - 1) % 24 if anchor.exact else float((h - 1) or 12)
+                anchor, mins = Num(val, "time", exact=anchor.exact), 60 - mins
+            end = t.end() if t else m.end()
+            yield start, end, anchor, mins
+            spans.append((start, end))
+        text = _mask(text, spans)
+    for m in re.finditer(r"(?<![\d.,])(\d{1,2})\b", text):
+        t = ES_TIME_TAIL.match(text, m.end())
+        if t:
+            h = int(m.group(1))
+            yield m.start(), t.end(), _time(h, _es_pm(t, h)), None
+
+
 # 검증: 30 thousand won, 30 mil wones처럼 숫자 뒤 단위 말은 숫자에 곱하고, 같은 말을 다시 세지 않게 위치를 돌려준다
 SCALES = {"en": {"k": 1e3, "thousand": 1e3, "million": 1e6, "mil": 1e6}, "es": {"mil": 1e3, "millon": 1e6, "millones": 1e6}}
 
@@ -315,7 +351,7 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
         spans.append(m.span())
     text = _mask(text, spans)
     spans = []
-    for m in CLOCK_RE.finditer(text):
+    for m in CLOCK_RE.finditer(text) if lang != "es" else ():
         h = int(m.group(1))
         end, pm = m.end(), _ko_pm(text[:m.start()], h) if lang == "ko" else None
         if lang != "ko":
@@ -325,7 +361,7 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
                 end, pm = t.end(), pm_of(t, h)
         out.append(_time(int(m.group(1)), pm))
         if int(m.group(2)):
-            out.append(Num(float(m.group(2)), "n"))
+            out.append(Num(float(m.group(2)), "n", unit="min"))
         spans.append((m.start(), end))
     text = _mask(text, spans)
 
@@ -375,31 +411,11 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
             else:
                 out.append(_num(float(v), text[:m.start()], text[m.end():], lang))
     elif lang == "es":
-        # 검증: "a las tres y media de la tarde" → 15시 + 30. menos cuarto는 한 시간 앞의 45분(5 menos cuarto = 4:45)
-        for m in ES_HOUR_RE.finditer(text):
-            g = m.group(1)
-            h = int(g) if g.isdigit() else ES_UNITS[g.lower()]
-            after = re.match(r"\s+(horas?|minutos?)\b", text[m.end():], re.I)
-            if not m.group(3) and (ES_COUNT_AFTER.match(text, m.end()) or (after and h <= 12)):
-                continue  # 사람 수(a las dos personas)나 시간 길이(a las dos horas de salir)는 아래에서 숫자로 읽는다
-            t = ES_TIME_TAIL.match(text, m.end())
-            anchor, mins = _time(h, _es_pm(t, h)), None
-            if m.group(3):
-                w = m.group(3).lower()
-                mins = 30 if w == "media" else 15 if w == "cuarto" else int(w) if w.isdigit() else _parse_es_words(w)
-                if m.group(2).lower() == "menos":
-                    val = (anchor.value - 1) % 24 if anchor.exact else float((h - 1) or 12)
-                    anchor, mins = Num(val, "time", exact=anchor.exact), 60 - mins
+        for start, end, anchor, mins in spanish_times(text):
             out.append(anchor)
             if mins:
-                out.append(Num(float(mins), "n"))
-            spans.append((m.start(1), t.end() if t else m.end()))
-        text = _mask(text, spans)
-        for m in re.finditer(r"(?<![\d.,])(\d{1,2})\b", text):
-            t = ES_TIME_TAIL.match(text, m.end())
-            if t:
-                out.append(_time(int(m.group(1)), _es_pm(t, int(m.group(1)))))
-                spans.append((m.start(), t.end()))
+                out.append(Num(float(mins), "n", unit="min"))
+            spans.append((start, end))
         for m in re.finditer(r"\b(mediodia|medianoche)\b", text, re.IGNORECASE):
             out.append(Num(0.0 if m.group(1).lower() == "medianoche" else 12.0, "time", exact=True))
             spans.append(m.span())
@@ -491,13 +507,15 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
 def _num_match(a: Num, b: Num) -> bool:
     if a.kind == "phone" or b.kind == "phone":
         return a.kind == b.kind and a.value == b.value
+    if (a.kind == "time" and b.unit) or (b.kind == "time" and a.unit):
+        return False  # 검증: 같은 숫자여도 시각과 분·금액은 다르다(10분 ≠ 오전 10시)
     if a.unit and b.unit and a.unit != b.unit:
         return False
     if abs(a.value - b.value) < 1e-6:
         return True
     if "time" in (a.kind, b.kind) and a.value <= 24 and b.value <= 24:
-        if any(n.kind != "time" and n.value > 12 for n in (a, b)):
-            return False  # 검증: 12보다 큰 그냥 숫자(14명)는 12시간제 시각(2시)과 같다고 보지 않는다
+        if a.kind != "time" or b.kind != "time":
+            return False  # 검증: 시각끼리만 12시간 차이를 허용한다(10분 ≠ 오후 10시, 14명 ≠ 2시)
         if a.exact and b.exact:
             return a.value % 24 == b.value % 24
         if a.exact:
@@ -595,27 +613,29 @@ DIR_EN_PHRASE = {
     for d in ("left", "right")
 }
 DIR_EN_WORD = {d: re.compile(rf"\b{d}\b", re.I) for d in ("left", "right")}
-# 검증: 스페인어 derecho는 "똑바로"(siga derecho)도 돼서 lado/carril 같은 말 뒤에서만 오른쪽으로 본다
+# 검증: 스페인어 derecho는 문맥에 따라 직진·권리·오른쪽을 구분한다
 _ES_STRAIGHT_BEFORE = re.compile(r"(?:^|[,.;:!?]|\b(?:sig\w*|segu\w*|todo|vay\w*|ve|vete|continu\w*|manej\w*"
                                  r"|condu\w*|camin\w*|ir|va|voy|vamos|van|avanc\w*|avanz\w*|siempre|teng\w*|tien\w*"
                                  r"|ten\w*|tuv\w*))\s*$", re.I)
-_ES_STRAIGHT_AFTER = re.compile(r"\s+(?:a|al|de|del|hasta|por|unos|unas)\b", re.I)
+_ES_RIGHTS_BEFORE = re.compile(r"\b(?:el|su|mi|tu|nuestro|vuestro|este|ese|un)\s*$", re.I)
+_ES_RIGHTS_AFTER = re.compile(r"\s+(?:a|al|de|del)\b", re.I)
 
 
 def _es_right(text: str) -> bool:
-    # 검증: derecho는 "똑바로"(siga derecho)와 "권리"(tiene derecho a, derecho de paso)도 된다. 그 경우만 빼고 오른쪽으로 본다
+    # 검증: 직진·권리만 제외한다. "retrovisor derecho del carro"의 del은 오른쪽 의미를 지우지 않는다
     if re.search(r"\bderechas?\b", text, re.I):
         return True
-    return any(not _ES_STRAIGHT_BEFORE.search(text[:m.start()]) and not _ES_STRAIGHT_AFTER.match(text, m.end())
+    return any(not _ES_STRAIGHT_BEFORE.search(text[:m.start()])
+               and not (_ES_RIGHTS_BEFORE.search(text[:m.start()]) and _ES_RIGHTS_AFTER.match(text, m.end()))
                for m in re.finditer(r"\bderecho\b", text, re.I))
 
 
 DIR_ES_LEFT = re.compile(r"\bizquierd[ao]s?\b", re.I).search
-# (번역에 꼭 있어야 하는 표현, 있으면 되는 표현). derech*가 있으면 오른쪽을 말했을 수 있어 "있으면 되는" 쪽은 넓게 본다
+# (번역에 꼭 있어야 하는 표현, 있으면 되는 표현). 스페인어는 양쪽 모두 직진·권리와 오른쪽을 구분한다
 DIR_FOREIGN = {
     "en": ({d: r.search for d, r in DIR_EN_PHRASE.items()}, {d: r.search for d, r in DIR_EN_WORD.items()}),
     "es": ({"left": DIR_ES_LEFT, "right": _es_right},
-           {"left": DIR_ES_LEFT, "right": re.compile(r"\bderech[ao]s?\b", re.I).search}),
+           {"left": DIR_ES_LEFT, "right": _es_right}),
 }
 
 
@@ -662,7 +682,7 @@ def check_critical_terms(src: str, src_locale: str, tgt: str, tgt_locale: str) -
 _EN_FUEL_VERB = r"(?:put(?:\s+in)?|use|want|need|take|pump|add|give\s+me|fill\s+(?:it\s+)?(?:up\s+)?with)"
 _ES_FUEL_VERB = r"pon\w*|ech\w*|carg\w*|us[aeo]\w*|llen\w*|met\w*|surt\w*|llev\w*|acept\w*|admit\w*|sirv\w*"
 _ES_FUEL_FILL = (rf"de|del|el|la|los|las|un|una|con|le|les|me|lo|nos|te|se|es|sea|mas|quier\w*|quer\w*|necesit\w*"
-                 rf"|{_ES_FUEL_VERB}")
+                 rf"|que|a|pued\w*|pod\w*|deb\w*|vay\w*|{_ES_FUEL_VERB}")
 FUEL_NEG_BEFORE = {
     "en": re.compile(
         r"(?:\b(?:not|no|never|instead\s+of|rather\s+than|other\s+than|except|excluding|apart\s+from|without)|n't"

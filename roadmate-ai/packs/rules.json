@@ -1,10 +1,10 @@
 {
-  "version": "rules-v3",
+  "version": "rules-v4",
   "review": {
     "status": "draft",
     "reviewer": null,
-    "checked_at": "2026-11-07",
-    "note": "fr-CA·es-US 문구와 비보호 좌회전 안내는 초안. 원어민·법규 검수 후 status=approved, reviewer 기록"
+    "checked_at": "2026-11-08",
+    "note": "우회전·보행자·비보호 좌회전 공식 근거를 확인했다. 4언어 문구의 원어민·법규 최종 검수 후 status=approved, reviewer 기록"
   },
   "locales": [
     "ko-KR",
@@ -33,12 +33,31 @@
     "MY",
     "OTHER"
   ],
+  "country_labels": {
+    "CN": {"ko-KR": "중국", "en-US": "China", "fr-CA": "Chine", "es-US": "China"},
+    "JP": {"ko-KR": "일본", "en-US": "Japan", "fr-CA": "Japon", "es-US": "Japón"},
+    "TW": {"ko-KR": "대만", "en-US": "Taiwan", "fr-CA": "Taïwan", "es-US": "Taiwán"},
+    "US": {"ko-KR": "미국", "en-US": "United States", "fr-CA": "États-Unis", "es-US": "Estados Unidos"},
+    "HK": {"ko-KR": "홍콩", "en-US": "Hong Kong", "fr-CA": "Hong Kong", "es-US": "Hong Kong"},
+    "PH": {"ko-KR": "필리핀", "en-US": "Philippines", "fr-CA": "Philippines", "es-US": "Filipinas"},
+    "VN": {"ko-KR": "베트남", "en-US": "Vietnam", "fr-CA": "Vietnam", "es-US": "Vietnam"},
+    "TH": {"ko-KR": "태국", "en-US": "Thailand", "fr-CA": "Thaïlande", "es-US": "Tailandia"},
+    "SG": {"ko-KR": "싱가포르", "en-US": "Singapore", "fr-CA": "Singapour", "es-US": "Singapur"},
+    "MY": {"ko-KR": "말레이시아", "en-US": "Malaysia", "fr-CA": "Malaisie", "es-US": "Malasia"},
+    "OTHER": {"ko-KR": "기타 국가", "en-US": "Other country", "fr-CA": "Autre pays", "es-US": "Otro país"}
+  },
+  "experience_labels": {
+    "experienced": {"ko-KR": "한국에서 운전한 경험이 있어요", "en-US": "I have driven in Korea before", "fr-CA": "J'ai déjà conduit en Corée", "es-US": "Ya he manejado en Corea"},
+    "first_time_korea": {"ko-KR": "한국에서 운전하는 건 처음이에요", "en-US": "It is my first time driving in Korea", "fr-CA": "C'est la première fois que je conduis en Corée", "es-US": "Es mi primera vez manejando en Corea"},
+    "first_time_lhd": {"ko-KR": "좌핸들 차량을 운전하는 건 처음이에요", "en-US": "It is my first time driving a car with the steering wheel on the left", "fr-CA": "C'est la première fois que je conduis une voiture avec le volant à gauche", "es-US": "Es mi primera vez manejando un auto con el volante a la izquierda"}
+  },
   "freshness_ms": {
     "speed": 1500,
     "turn_signal": 3000,
     "current_speed_limit": 5000,
     "school_zone": 5000,
-    "tbt": 5000
+    "tbt": 5000,
+    "unprotected_left": 5000
   },
   "stop_lock": {
     "max_speed_mps": 0.1,
@@ -46,8 +65,28 @@
   },
   "rules": [
     {
+      "rule_id": "school_zone_entry",
+      "rule_version": "rules-v4",
+      "handler": "school_zone_entry",
+      "priority": 3,
+      "requires": [
+        "matched_current_school_zone_with_id"
+      ],
+      "daily_explanation_limit": null,
+      "cooldown_seconds": 0,
+      "ttl_ms": 5000,
+      "templates": {
+        "ko-KR": "어린이보호구역입니다. 표지판의 제한속도를 지키고 어린이를 살피세요.",
+        "en-US": "You are in a school zone. Follow the posted speed limit and watch for children.",
+        "fr-CA": "Vous êtes dans une zone scolaire. Respectez la limite de vitesse affichée et faites attention aux enfants.",
+        "es-US": "Está en una zona escolar. Respete el límite de velocidad indicado y esté atento a los niños."
+      },
+      "allowed_slots": [],
+      "kind": "warning"
+    },
+    {
       "rule_id": "school_zone_current_speed",
-      "rule_version": "rules-v3",
+      "rule_version": "rules-v4",
       "handler": "school_zone_current_speed",
       "priority": 1,
       "requires": [
@@ -76,7 +115,7 @@
     },
     {
       "rule_id": "school_zone_approach",
-      "rule_version": "rules-v3",
+      "rule_version": "rules-v4",
       "handler": "school_zone_approach",
       "priority": 2,
       "requires": [
@@ -106,7 +145,7 @@
     },
     {
       "rule_id": "school_zone_approach_no_limit",
-      "rule_version": "rules-v3",
+      "rule_version": "rules-v4",
       "handler": "school_zone_approach_no_limit",
       "priority": 3,
       "requires": [
@@ -116,7 +155,7 @@
         "min_distance_m": 30,
         "max_distance_m": 300
       },
-      "daily_explanation_limit": 2,
+      "daily_explanation_limit": null,
       "cooldown_seconds": 120,
       "ttl_ms": 5000,
       "templates": {
@@ -130,7 +169,7 @@
     },
     {
       "rule_id": "right_turn_red_light_stop",
-      "rule_version": "rules-v3",
+      "rule_version": "rules-v4",
       "handler": "right_turn",
       "priority": 2,
       "requires": [
@@ -145,10 +184,35 @@
       "cooldown_seconds": 300,
       "ttl_ms": 6000,
       "templates": {
-        "ko-KR": "우회전할 때 앞 신호가 빨간불이면 정지선에서 먼저 멈추세요. 횡단보도에 사람이 있으면 기다리세요.",
-        "en-US": "Turning right? If the light ahead is red, stop at the stop line first. Wait for anyone at the crosswalk.",
-        "fr-CA": "Vous tournez à droite ? Si le feu devant vous est rouge, arrêtez-vous d'abord à la ligne d'arrêt. Attendez les piétons au passage.",
-        "es-US": "¿Va a girar a la derecha? Si el semáforo de enfrente está en rojo, deténgase primero en la línea de alto. Espere si hay personas en el cruce peatonal."
+        "ko-KR": "우회전 전용 신호가 있으면 녹색 화살표를 따르세요. 없고 차량 신호가 빨간불이면 먼저 멈추세요. 횡단 중이거나 건너려는 보행자가 있으면 횡단보도 앞 정지선에서 기다리세요.",
+        "en-US": "If there is a separate right-turn signal, wait for its green arrow. Otherwise, stop first at a red vehicle light. Stop at the crosswalk's stop line for anyone crossing or about to cross.",
+        "fr-CA": "S'il y a un feu réservé au virage à droite, attendez sa flèche verte. Sinon, arrêtez-vous d'abord au feu rouge des véhicules. Arrêtez-vous à la ligne du passage piéton si une personne traverse ou s'apprête à traverser.",
+        "es-US": "Si hay un semáforo exclusivo para girar a la derecha, espere su flecha verde. Si no lo hay y la luz vehicular está roja, deténgase primero. Deténgase en la línea del cruce peatonal si alguien cruza o está por cruzar."
+      },
+      "allowed_slots": [],
+      "kind": "explanation"
+    },
+    {
+      "rule_id": "unprotected_left_turn",
+      "rule_version": "rules-v4",
+      "handler": "unprotected_left",
+      "priority": 2,
+      "requires": [
+        "confirmed_unprotected_left_on_route",
+        "tbt_left_same_intersection_near"
+      ],
+      "trigger": {
+        "min_distance_m": 10,
+        "max_distance_m": 150
+      },
+      "daily_explanation_limit": 2,
+      "cooldown_seconds": 300,
+      "ttl_ms": 6000,
+      "templates": {
+        "ko-KR": "앞 교차로는 비보호 좌회전 구간입니다. 녹색 신호일 때 맞은편 차량과 보행자의 통행을 방해하지 않을 때만 좌회전하세요.",
+        "en-US": "The intersection ahead allows an unprotected left turn. Turn only on a green light, without obstructing oncoming traffic or pedestrians.",
+        "fr-CA": "Le virage à gauche à la prochaine intersection est non protégé. Tournez seulement au feu vert, sans gêner les véhicules venant en sens inverse ni les piétons.",
+        "es-US": "El próximo cruce permite el giro a la izquierda no protegido. Gire solo con luz verde, sin obstruir a los vehículos que vienen de frente ni a los peatones."
       },
       "allowed_slots": [],
       "kind": "explanation"
@@ -211,20 +275,20 @@
       "when": [
         "first_time"
       ],
-      "ko-KR": "우회전할 때 차량 신호가 빨간불이면 정지선에서 멈춘 뒤, 보행자가 없을 때 우회전하세요.",
-      "en-US": "When turning right on a red light, stop at the stop line first, then turn when no one is crossing.",
-      "fr-CA": "Pour tourner à droite au feu rouge, arrêtez-vous d'abord à la ligne d'arrêt, puis tournez quand personne ne traverse.",
-      "es-US": "Para girar a la derecha con el semáforo en rojo, deténgase primero en la línea de alto y gire cuando nadie esté cruzando."
+      "ko-KR": "우회전 전용 신호등이 있으면 녹색 화살표 신호에만 우회전하세요. 전용 신호등이 없고 차량 신호가 빨간불이면 정지선에서 먼저 멈추고 다른 교통을 방해하지 않을 때 서행하세요. 횡단 중이거나 건너려는 보행자가 있으면 횡단보도 앞에서 멈춰 기다리세요.",
+      "en-US": "Where there is a separate right-turn signal, turn only on its green arrow. Without one, stop at the stop line at a red vehicle light, then proceed slowly only without obstructing other traffic. Stop before the crosswalk for anyone crossing or about to cross.",
+      "fr-CA": "S'il y a un feu réservé au virage à droite, tournez seulement à sa flèche verte. Sinon, au feu rouge des véhicules, arrêtez-vous à la ligne, puis avancez lentement sans gêner la circulation. Arrêtez-vous avant le passage piéton si une personne traverse ou s'apprête à traverser.",
+      "es-US": "Si hay un semáforo exclusivo para girar a la derecha, gire solo con su flecha verde. Si no lo hay y la luz vehicular está roja, deténgase en la línea y avance despacio solo sin obstruir el tránsito. Deténgase antes del cruce peatonal si alguien cruza o está por cruzar."
     },
     {
       "id": "unprotected_left",
       "when": [
         "first_time"
       ],
-      "ko-KR": "'비보호' 표지판이 있는 교차로에서는 초록불일 때 맞은편에서 오는 차가 없을 때만 좌회전할 수 있습니다.",
-      "en-US": "At intersections with an 'unprotected left turn' sign, you may turn left on a green light only when no cars are coming from the other side.",
-      "fr-CA": "Aux intersections avec un panneau de virage à gauche non protégé, vous pouvez tourner à gauche au feu vert seulement s'il n'y a aucun véhicule en sens inverse.",
-      "es-US": "En los cruces con señal de giro a la izquierda no protegido, puede girar a la izquierda con luz verde solo si no vienen autos de frente."
+      "ko-KR": "'비보호' 표지판이 있는 교차로에서는 녹색 신호일 때 맞은편 차량과 보행자의 통행을 방해하지 않을 때만 좌회전하세요.",
+      "en-US": "At intersections with an 'unprotected left turn' sign, turn only on a green light, without obstructing oncoming traffic or pedestrians.",
+      "fr-CA": "Aux intersections avec un panneau de virage à gauche non protégé, tournez seulement au feu vert, sans gêner les véhicules venant en sens inverse ni les piétons.",
+      "es-US": "En los cruces con señal de giro a la izquierda no protegido, gire solo con luz verde, sin obstruir a los vehículos que vienen de frente ni a los peatones."
     },
     {
       "id": "bus_lane",
@@ -284,7 +348,13 @@
     {
       "topic": "right_turn",
       "url": "https://www.korea.kr/news/policyNewsView.do?newsId=148910674",
-      "checked_at": "2026-11-04"
+      "checked_at": "2026-11-08"
+    },
+    {
+      "topic": "pedestrian_priority",
+      "url": "https://law.go.kr/lsLinkCommonInfo.do?chrClsCd=010202&lsJoLnkSeq=1025449721",
+      "checked_at": "2026-11-08",
+      "note": "도로교통법 제27조: 횡단 중이거나 횡단하려는 보행자를 보호한다. 현재 신호색·보행자 존재를 앱이 관측한 것으로 단정하지 않는다."
     },
     {
       "topic": "school_zone",
@@ -298,9 +368,9 @@
     },
     {
       "topic": "unprotected_left",
-      "url": "https://www.law.go.kr/법령/도로교통법",
-      "checked_at": null,
-      "note": "비보호 좌회전(녹색 신호, 반대 방향 교통 방해 없을 때) 조문 확인 필요"
+      "url": "https://www.korea.kr/news/cardnewsView.do?newsId=148859616",
+      "checked_at": "2026-11-08",
+      "note": "국토교통부 안내: 비보호 좌회전은 녹색 신호일 때만. 동적 안내는 검증된 경로상 교차로와 같은 ID의 좌회전 TBT가 모두 신선할 때만 사용한다."
     }
   ]
 }
