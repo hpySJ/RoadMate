@@ -1,0 +1,12 @@
+# 학습 환경: torch는 scripts/setup_train_env.ps1이 CUDA 인덱스로 먼저 설치
+transformers==5.22.1
+peft==0.21.2
+trl==1.17.1
+bitsandbytes==0.50.2
+datasets==5.1.0
+accelerate==1.15.0
+safetensors==0.8.0
+sentencepiece==0.2.2
+huggingface_hub==2.4.0
+httpx==0.28.1
+pydantic==2.14.2
