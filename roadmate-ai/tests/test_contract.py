@@ -47,7 +47,7 @@ def test_translate_ok_and_ready(client):
     assert r.status_code == 200, r.text
     d = r.json()
     assert d["status"] == "ok" and d["model_id"] == "mock" and d["translated_text"].startswith("[모의 번역]")
-    assert d["prompt_version"] == "translate-v3" and r.headers["content-type"].endswith("charset=utf-8")
+    assert d["prompt_version"] == "translate-v4" and r.headers["content-type"].endswith("charset=utf-8")
     assert client.get("/health/live").json() == {"status": "ok"}
     ready = client.get("/health/ready")
     assert ready.status_code == 200 and ready.json()["ready"] is True
@@ -134,6 +134,30 @@ def test_log_rejected_only_when_enabled(caplog):
         with TestClient(create_app(dataclasses.replace(SETTINGS, log_rejected=flag), FakeLlama(outputs=[bad, bad]))) as c:
             assert c.post("/internal/v1/translate", json=body(text=text)).status_code == 502
         assert sum("rejected" in r.getMessage() for r in caplog.records) == expect
+
+
+def test_polish_replaces_only_when_checks_pass():
+    s = dataclasses.replace(SETTINGS, polish_ko=True)
+    text = "Can you write down your phone number for me?"
+    draft, good, bad = "전화번호를 제가 써 주세요.", "전화번호 좀 적어 주시겠어요?", "전화번호를 적지 마세요."
+    for polished, expect in ((good, good), (bad, draft)):
+        fake = RecordingLlama([ok(draft), {"text": polished}])
+        with TestClient(create_app(s, fake)) as c:
+            d = c.post("/internal/v1/translate", json=body(text=text, scenario="general")).json()
+        assert d["translated_text"] == expect and fake.calls == 2
+        assert '"korean"' in fake.messages[1][-1]["content"]  # 2차 요청은 다듬기 프롬프트
+
+
+def test_polish_off_by_default_and_not_for_english_target():
+    fake = FakeLlama(outputs=[ok("전화번호 좀 적어 주시겠어요?")])
+    with TestClient(create_app(SETTINGS, fake)) as c:
+        c.post("/internal/v1/translate", json=body(text="Can you write down your phone number?", scenario="general"))
+    assert fake.calls == 1
+    fake = FakeLlama(outputs=[ok("Please write down your number.")])
+    with TestClient(create_app(dataclasses.replace(SETTINGS, polish_ko=True), fake)) as c:
+        c.post("/internal/v1/translate", json=body(text="번호 좀 적어 주세요.", source_locale="ko-KR",
+                                                     target_locale="en-US", scenario="general"))
+    assert fake.calls == 1
 
 
 def test_dropped_pm_is_filled_without_retry():
@@ -272,6 +296,19 @@ def test_destination_found_from_utterance_when_query_is_wrong():
     assert a["candidates"][0]["poi_id"] == "seongpanak-trail"
     assert {x["poi_id"] for x in b["candidates"][:2]} == {"cheonjiyeon-falls", "jeongbang-falls"}
     assert b["needs_confirmation"] is True
+
+
+@pytest.mark.parametrize("queries,utterance,top", [
+    (["성산", "the sunrise at Seongsan"], "I want to see the sunrise at Seongsan.", "seongsan-ilchulbong"),
+    (["우도에 들어가는 배를 타는 곳"], "우도 들어가는 배 타는 곳으로 가자", "seongsanpo-ferry"),
+    (["중문 바다"], "중문 바다 쪽으로 가자", "jungmun-saekdal-beach"),
+    (["해변", "a beach"], "Take me to a beach.", None),
+    (["바다 보이는 데"], "바다 보이는 데로 가자", None),
+])
+def test_place_search_partial_names_and_synonyms(queries, utterance, top):
+    from engine import PoiCatalog
+    got = PoiCatalog().search(queries, None, utterance=utterance)
+    assert (got[0]["poi_id"] if got else None) == top
 
 
 def test_openapi_committed_matches():

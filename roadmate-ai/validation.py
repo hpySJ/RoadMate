@@ -68,7 +68,9 @@ _EN_DAYPART = r"(in the morning|in the afternoon|in the evening|at night)"
 EN_TIME_TAIL = re.compile(rf"\s*(?:o'clock(?:\s+{_EN_DAYPART})?|([ap])\.?\s?m\.?(?![A-Za-z])|{_EN_DAYPART})", re.IGNORECASE)
 EN_ORD_ANY = re.compile(r"\b(" + "|".join(EN_ORD) + r")\s+(?=[A-Za-z])", re.IGNORECASE)
 KO_ORD = re.compile(r"(?<![가-힣])(첫|두|세|네|다섯|여섯|일곱|여덟|아홉|열|\d{1,2})\s?번째")
-KO_MERIDIEM = re.compile(r"(오전|새벽|아침|오후|저녁)\s*$")
+KO_MERIDIEM = re.compile(r"(오전|새벽|아침|오후|저녁|낮)\s*$")
+EN_PAST_RE = re.compile(r"\b(quarter|half)\s+(past|after|to)\s+(\d{1,2}|" + "|".join(EN_UNITS) + r")\b", re.IGNORECASE)
+EN_SPAN_RE = re.compile(r"\b(?:(half)(?:\s+an)?\s+hour|(?:a\s+)?(quarter)(?:\s+of\s+an)?\s+hour)\b", re.IGNORECASE)
 CUR_EN = re.compile(r"\s?(?:k|thousand|million|mil)?\s?(won|krw|dollars?|usd|bucks)\b", re.IGNORECASE)
 CUR_KO = re.compile(r"\s?(원|달러|불)")
 
@@ -88,7 +90,7 @@ def _en_pm(t: re.Match | None) -> bool | None:
 
 def _ko_pm(before: str) -> bool | None:
     m = KO_MERIDIEM.search(before)
-    return None if not m else m.group(1) in ("오후", "저녁")
+    return None if not m else m.group(1) in ("오후", "저녁", "낮")
 
 
 def _unit(before: str, after: str, locale: str) -> str | None:
@@ -176,6 +178,21 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
             if t:
                 out.append(_time(int(m.group(1)), _en_pm(t)))
                 spans.append((m.start(), t.end()))
+        # 검증: 말로 하는 시각·시간(noon, a quarter past four, half an hour)
+        for m in re.finditer(r"\b(noon|midday|midnight)\b", text, re.IGNORECASE):
+            out.append(Num(0.0 if m.group(1).lower() == "midnight" else 12.0, "time", exact=True))
+            spans.append(m.span())
+        for m in EN_PAST_RE.finditer(text):
+            h = int(m.group(3)) if m.group(3).isdigit() else EN_UNITS[m.group(3).lower()]
+            mins = 15 if m.group(1).lower() == "quarter" else 30
+            if m.group(2).lower() == "to":
+                h, mins = (h - 1) or 12, 60 - mins
+            t = EN_TIME_TAIL.match(text, m.end())
+            out += [_time(h, _en_pm(t)), Num(float(mins), "n")]
+            spans.append((m.start(), t.end() if t else m.end()))
+        for m in EN_SPAN_RE.finditer(text):
+            out.append(Num(30.0 if m.group(1) else 15.0, "n"))
+            spans.append(m.span())
         text = _mask(text, spans)
         for m in DIGIT_RE.finditer(text):
             v = float(m.group(1).replace(",", "") + ("." + m.group(2) if m.group(2) else ""))
@@ -209,12 +226,17 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
             g = m.group(1)
             out.append(Num(float(g) if g.isdigit() else float({**NATIVE, "첫": 1}[g]), "ord"))
         text = _mask(text, [m.span() for m in KO_ORD.finditer(text)])
+        for m in re.finditer(r"정오|자정", text):
+            out.append(Num(12.0 if m.group() == "정오" else 0.0, "time", exact=True))
         for m in re.finditer(r"(\d{1,2})\s?시(?!간)(\s?반)?", text):
             out.append(_time(int(m.group(1)), _ko_pm(text[:m.start()])))
             if m.group(2):
                 out.append(Num(30.0, "n"))
             spans.append(m.span())
         for m in NATIVE_RE.finditer(text):
+            if (m.group(2) == "시" and m.start(2) == m.end(1) and re.match(r"[가-힣]", text[m.end():])
+                    and not re.match(r"에|까지|부터|쯤|반|정각", text[m.end():])):
+                continue  # 검증: 붙여 쓴 "두시는/두시면"은 동사(두다·세다)라 시각이 아니다
             if m.group(2) == "시":
                 out.append(_time(NATIVE[m.group(1)], _ko_pm(text[:m.start()])))
             else:
@@ -302,7 +324,7 @@ NEG = {
         re.compile(r"\b(instead|rather than|other than|except|excluding|apart from|only|stop|refuse|fine|okay|ok|all right|free)\b", re.I),
     ),
     "ko-KR": (
-        re.compile(r"않|못|없|말고|마세요|마십시오|말아|지 ?마|아니|아닌|아닙|아냐|아녜|금지|불가"
+        re.compile(r"않|(?<!잘)못|없|말고|마세요|마십시오|말아|지 ?마|아니(?!면)|아닌|아닙|아냐|아녜|금지|불가"
                    r"|(?<![가-힣])안\s?(?!녕|내|전|에|쪽|경|심|과|개|건|부|마|방|색|약|면|정|팎|으로|까)[가-힣]"),
         re.compile(r"무사|괜찮|모르|몰라|싫|아직|대신|그만|무료|제외|빼고"),
     ),
@@ -352,7 +374,7 @@ FUEL_NEG_BEFORE = {
 }
 FUEL_NEG_AFTER = {
     "en-US": re.compile(r"^\s+(?:(?:is|was)\s+not|isn't|wasn't|is\s+(?:wrong|prohibited|forbidden)|not\s+allowed)\b", re.I),
-    "ko-KR": re.compile(r"^(?:차)?(?:은|는|이|가|을|를|으로|로|도|만)?\s*(?:말고|아니|아닙|아냐|아녜|대신|빼|제외|금지|절대|안\s?(?:돼|되|됩|넣|쓰)"
+    "ko-KR": re.compile(r"^(?:차)?(?:은|는|이|가|을|를|으로|로|도|만)?\s*(?:말고|아니(?!면)|아닙|아냐|아녜|대신|빼|제외|금지|절대|안\s?(?:돼|되|됩|넣|쓰)"
                         r"|(?:넣|주유하|주유|쓰|사용하|채우)(?:지\s?(?:마|말|않)|으?시?면\s?안))"),
 }
 CLAUSE = re.compile(r"[,.;!?]")
@@ -419,6 +441,12 @@ def validate_translation(out: dict, source: str, src_locale: str, tgt_locale: st
         issues.append("wrong_language")
     if HAN_KANA.search(tt) and not HAN_KANA.search(source):
         issues.append("foreign_script")
+    if tgt_locale == "ko-KR":
+        # 검증: "페anut"처럼 한글에 붙은 영문 조각이 원문 단어가 아니면 깨진 출력(U턴·B동·GPS가처럼 원문·약어는 허용)
+        src_words = {w.lower() for w in re.findall(r"[A-Za-z]+", source)}
+        frags = re.findall(r"(?<=[가-힣])[A-Za-z]{2,}|[A-Za-z]{2,}(?=[가-힣])", tt)
+        if any(f.lower() not in src_words and not f.isupper() for f in frags):
+            issues.append("mixed_script")
     if tt.strip().lower() == source.strip().lower():
         issues.append("untranslated")
     issues += compare_numbers(extract_numbers(source, src_locale), extract_numbers(tt, tgt_locale))

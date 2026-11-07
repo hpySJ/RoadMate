@@ -22,6 +22,24 @@ def test_glossary_spacing_and_place_names():
     assert P.select_glossary("My shoulder hurts.", "en-US", "ko-KR") == {}
 
 
+def test_polish_examples_keep_meaning_checks():
+    from validation import validate_translation
+    for ex in P.examples("polish"):
+        i, o = ex["input"], ex["output"]
+        for ko in (i["korean"], o["text"]):
+            out = {"status": "ok", "translated_text": ko, "clarification_question": None}
+            assert validate_translation(out, i["english"], "en-US", "ko-KR") == [], ko
+        assert P.select_glossary(i["english"], "en-US", "ko-KR") == i["glossary"]
+    m = P.polish_messages("Hi.", "안녕하세요.", {})
+    assert m[0]["role"] == "system" and json.loads(m[-1]["content"]) == {"english": "Hi.", "korean": "안녕하세요.", "glossary": {}}
+
+
+def test_place_hint_wins_over_area_inside_it():
+    g = P.select_glossary("Seongsan Ilchulbong is far.", "en-US", "ko-KR")
+    assert g == {"Seongsan Ilchulbong": "성산일출봉"}
+    assert P.select_glossary("한라산 등산은 아침 일찍 하세요.", "ko-KR", "en-US") == {"한라산": "Hallasan"}
+
+
 def test_time_hints():
     assert P.select_glossary("We'll be back by 6 p.m.", "en-US", "ko-KR") == {"6 p.m.": "오후 6시"}
     assert P.select_glossary("Meet at 3:30 pm.", "en-US", "ko-KR") == {"3:30 pm": "오후 3시 30분"}

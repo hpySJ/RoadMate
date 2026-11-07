@@ -1,5 +1,5 @@
 {
-  "version": "rental-ko-en-v3",
+  "version": "rental-ko-en-v4",
   "review": {"status": "draft", "reviewer": null, "checked_at": "2026-11-05"},
   "entries": [
     {"id": "fuel_gasoline", "category": "fuel", "critical": true, "en": ["gasoline", "petrol", "unleaded"], "ko": ["휘발유"]},
@@ -38,6 +38,27 @@
     {"id": "scratch", "category": "vehicle", "critical": false, "en": ["scratch", "scratches"], "ko": ["긁힌 자국", "스크래치"]},
     {"id": "road_shoulder", "category": "road", "critical": false, "en": ["road shoulder", "hard shoulder", "side of the road"], "ko": ["갓길"]},
     {"id": "ambulance", "category": "accident", "critical": false, "en": ["ambulance"], "ko": ["구급차"]},
-    {"id": "engine_no_start", "category": "vehicle", "critical": false, "en": ["won't start", "will not start", "doesn't start", "does not start"], "ko": ["시동이 안 걸려요", "시동이 안 걸", "시동이 안 켜"]}
+    {"id": "engine_no_start", "category": "vehicle", "critical": false, "en": ["won't start", "will not start", "doesn't start", "does not start"], "ko": ["시동이 안 걸려요", "시동이 안 걸", "시동이 안 켜"]},
+    {"id": "motorcycle", "category": "vehicle", "critical": false, "en": ["motorcycle", "motorbike"], "ko": ["오토바이"]},
+    {"id": "side_mirror", "category": "vehicle", "critical": false, "en": ["side mirror", "wing mirror"], "ko": ["사이드미러"]},
+    {"id": "dent", "category": "vehicle", "critical": false, "en": ["dent", "dented"], "ko": ["찌그러진 곳"]},
+    {"id": "dead_battery", "category": "vehicle", "critical": false, "en": ["dead battery", "battery is dead", "battery died"], "ko": ["배터리 방전", "방전"]},
+    {"id": "check_engine", "category": "vehicle", "critical": false, "en": ["check engine light", "engine light"], "ko": ["엔진 경고등"]},
+    {"id": "hazard_lights", "category": "vehicle", "critical": false, "en": ["hazard lights", "emergency lights"], "ko": ["비상등"]},
+    {"id": "child_seat", "category": "rental", "critical": false, "en": ["child seat", "car seat", "booster seat"], "ko": ["카시트"]},
+    {"id": "crosswalk", "category": "road", "critical": false, "en": ["crosswalk", "pedestrian crossing"], "ko": ["횡단보도"]},
+    {"id": "u_turn", "category": "road", "critical": false, "en": ["U-turn"], "ko": ["유턴"]},
+    {"id": "speed_camera", "category": "road", "critical": false, "en": ["speed camera"], "ko": ["과속 단속 카메라"]},
+    {"id": "convenience_store", "category": "place", "critical": false, "en": ["convenience store"], "ko": ["편의점"]},
+    {"id": "tangerine", "category": "jeju", "critical": false, "en": ["tangerine", "tangerines", "mandarin orange", "mandarin oranges"], "ko": ["귤", "감귤"]},
+    {"id": "hallasan", "category": "jeju", "critical": false, "en": ["Hallasan", "Mount Halla", "Mt. Halla", "Halla Mountain"], "ko": ["한라산"]},
+    {"id": "udo", "category": "jeju", "critical": false, "en": ["Udo Island", "Udo"], "ko": ["우도"]},
+    {"id": "jeju", "category": "jeju", "critical": false, "en": ["Jeju Island", "Jeju"], "ko": ["제주도", "제주"]},
+    {"id": "jeju_city", "category": "jeju", "critical": false, "en": ["Jeju City", "Jeju-si"], "ko": ["제주시"]},
+    {"id": "seogwipo", "category": "jeju", "critical": false, "en": ["Seogwipo"], "ko": ["서귀포"]},
+    {"id": "aewol", "category": "jeju", "critical": false, "en": ["Aewol"], "ko": ["애월"]},
+    {"id": "hallim", "category": "jeju", "critical": false, "en": ["Hallim"], "ko": ["한림"]},
+    {"id": "jungmun", "category": "jeju", "critical": false, "en": ["Jungmun"], "ko": ["중문"]},
+    {"id": "seongsan", "category": "jeju", "critical": false, "en": ["Seongsan"], "ko": ["성산"]}
   ]
 }

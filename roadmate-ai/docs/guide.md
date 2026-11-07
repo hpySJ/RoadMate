@@ -129,7 +129,7 @@ POST /internal/v1/translate
 {"request_id":"req-001","session_id":"sess-001","session_epoch":3,"turn_id":1,
  "status":"ok","translated_text":"휘발유로 가득 넣어 주세요.","clarification_question":null,
  "engine_bundle":"roadmate-ko-en-q4-v1","model_id":"roadmate-qwen4b-q4",
- "prompt_version":"translate-v3","glossary_version":"rental-ko-en-v3","latency_ms":850}
+ "prompt_version":"translate-v4","glossary_version":"rental-ko-en-v4","latency_ms":850}
 ```
 - `source_locale`/`target_locale`: `ko-KR`, `en-US` / `scenario`: `gas_station`, `parking`, `rental_counter`, `accident`, `general`
 - `status=clarification_required`이면 `clarification_question`(말한 사람의 언어)을 화면에 보여 주고 **번역 음성은 재생하지 않는다**.
@@ -209,9 +209,19 @@ JSON 계약 → 목표 언어 문자 → 설명문 섞임 → 길이 → 숫자�
 | 3 | 샘플링 | `prompting.py`의 `TRANSLATE_SAMPLING` 등(기본 temperature 0.2, top_p 0.8, top_k 20) |
 | 4 | 추론 자원 | `models/manifest.json`의 `runtime`(ctx 2048, parallel 1, n_gpu_layers 99, batch 256, ubatch 128) |
 | 5 | 검증 임계값 | `validation.py`(숫자·부정·방향 규칙), `engine.py`의 POI 점수 0.62 |
-| 6 | Q5 비교 | Q4에서 의미 오류가 남고 VRAM 여유가 있을 때만(아래) |
+| 6 | 영→한 다듬기 | `.env`의 `POLISH_KO=1`. 번역이 검사를 통과하면 `prompts/polish.txt`로 한 번 더 자연스럽게 고쳐 쓰고, 고친 문장도 검사를 통과할 때만 바꾼다(모델 호출 1회, 약 0.3초 추가) |
+| 7 | Q5 비교 | Q4에서 의미 오류가 남고 VRAM 여유가 있을 때만(아래) |
 
 변경할 때마다 `eval\evaluate.py --file eval\dev.jsonl --label <이름>`으로 같은 dev 자료를 다시 돌려 비교한다.
+
+다듬기 효과는 같은 문장을 끄고 켜서 나란히 본다. `eval/compare.py`가 두 결과를 한 CSV로 묶고, 사람이 `better` 칸에 a/b/same을 적는다.
+```bash
+bash scripts/run.sh stop; bash scripts/run.sh start
+.venv/bin/python eval/evaluate.py --file eval/general.jsonl --label polish-off
+bash scripts/run.sh stop; POLISH_KO=1 bash scripts/run.sh start
+.venv/bin/python eval/evaluate.py --file eval/general.jsonl --label polish-on
+.venv/bin/python eval/compare.py eval/results/polish-off-general-<시각> eval/results/polish-on-general-<시각>
+```
 
 느리거나 VRAM이 부족할 때: GPU 사용 확인(시작 로그 offload) → ctx·parallel·출력 상한 확인 → 불필요한 프로세스 종료 → `.\scripts\start_model.ps1 -GpuLayers 30`처럼 레이어 수를 줄이고 지연 재측정 → 그래도 부족하면 모델 PC와 에뮬레이터 PC 분리.
 
@@ -245,6 +255,19 @@ Q5_K_M 비교:
 - 사람이 원문·정답을 대조한 것만 `"review_status":"approved"`. 로컬 모델 초안을 그대로 정답으로 쓰지 않는다. 개인정보 제거.
 - 목표: 검수 1,000~1,500건(번역 1,200 · 목적지 200 · 모호/확인 100), 한→영·영→한 균형.
 - `train/data/seed.draft.jsonl`은 형식·스모크 시험용 초안 26건이다.
+
+검수 자료는 손으로 다 쓰지 않고 아래 순서로 만든다. 학습 목표는 숫자·부정·연료를 지키면서 자연스러운 한국어로 옮기는 것이다.
+```bash
+python train/sources/make_pool.py                  # 원문 묶음 train/sources/pool.jsonl (평가셋과 겹치는 문장은 자동 제외)
+POLISH_KO=1 bash scripts/run.sh start              # 다듬기를 켠 서버로 초안을 뽑는다
+.venv/bin/python train/review_data.py draft --name batch1
+# train/data/drafts/batch1.review.csv를 엑셀로 열어 어색한 문장은 fixed에 고쳐 쓰고, 맞으면 approve에 y
+.venv/bin/python train/review_data.py import --name batch1 --reviewer 이름
+```
+- 서버가 막은 문장은 초안 없이 CSV에 남는다. 사람이 fixed에 직접 번역해 승인한다.
+- `import`는 approve가 y인 줄만, 검사기를 통과해야 `train/data/batch1.approved.jsonl`로 가져온다. 통과 못 한 줄이 있으면 목록을 보여 주고 멈춘다.
+- 원문을 늘릴 때는 `make_pool.py`의 목록에 문장이나 틀(금액·시각·연료·방향 슬롯)을 추가한다. 같은 틀의 변형은 같은 group_id로 묶여 학습·검증 분할이 섞이지 않는다.
+- 초안을 그대로 승인하지 않는다. 어색한 문장을 사람이 고친 자료가 많을수록 학습이 문장을 자연스럽게 만드는 데 도움이 된다.
 
 ### 8.3 준비 → 스모크 → 본학습
 ```powershell

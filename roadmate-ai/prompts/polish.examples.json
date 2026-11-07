@@ -1,0 +1,18 @@
+[
+  {
+    "input": {"english": "I left my sunglasses in the car I returned yesterday.", "korean": "나는 어제 반납한 차 안에 내 선글라스를 두고 왔어요.", "glossary": {}},
+    "output": {"text": "어제 반납한 차에 선글라스를 두고 왔어요."}
+  },
+  {
+    "input": {"english": "Is there anywhere to wash the car around here?", "korean": "여기 근처에 차를 씻을 수 있는 어느 곳이 있나요?", "glossary": {}},
+    "output": {"text": "이 근처에 세차할 수 있는 곳이 있나요?"}
+  },
+  {
+    "input": {"english": "The other driver says it was my fault, but he backed into me.", "korean": "다른 운전자는 그것이 내 잘못이라고 말하지만, 그가 나에게 후진으로 박았어요.", "glossary": {}},
+    "output": {"text": "상대 운전자는 제 잘못이라고 하는데, 그쪽이 후진하다가 제 차를 박았어요."}
+  },
+  {
+    "input": {"english": "Please don't park in front of the gate after 8 p.m.", "korean": "오후 8시 이후에는 출입문 앞에 주차하지 마세요.", "glossary": {"8 p.m.": "오후 8시"}},
+    "output": {"text": "오후 8시 이후에는 출입문 앞에 주차하지 마세요."}
+  }
+]

@@ -35,6 +35,7 @@ class Settings:
     internal_token: str
     manifest: dict
     log_rejected: bool = False
+    polish_ko: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -58,4 +59,6 @@ class Settings:
             manifest=m,
             # 검증: 개발·평가 전용. 1이면 검사에 걸린 원문과 모델 출력을 로그에 남긴다(실사용 금지, 개인정보)
             log_rejected=env("LOG_REJECTED", "0") == "1",
+            # 파라미터 튜닝: 1이면 영→한 번역을 한 번 더 자연스럽게 다듬는다(모델 호출 1회 추가, 검사 통과 시에만 교체)
+            polish_ko=env("POLISH_KO", "0") == "1",
         )

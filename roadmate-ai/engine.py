@@ -42,7 +42,9 @@ REPAIR_HINT = {
     "direction_missing": "Keep left/right exactly.",
     "direction_mismatch": "Keep left/right exactly.",
     "mixed_output": "Fill either translated_text or clarification_question, not both.",
+    "mixed_script": "Do not mix English letters into Korean words. Write each word fully in Hangul.",
 }
+LANG_NAME = {"ko-KR": "Korean", "en-US": "English"}
 
 
 class ValidationFailed(ModelError):
@@ -66,6 +68,11 @@ def _norm(s: str) -> str:
     return re.sub(r"[\s\-_'’.,()·]", "", s)
 
 
+def _place(s: str) -> str:
+    # 검증: 장소 종류의 다른 말은 하나로 본다(중문 바다 = 중문 해변 = 중문 해수욕장)
+    return re.sub(r"바다|해변|비치", "해수욕장", s)
+
+
 class PoiCatalog:
     def __init__(self, path: Path = ROOT / "packs" / "poi.demo.json"):
         d = json.loads(path.read_text(encoding="utf-8"))
@@ -73,23 +80,31 @@ class PoiCatalog:
         self.items = d["places"]
 
     @staticmethod
-    def _said(name: str, utt_norm: str, utt_words: set) -> bool:
-        # 검증: 모델이 검색어를 틀리게 써도 발화에 장소 이름이 그대로 있으면 찾는다(성판악, Udo Island ferry)
+    def _said(name: str, utt_norm: str, utt_words: set) -> float:
+        # 검증: 모델이 검색어를 틀리게 써도 발화에 장소 이름이 있으면 찾는다(성판악, Udo Island ferry)
+        # 파라미터 튜닝: 이름 전체 0.8, 일부(떨어져 나온 한국어 토큰·영어 단어 2/3 이상) 0.75
         if re.search("[가-힣]", name):
-            return len(_norm(name)) >= 3 and _norm(name) in utt_norm
+            toks = [_norm(_place(t)) for t in name.split()]
+            if len(_norm(_place(name))) >= 3 and _norm(_place(name)) in utt_norm:
+                return 0.8
+            in_order = len(toks) >= 2 and len(toks[0]) >= 2 and re.search(".*".join(map(re.escape, toks)), utt_norm)
+            return 0.75 if in_order else 0.0
         words = set(re.findall(r"[a-z0-9]+", name.lower()))
-        return bool(words) and words <= utt_words and (len(words) >= 2 or len(max(words, key=len)) >= 6)
+        if words and words <= utt_words and (len(words) >= 2 or len(max(words, key=len)) >= 6):
+            return 0.8
+        hit = len(words & utt_words)
+        return 0.75 if len(words) >= 3 and hit >= 2 and hit * 3 >= 2 * len(words) else 0.0
 
     def search(self, queries: list[str], region_hint: str | None, limit: int = 3, utterance: str = "") -> list[dict]:
         # QWEN 구현: 모델이 만든 검색어 → 검증된 목록에서만 장소를 고른다(좌표 생성 금지)
-        qs = [_norm(q) for q in queries if q]
-        utt_norm, utt_words = _norm(utterance), set(re.findall(r"[a-z0-9]+", utterance.lower()))
+        # 검증: "해변/바다"처럼 종류만 말한 검색어는 특정 해수욕장으로 확정하지 않는다(확인 질문으로 감)
+        qs = [q for q in (_norm(_place(q)) for q in queries if q) if q != "해수욕장"]
+        utt_norm, utt_words = _norm(_place(utterance)), set(re.findall(r"[a-z0-9]+", utterance.lower()))
         scored = []
         for p in self.items:
             raw = [p["name_ko"], p["name_en"], *p.get("aliases", [])]
-            names = [_norm(n) for n in raw]
-            # 파라미터 튜닝: 발화에 이름이 그대로 나오면 0.8
-            best = 0.8 if utterance and any(self._said(n, utt_norm, utt_words) for n in raw) else 0.0
+            names = [_norm(_place(n)) for n in raw]
+            best = max((self._said(n, utt_norm, utt_words) for n in raw), default=0.0) if utterance else 0.0
             for q in qs:
                 for n in names:
                     if not q or not n:
@@ -140,7 +155,7 @@ class Engine:
         except (ModelBadOutput, ModelTruncated) as e:
             issues = [e.code]
         if not issues:
-            return out
+            return await self._polish(req, out, deadline)
         self._log_rejected(req, issues, out)
         if set(issues) <= CLARIFY_ISSUES:
             # QWEN 구현: 확인 질문만 잘못 썼으면 다시 생성하지 않고 말한 사람 언어의 고정 문구로 바꾼다(재생할 번역 없음)
@@ -152,9 +167,11 @@ class Engine:
         hints = dict.fromkeys(REPAIR_HINT[i.split(":")[0]] for i in issues if i.split(":")[0] in REPAIR_HINT)
         repair = messages + ([{"role": "assistant", "content": P.completion_text(out)}] if out else []) + [{
             "role": "user",
+            # QWEN 구현: 재시도 때 원문을 그대로 돌려주지 않도록 번역 방향과 원문을 다시 적는다
             "content": json.dumps({"repair": "The previous output broke these checks: " + ", ".join(issues) + ". "
-                                   + " ".join(hints) + " Translate the same utterance again, following every rule. "
-                                   "JSON only."}, ensure_ascii=False),
+                                   + " ".join(hints) + f" Translate the utterance from {LANG_NAME[req.source_locale]} "
+                                   f"into {LANG_NAME[req.target_locale]} again, following every rule. Do not copy the "
+                                   "utterance. JSON only.", "utterance": req.text}, ensure_ascii=False),
         }]
         try:
             out = _with_meridiem(await self.client.chat_json(repair, P.TRANSLATE_SCHEMA, P.TRANSLATE_MAX_TOKENS,
@@ -165,7 +182,29 @@ class Engine:
         if issues:
             self._log_rejected(req, issues, out)
             raise ValidationFailed(issues)
-        return out
+        return await self._polish(req, out, deadline)
+
+    async def _polish(self, req, out: dict, deadline: float) -> dict:
+        # QWEN 구현: 영→한 번역을 한 번 더 자연스러운 한국어로 다듬는다. 다듬은 문장도 같은 검사를 통과해야만 바꾼다
+        if not (self.s.polish_ko and not self.client.is_mock and req.target_locale == "ko-KR"
+                and out.get("status") == "ok" and deadline - time.monotonic() > MIN_RETRY_S):
+            return out
+        messages = P.polish_messages(req.text, out["translated_text"],
+                                     P.select_glossary(req.text, req.source_locale, req.target_locale))
+        try:
+            pol = await self.client.chat_json(messages, P.POLISH_SCHEMA, P.POLISH_MAX_TOKENS, P.RETRY_SAMPLING,
+                                              deadline - time.monotonic())
+        except (ModelBadOutput, ModelTruncated):
+            return out
+        text = pol.get("text") if isinstance(pol, dict) else None
+        if not isinstance(text, str) or not text.strip():
+            return out
+        cand = _with_meridiem({**out, "translated_text": text.strip()}, req)
+        issues = validate_translation(cand, req.text, req.source_locale, req.target_locale)
+        if issues:
+            self._log_rejected(req, ["polish"] + issues, cand)
+            return out
+        return cand
 
     def _log_rejected(self, req, issues: list[str], out: dict | None):
         if self.s.log_rejected:

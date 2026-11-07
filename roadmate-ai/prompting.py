@@ -96,11 +96,16 @@ def select_glossary(text: str, source_locale: str, target_locale: str) -> dict[s
     by_id = {e["id"]: e for e in glossary()["entries"]}
     src, tgt = LANG_KEY[source_locale], LANG_KEY[target_locale]
     out = {surface: by_id[cid][tgt][0] for cid, surface in match_concepts(text, source_locale).items()}
+    found = {}
     for p in places():
         names = [p[f"name_{src}"]] + [a for a in p.get("aliases", []) if bool(re.search("[가-힣]", a)) == (src == "ko")]
         hits = sorted(_find_terms(text, names, src), key=lambda h: h[0] - h[1])
         if hits:
-            out.setdefault(text[hits[0][0]:hits[0][1]], p[f"name_{tgt}"])
+            found.setdefault(text[hits[0][0]:hits[0][1]], p[f"name_{tgt}"])
+    # 장소 이름 안에 든 지명(성산일출봉 속 성산)은 장소 이름으로만 알려 준다
+    out = {k: v for k, v in out.items() if not any(k != pk and k in pk for pk in found)}
+    for k, v in found.items():
+        out.setdefault(k, v)
     for k, v in _time_hints(text, src).items():
         out.setdefault(k, v)
     return out
@@ -125,6 +130,13 @@ def translate_messages(source_locale: str, target_locale: str, scenario: str, te
         "utterance": text,
     }
     return [{"role": "system", "content": system}, *_few_shot("translate"), {"role": "user", "content": _dump(payload)}]
+
+
+def polish_messages(english: str, korean: str, glossary_: dict) -> list[dict]:
+    # QWEN 구현: 영→한 번역 초안을 자연스러운 한국어로 다듬는 2차 요청(뜻·숫자·부정은 그대로)
+    _, system = prompt("polish")
+    payload = {"english": english, "korean": korean, "glossary": glossary_}
+    return [{"role": "system", "content": system}, *_few_shot("polish"), {"role": "user", "content": _dump(payload)}]
 
 
 def destination_messages(source_locale: str, text: str) -> list[dict]:
@@ -154,6 +166,13 @@ TRANSLATE_SCHEMA = {
     "additionalProperties": False,
 }
 
+POLISH_SCHEMA = {
+    "type": "object",
+    "properties": {"text": {"type": "string", "pattern": NO_CJK_TEXT}},
+    "required": ["text"],
+    "additionalProperties": False,
+}
+
 DESTINATION_SCHEMA = {
     "type": "object",
     "properties": {
@@ -176,4 +195,5 @@ RETRY_SAMPLING = {"temperature": 0.0, "top_p": 1.0, "top_k": 1, "min_p": 0.0, "s
 DESTINATION_SAMPLING = {"temperature": 0.0, "top_p": 1.0, "top_k": 1, "min_p": 0.0, "seed": 7}
 # 파라미터 튜닝: 출력 상한
 TRANSLATE_MAX_TOKENS = 256
+POLISH_MAX_TOKENS = 192
 DESTINATION_MAX_TOKENS = 128
