@@ -29,7 +29,7 @@
     "destination_prompt": "destination-v2",
     "polish_prompt": "polish-v2",
     "glossary": "rental-ko-en-v4",
-    "rules": "rules-ko-en-v2",
+    "rules": "rules-v3",
     "poi": "poi-jeju-demo-v2",
     "eval": "eval-ko-en-v1"
   }

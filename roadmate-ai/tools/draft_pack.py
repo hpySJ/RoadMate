@@ -46,7 +46,7 @@ def check(src: str, out: str) -> list[str]:
 
 async def run(locale: str):
     s = Settings.from_env()
-    pack = json.loads((ROOT / "packs" / "rules.ko-en.json").read_text(encoding="utf-8"))
+    pack = json.loads((ROOT / "packs" / "rules.json").read_text(encoding="utf-8"))
     client = LlamaClient(s.model_base_url, s.model_id)
     system = SYSTEM.format(lang=LANG[locale])
 

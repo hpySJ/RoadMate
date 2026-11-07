@@ -11,8 +11,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 
-def load_pack(path: Path = ROOT / "packs" / "rules.ko-en.json") -> dict:
+def load_pack(path: Path = ROOT / "packs" / "rules.json") -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+@dataclass(frozen=True)
+class DriverProfile:
+    """온보딩 결과(프론트 연동: 앱이 시작 화면에서 받아 넘긴다).
+    country: MVP 목록 코드(CN, JP, TW, US, HK, PH, VN, TH, SG, MY) 또는 OTHER(통행 방향을 추측하지 않음)
+    experience: experienced(한국 운전 경험 있음) | first_time_korea(한국 처음) | first_time_lhd(좌핸들 처음)
+    """
+
+    country: str = "OTHER"
+    experience: str = "first_time_korea"
 
 
 @dataclass
@@ -46,14 +57,21 @@ def _kph(speed_sig: dict) -> int:
 
 
 class GuidanceEngine:
-    def __init__(self, pack: dict, locale: str, allow_draft: bool = True):
+    def __init__(self, pack: dict, locale: str, allow_draft: bool = True, profile: DriverProfile | None = None):
+        locale = pack.get("locale_alias", {}).get(locale, locale)
         if locale not in pack["locales"]:
             raise ValueError(f"unsupported locale {locale}")
         if not allow_draft and pack["review"]["status"] != "approved":
             raise ValueError("rules pack is not approved for release")
+        self.profile = profile or DriverProfile()
+        if self.profile.experience not in pack["experience_levels"]:
+            raise ValueError(f"unknown experience {self.profile.experience}")
         self.pack, self.locale = pack, locale
         self.fresh = pack["freshness_ms"]
-        self.rules = sorted(pack["rules"], key=lambda r: r["priority"])
+        # 검증: 한국 운전 경험자에게는 설명형 안내를 빼고 안전 경고(kind=warning)만 남긴다
+        experienced = self.profile.experience == "experienced"
+        rules = [r for r in pack["rules"] if not (experienced and r["kind"] == "explanation")]
+        self.rules = sorted(rules, key=lambda r: r["priority"])
         self.over_since: dict[str, int] = {}
         self.last_played: dict[str, int] = {}
         self.played: dict[tuple[str, str], int] = {}
@@ -157,9 +175,18 @@ class GuidanceEngine:
         if utt.zone_id:
             self.announced_zones.add((utt.rule_id, utt.zone_id))
 
-    def briefing(self, origin_country: str | None) -> list[str]:
-        lht = (origin_country or "").upper() in self.pack["left_hand_traffic_countries"]
-        return [b[self.locale] for b in self.pack["briefing"] if b["when"] == "always" or (b["when"] == "left_hand_origin" and lht)]
+    def briefing(self) -> list[str]:
+        # 프론트 연동: 출발 전(정차 중) 한 번 읽어 주는 안내. 기획서 3.3 표의 조합을 프로필로 고른다
+        p = self.profile
+        cond = {
+            "always": True,
+            "first_time": p.experience != "experienced",
+            "experienced": p.experience == "experienced",
+            "first_time_lhd": p.experience == "first_time_lhd",
+            # 검증: 기타 국가(OTHER)는 통행 방향을 추측하지 않는다
+            "left_hand_origin": p.country.upper() in self.pack["left_hand_traffic_countries"],
+        }
+        return [b[self.locale] for b in self.pack["briefing"] if all(cond[c] for c in b["when"])]
 
 
 @dataclass
@@ -215,7 +242,8 @@ def run_scenarios(path: Path, pack: dict | None = None) -> list[dict]:
     pack = pack or load_pack()
     results = []
     for sc in json.loads(Path(path).read_text(encoding="utf-8"))["scenarios"]:
-        eng, lock, q = GuidanceEngine(pack, sc.get("locale", "en-US")), StopLock(pack), SpeechQueue()
+        profile = DriverProfile(**sc["profile"]) if "profile" in sc else None
+        eng, lock, q = GuidanceEngine(pack, sc.get("locale", "en-US"), profile=profile), StopLock(pack), SpeechQueue()
         for i, step in enumerate(sc["steps"]):
             snap = step["snapshot"]
             q.push(eng.evaluate(snap, sc.get("day_key", "d1")))

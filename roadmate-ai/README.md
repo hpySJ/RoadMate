@@ -29,7 +29,7 @@ APK → 백엔드(8080) → AI 서버(8000) → llama-server(8081)
 
 백엔드는 `/internal/v1/translate`, `/internal/v1/parse-destination`, `/internal/v1/cancel`, `/health/ready`를 호출합니다. 요청과 응답 형식은 [`docs/openapi.json`](docs/openapi.json)에 있습니다. 필드 이름은 `session_id`처럼 밑줄로 씁니다. 문서에 없는 필드가 오면 422로 거절하고, 오류는 `error_code`로 구분합니다.
 
-앱은 `guidance.py`와 `packs/fixtures/guidance_scenarios.json`을 기준으로 Kotlin으로 옮깁니다. `StopLock.update()`는 기어나 속도 값이 들어올 때마다 호출해야 합니다.
+앱은 `guidance.py`와 `packs/fixtures/guidance_scenarios.json`을 기준으로 Kotlin으로 옮깁니다. 온보딩에서 받은 언어·평소 운전 국가·한국 운전 경험을 `DriverProfile`로 넘기면 출발 안내와 주행 중 설명의 양이 바뀌고, 안전 경고는 누구에게나 나갑니다. 안내 문구는 한국어·영어·프랑스어·스페인어가 있습니다. `StopLock.update()`는 기어나 속도 값이 들어올 때마다 호출해야 합니다.
 
 코드에서 `# 백엔드 연동`, `# 프론트 연동` 주석이 붙은 곳이 다른 파트와 연결되는 부분입니다.
 

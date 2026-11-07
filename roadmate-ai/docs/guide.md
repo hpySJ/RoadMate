@@ -165,7 +165,7 @@ APK의 `127.0.0.1`은 PC가 아니다. APK → `http://10.0.2.2:8080`(백엔드)
 
 주행 안내는 LLM이 아니라 **검수된 규칙과 문구**로 APK 안에서 실행한다. `guidance.py`가 기준 구현이고, 앱 담당이 Kotlin으로 포팅한 뒤 같은 fixture로 동등성을 시험한다.
 
-- 규칙·문구: `packs/rules.ko-en.json` (스쿨존 현재 구간 과속, 스쿨존 접근, 제한값 미상 접근, 우회전 조건부 안내, 출발 브리핑)
+- 규칙·문구: `packs/rules.json` (스쿨존 현재 구간 과속, 스쿨존 접근, 제한값 미상 접근, 우회전 조건부 안내, 출발 브리핑)
 - 시나리오 fixture: `packs/fixtures/guidance_scenarios.json` → `.\.venv\Scripts\python.exe guidance.py`로 전부 OK 확인
 - 입력 스냅샷: 각 신호에 `value`(또는 `state`), `status`(`valid`/`unavailable`/`error`), `ts_ms`. 속도는 **m/s**, 제한속도는 km/h.
 - 핵심 규칙
@@ -176,8 +176,15 @@ APK의 `127.0.0.1`은 PC가 아니다. APK → `http://10.0.2.2:8080`(백엔드)
   - 하루 2회 제한은 교육성 설명(제한값 미상 접근, 우회전 안내)에만 적용한다. 실제 과속 경고(스쿨존 안 과속, 과속하며 접근)는 횟수 제한 없이 120초 간격·구역당 1회로만 거른다(규칙 팩의 `daily_explanation_limit: null`). **실제 재생 완료 콜백(`mark_played`)에서만 카운트**.
   - 발화 큐는 규칙별 최신 1건, 재생 직전 `revalidate`로 지난 구역 안내 폐기.
 - 정차 잠금 `StopLock`: 기어 P(status valid) + 유효 속도 |v| ≤ 0.1m/s가 1초 유지일 때만 통역 버튼 활성. STT 시작·전송·번역 도착·TTS 직전에 다시 확인.
-- 출발 브리핑: `GuidanceEngine.briefing(origin_country)` — 좌측통행 국가(AU, JP, TH 등)면 "오른쪽 통행" 문구가 먼저 나온다.
-- 문구 팩 상태가 `draft`다. 배포 전 의미·발음 검수 후 `review.status=approved`, `reviewer`를 채운다(`allow_draft=False`면 draft 팩은 로딩 거부).
+- 온보딩 프로필: 앱이 시작 화면에서 받은 값을 `GuidanceEngine(pack, 언어, profile=DriverProfile(국가, 경험))`로 넘긴다.
+  - 언어: `en-US`, `fr-CA`, `es-US`(`es-MX`도 같은 문구), 개발용 `ko-KR`
+  - 국가: `CN, JP, TW, US, HK, PH, VN, TH, SG, MY, OTHER`. `OTHER`면 통행 방향을 추측하지 않는다
+  - 경험: `experienced`(한국 운전 경험 있음), `first_time_korea`(한국 처음), `first_time_lhd`(좌핸들 처음)
+- 개인화(기획서 3.3 표):
+  - 출발 브리핑 `briefing()`이 프로필로 문구를 고른다. 처음이면 환영·한국 규칙(우회전, 비보호 좌회전, 버스전용차로, 하이패스), 좌측통행 국가에서 왔으면 우측통행 적응, 좌핸들 처음이면 좌핸들 적응, 경험자는 짧은 환영과 스쿨존 안내만.
+  - 주행 중에는 규칙 팩의 `kind`로 나눈다. `warning`(스쿨존 경고)은 모두에게, `explanation`(우회전 설명)은 경험자에게 생략.
+  - fixture의 `persona_*_same_road`, `experienced_same_road`가 같은 길에서 달라지는 안내를 시험한다.
+- 문구 팩 상태가 `draft`다. 특히 fr-CA·es-US 문구와 비보호 좌회전 안내는 원어민·법규 검수가 필요하다. 배포 전 `review.status=approved`, `reviewer`를 채운다(`allow_draft=False`면 draft 팩은 로딩 거부).
 
 ## 6. 평가
 

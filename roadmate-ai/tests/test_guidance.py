@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from guidance import GuidanceEngine, SpeechQueue, load_pack, run_scenarios
+from guidance import DriverProfile, GuidanceEngine, SpeechQueue, load_pack, run_scenarios
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -24,10 +24,40 @@ def test_templates_slots_and_locales():
             assert used == set(rule["allowed_slots"]), (rule["rule_id"], loc)
 
 
-def test_briefing_left_hand_origin():
-    eng = GuidanceEngine(load_pack(), "en-US")
-    assert eng.briefing("AU")[0].startswith("In Korea, you drive on the right")
-    assert len(eng.briefing("TW")) == len(eng.briefing("AU")) - 1
+def ids(locale, country, experience):
+    pack = load_pack()
+    texts = GuidanceEngine(pack, locale, profile=DriverProfile(country, experience)).briefing()
+    by_text = {b[GuidanceEngine(pack, locale).locale]: b["id"] for b in pack["briefing"]}
+    return [by_text[t] for t in texts]
+
+
+@pytest.mark.parametrize("country,experience,must,must_not", [
+    ("JP", "first_time_lhd", {"keep_right", "left_hand_drive", "right_turn", "school_zone"}, {"welcome_back"}),
+    ("US", "first_time_korea", {"right_turn", "unprotected_left", "school_zone"}, {"keep_right", "left_hand_drive"}),
+    ("OTHER", "first_time_korea", {"right_turn", "school_zone"}, {"keep_right", "left_hand_drive"}),
+    ("OTHER", "first_time_lhd", {"left_hand_drive", "right_turn"}, {"keep_right"}),
+    ("OTHER", "experienced", {"welcome_back", "school_zone"}, {"right_turn", "keep_right", "bus_lane", "welcome_first"}),
+])
+def test_briefing_follows_onboarding_table(country, experience, must, must_not):
+    # 검증: 기획서 3.3 개인화 안내 결정 표. 기타 국가는 통행 방향을 추측하지 않는다
+    got = set(ids("en-US", country, experience))
+    assert must <= got and not (must_not & got), got
+
+
+def test_experienced_driver_keeps_safety_warnings_only():
+    rules = {r["rule_id"] for r in GuidanceEngine(load_pack(), "en-US", profile=DriverProfile("OTHER", "experienced")).rules}
+    assert "right_turn_red_light_stop" not in rules and "school_zone_current_speed" in rules
+
+
+def test_every_text_has_all_locales_and_alias():
+    pack = load_pack()
+    for item in pack["rules"]:
+        assert set(pack["locales"]) <= set(item["templates"]), item["rule_id"]
+    for b in pack["briefing"]:
+        assert set(pack["locales"]) <= set(b), b["id"]
+    assert GuidanceEngine(pack, "es-MX").locale == "es-US"
+    with pytest.raises(ValueError):
+        GuidanceEngine(pack, "en-US", profile=DriverProfile("JP", "pro"))
 
 
 def test_queue_drops_repeat_queued_during_playback():

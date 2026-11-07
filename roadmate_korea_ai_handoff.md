@@ -504,7 +504,7 @@ roadmate-ai/
     translate.txt
     destination.txt
   packs/
-    rules.ko-en.json
+    rules.json
     glossary.ko-en.json
     poi.demo.json
     school_zones.demo.json
