@@ -273,7 +273,7 @@ onCurrentRoadSpeedLimit는 현재 도로 값이다. 이 값을 그대로 앞 스
     "over_limit_kph": 3,
     "sustain_seconds": 2
   },
-  "daily_explanation_limit": 2,
+  "daily_explanation_limit": null,
   "cooldown_seconds": 120,
   "templates": {
     "ko-KR": "어린이보호구역입니다. 제한속도 시속 {limit_kph}킬로미터, 지금 시속 {speed_kph}킬로미터입니다. 시속 {limit_kph}킬로미터로 줄이세요.",

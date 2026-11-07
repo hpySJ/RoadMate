@@ -7,6 +7,7 @@
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 import torch
@@ -78,14 +79,21 @@ def main():
             issues = ["invalid_json"]
         results.append({"meta": m, "reference": ref, "output": out if out is not None else raw, "issues": issues})
 
-    out_path = ROOT / "train" / "runs" / f"eval_hf-{a.split}-{'adapter' if a.adapter else 'base'}.jsonl"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with out_path.open("w", encoding="utf-8") as f:
+    # 검증: 실행마다 따로 저장해 어댑터끼리 비교할 때 이전 결과를 덮어쓰지 않는다(모델·어댑터·데이터 식별 정보 함께 기록)
+    label = "base" if not a.adapter else "-".join(Path(a.adapter).resolve().parts[-3:])
+    out_dir = ROOT / "train" / "runs" / "eval_hf" / f"{a.split}-{label}-{time.strftime('%Y%m%d-%H%M%S')}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with (out_dir / "results.jsonl").open("w", encoding="utf-8") as f:
         for x in results:
             f.write(json.dumps(x, ensure_ascii=False) + "\n")
+    dm = ROOT / cfg["data_dir"] / "dataset_manifest.json"
+    meta = {"split": a.split, "base_model": cfg["base_model"], "base_revision": cfg.get("base_revision"),
+            "adapter": str(Path(a.adapter).resolve()) if a.adapter else None, "use_4bit": cuda and not a.no_4bit,
+            "dataset": json.loads(dm.read_text(encoding="utf-8")) if dm.exists() else None, "stats": stats}
+    (out_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
     n = max(stats["n"], 1)
     print(json.dumps({k: (v if k == "n" else f"{v}/{n} ({v / n:.1%})") for k, v in stats.items()}, ensure_ascii=False))
-    print(f"saved {out_path}")
+    print(f"saved {out_dir}")
 
 
 if __name__ == "__main__":

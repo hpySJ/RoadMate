@@ -118,6 +118,21 @@
         {"snapshot": {"now_ms": 7000, "gear": {"value": "P", "status": "valid", "ts_ms": 0}, "speed": {"value": 0.0, "unit": "m/s", "status": "valid", "ts_ms": 7000}}, "expect_spoken": null, "expect_unlocked": false},
         {"snapshot": {"now_ms": 8000, "gear": {"value": "P", "status": "valid", "ts_ms": 0}, "speed": {"value": 0.0, "unit": "m/s", "status": "valid", "ts_ms": 8000}}, "expect_spoken": null, "expect_unlocked": true}
       ]
+    },
+    {
+      "id": "school_zone_speeding_three_zones",
+      "locale": "en-US",
+      "steps": [
+        {"snapshot": {"now_ms": 0, "speed": {"value": 13.9, "unit": "m/s", "status": "valid", "ts_ms": 0}, "current_speed_limit": {"value": 30, "status": "valid", "ts_ms": 0}, "school_zone": {"state": "inside", "zone_id": "z1", "status": "valid", "ts_ms": 0}}, "expect_spoken": null},
+        {"snapshot": {"now_ms": 2000, "speed": {"value": 13.9, "unit": "m/s", "status": "valid", "ts_ms": 2000}, "current_speed_limit": {"value": 30, "status": "valid", "ts_ms": 2000}, "school_zone": {"state": "inside", "zone_id": "z1", "status": "valid", "ts_ms": 2000}}, "expect_spoken": "school_zone_current_speed"},
+        {"snapshot": {"now_ms": 3000, "speed": {"value": 13.9, "unit": "m/s", "status": "valid", "ts_ms": 3000}, "current_speed_limit": {"value": 30, "status": "valid", "ts_ms": 3000}, "school_zone": {"state": "outside", "zone_id": "z1", "status": "valid", "ts_ms": 3000}}, "expect_spoken": null},
+        {"snapshot": {"now_ms": 600000, "speed": {"value": 13.9, "unit": "m/s", "status": "valid", "ts_ms": 600000}, "current_speed_limit": {"value": 30, "status": "valid", "ts_ms": 600000}, "school_zone": {"state": "inside", "zone_id": "z2", "status": "valid", "ts_ms": 600000}}, "expect_spoken": null},
+        {"snapshot": {"now_ms": 602000, "speed": {"value": 13.9, "unit": "m/s", "status": "valid", "ts_ms": 602000}, "current_speed_limit": {"value": 30, "status": "valid", "ts_ms": 602000}, "school_zone": {"state": "inside", "zone_id": "z2", "status": "valid", "ts_ms": 602000}}, "expect_spoken": "school_zone_current_speed"},
+        {"snapshot": {"now_ms": 603000, "speed": {"value": 13.9, "unit": "m/s", "status": "valid", "ts_ms": 603000}, "current_speed_limit": {"value": 30, "status": "valid", "ts_ms": 603000}, "school_zone": {"state": "outside", "zone_id": "z2", "status": "valid", "ts_ms": 603000}}, "expect_spoken": null},
+        {"snapshot": {"now_ms": 1200000, "speed": {"value": 13.9, "unit": "m/s", "status": "valid", "ts_ms": 1200000}, "current_speed_limit": {"value": 30, "status": "valid", "ts_ms": 1200000}, "school_zone": {"state": "inside", "zone_id": "z3", "status": "valid", "ts_ms": 1200000}}, "expect_spoken": null},
+        {"snapshot": {"now_ms": 1202000, "speed": {"value": 13.9, "unit": "m/s", "status": "valid", "ts_ms": 1202000}, "current_speed_limit": {"value": 30, "status": "valid", "ts_ms": 1202000}, "school_zone": {"state": "inside", "zone_id": "z3", "status": "valid", "ts_ms": 1202000}}, "expect_spoken": "school_zone_current_speed"},
+        {"snapshot": {"now_ms": 1203000, "speed": {"value": 13.9, "unit": "m/s", "status": "valid", "ts_ms": 1203000}, "current_speed_limit": {"value": 30, "status": "valid", "ts_ms": 1203000}, "school_zone": {"state": "outside", "zone_id": "z3", "status": "valid", "ts_ms": 1203000}}, "expect_spoken": null}
+      ]
     }
   ]
 }

@@ -107,9 +107,9 @@ class GuidanceEngine:
         return rule["templates"][self.locale].format(**{k: int(v) for k, v in slots.items()})
 
     def _blocked(self, rule: dict, day_key: str, now: int, zone_id: str | None) -> bool:
-        # 검증: 일일 횟수·재생 간격·구역당 1회. 생성 시와 큐에서 꺼낼 때 모두 검사
-        rid = rule["rule_id"]
-        return (self.played.get((day_key, rid), 0) >= rule["daily_explanation_limit"]
+        # 검증: 일일 횟수(교육성 설명만, 과속 경고는 null로 제한 없음)·재생 간격·구역당 1회. 생성 시와 큐에서 꺼낼 때 모두 검사
+        rid, limit = rule["rule_id"], rule["daily_explanation_limit"]
+        return ((limit is not None and self.played.get((day_key, rid), 0) >= limit)
                 or now - self.last_played.get(rid, -10**12) < rule["cooldown_seconds"] * 1000
                 or bool(zone_id and rid.startswith("school_zone_approach") and (rid, zone_id) in self.announced_zones))
 

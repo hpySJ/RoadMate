@@ -173,7 +173,7 @@ APK의 `127.0.0.1`은 PC가 아니다. APK → `http://10.0.2.2:8080`(백엔드)
   - 이미 제한속도 이하이면 말하지 않는다. 과속은 +3km/h가 2초 지속될 때만.
   - 우회전은 우측 깜빡이 + TBT 우회전 맥락(10~150m)일 때만. 비상등·차로 변경은 제외. 신호색을 단정하지 않는다.
   - 오래된 신호(속도 1.5초, 내비 5초)·`status≠valid`는 사용하지 않는다.
-  - 같은 규칙 하루 2회, 쿨다운. **실제 재생 완료 콜백(`mark_played`)에서만 카운트**.
+  - 하루 2회 제한은 교육성 설명(제한값 미상 접근, 우회전 안내)에만 적용한다. 실제 과속 경고(스쿨존 안 과속, 과속하며 접근)는 횟수 제한 없이 120초 간격·구역당 1회로만 거른다(규칙 팩의 `daily_explanation_limit: null`). **실제 재생 완료 콜백(`mark_played`)에서만 카운트**.
   - 발화 큐는 규칙별 최신 1건, 재생 직전 `revalidate`로 지난 구역 안내 폐기.
 - 정차 잠금 `StopLock`: 기어 P(status valid) + 유효 속도 |v| ≤ 0.1m/s가 1초 유지일 때만 통역 버튼 활성. STT 시작·전송·번역 도착·TTS 직전에 다시 확인.
 - 출발 브리핑: `GuidanceEngine.briefing(origin_country)` — 좌측통행 국가(AU, JP, TH 등)면 "오른쪽 통행" 문구가 먼저 나온다.
@@ -264,6 +264,7 @@ Q5_K_M 비교:
 .\.venv-train\Scripts\python.exe train\eval_hf.py --split validation                                        # NF4 기준
 .\.venv-train\Scripts\python.exe train\eval_hf.py --split validation --adapter train\runs\lora-v1\adapter   # NF4 + LoRA
 ```
+결과는 실행마다 `train/runs/eval_hf/<split>-<어댑터>-<시각>/`에 `results.jsonl`과 `meta.json`(기준 모델·revision·어댑터·데이터 manifest·통계)으로 따로 남는다.
 
 ### 8.5 GGUF 어댑터로 배포
 ```powershell
