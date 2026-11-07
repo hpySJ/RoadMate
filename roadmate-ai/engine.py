@@ -8,7 +8,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 
 import prompting as P
-from inference import ModelBadOutput, ModelError, ModelTruncated
+from inference import ModelBadOutput, ModelError, ModelTimeout, ModelTruncated, ModelUnavailable
 from validation import add_meridiem, looks_like_other_language, validate_destination, validate_translation
 
 ROOT = Path(__file__).resolve().parent
@@ -194,13 +194,21 @@ class Engine:
         try:
             pol = await self.client.chat_json(messages, P.POLISH_SCHEMA, P.POLISH_MAX_TOKENS, P.RETRY_SAMPLING,
                                               deadline - time.monotonic())
-        except (ModelBadOutput, ModelTruncated):
-            return out
+        except (ModelBadOutput, ModelTruncated, ModelUnavailable):
+            return out  # 다듬기가 실패해도 이미 검사를 통과한 번역은 돌려준다
+        except ModelTimeout:
+            # QWEN 구현: 모델 계산이 끝난 게 확인되면 초안을 돌려주고, 아니면 timeout으로 올려 슬롯을 계속 잡아 둔다
+            if await self.client.wait_idle(self.s.cancel_settle_s):
+                return out
+            raise
         text = pol.get("text") if isinstance(pol, dict) else None
         if not isinstance(text, str) or not text.strip():
             return out
         cand = _with_meridiem({**out, "translated_text": text.strip()}, req)
         issues = validate_translation(cand, req.text, req.source_locale, req.target_locale)
+        # 파라미터 튜닝: 다듬기는 손질이어야 한다. 초안과 너무 다르면(문장 유사도 0.5 미만) 다시 쓴 것으로 보고 버린다
+        if SequenceMatcher(None, out["translated_text"], cand["translated_text"]).ratio() < 0.5:
+            issues.append("polish_rewrote")
         if issues:
             self._log_rejected(req, ["polish"] + issues, cand)
             return out

@@ -2,8 +2,10 @@
 
 사용: python train/sources/make_pool.py
 문장을 늘릴 때는 아래 목록에 추가한다. 같은 틀에서 숫자·연료·방향만 바꾼 변형은 같은 group_id로 묶인다.
-dev·test·general 평가셋과 few-shot에 있는 문장은 자동으로 뺀다.
+같은 뜻의 영어·한국어 틀은 같은 group 이름을 쓴다(학습·검증 분할이 갈라지지 않게).
+dev·test·general 평가셋, few-shot, 이미 train/data에 있는 문장은 자동으로 뺀다.
 """
+import hashlib
 import itertools
 import json
 from pathlib import Path
@@ -98,15 +100,15 @@ KO = [
 
 # (group, scenario, 틀, {슬롯: 값들}) — 숫자·시각·연료·방향을 바꾼 변형
 EN_T = [
-    ("t_en_amount_fuel", "gas_station", "Please put in {amount} won of {fuel}.",
+    ("t_amount_fuel", "gas_station", "Please put in {amount} won of {fuel}.",
      {"amount": ["20,000", "40,000", "60,000"], "fuel": ["gasoline", "diesel"]}),
-    ("t_en_not_fuel", "gas_station", "This car takes {fuel}, not {other}.",
+    ("t_not_fuel", "gas_station", "This car takes {fuel}, not {other}.",
      {"fuel": ["gasoline", "diesel"], "other": ["diesel", "gasoline"]}),
     ("t_en_park_until", "parking", "Can we park here until {time}?",
      {"time": ["4 p.m.", "7:30 p.m.", "11 a.m.", "noon"]}),
-    ("t_en_park_fee", "parking", "So it's {amount} won for every {mins} minutes?",
+    ("t_park_fee", "parking", "So it's {amount} won for every {mins} minutes?",
      {"amount": ["500", "1,000", "2,000"], "mins": ["10", "30"]}),
-    ("t_en_return", "rental_counter", "I'll bring the car back to {place} by {time} {day}.",
+    ("t_return_time", "rental_counter", "I'll bring the car back to {place} by {time} {day}.",
      {"place": ["Jeju Airport", "your downtown office"], "time": ["9 a.m.", "5 p.m."], "day": ["tomorrow", "on Saturday"]}),
     ("t_en_extend", "rental_counter", "Can I keep the car for {n} more days?", {"n": ["two", "three"]}),
     ("t_en_side", "accident", "Something hit the {side} side of the car while it was parked.", {"side": ["left", "right"]}),
@@ -115,13 +117,13 @@ EN_T = [
     ("t_en_phone", "accident", "You can reach me at {phone}.", {"phone": ["010-2468-1357", "010-7777-0909"]}),
 ]
 KO_T = [
-    ("t_ko_amount_fuel", "gas_station", "{fuel}로 {amount} 넣어 드릴게요.",
+    ("t_amount_fuel", "gas_station", "{fuel}로 {amount} 넣어 드릴게요.",
      {"fuel": ["휘발유", "경유"], "amount": ["3만 원어치", "5만 원어치", "가득"]}),
-    ("t_ko_not_fuel", "gas_station", "이 차는 {fuel} 차라서 {other}는 넣으면 안 돼요.",
+    ("t_not_fuel", "gas_station", "이 차는 {fuel} 차라서 {other}는 넣으면 안 돼요.",
      {"fuel": ["휘발유", "경유"], "other": ["경유", "휘발유"]}),
-    ("t_ko_return_time", "rental_counter", "{time}까지 반납해 주세요.",
+    ("t_return_time", "rental_counter", "{time}까지 반납해 주세요.",
      {"time": ["내일 오전 10시", "오후 3시", "오후 6시 반", "모레 정오"]}),
-    ("t_ko_fee", "parking", "주차비는 {mins}분에 {amount}이에요.",
+    ("t_park_fee", "parking", "주차비는 {mins}분에 {amount}이에요.",
      {"mins": ["10", "30"], "amount": ["500원", "천 원", "2천 원"]}),
     ("t_ko_insurance", "rental_counter", "보험을 추가하시면 하루에 {amount}이 더 나와요.",
      {"amount": ["만 원", "만 5천 원", "2만 원"]}),
@@ -151,9 +153,15 @@ def main():
     for name in ("translate", "polish"):
         for e in json.loads((ROOT / "prompts" / f"{name}.examples.json").read_text(encoding="utf-8")):
             seen.add(norm(e["input"].get("utterance") or e["input"]["english"]))
+    for path in (ROOT / "train" / "data").glob("*.jsonl"):  # 이미 학습 자료(시드·승인분)에 있는 문장도 뺀다
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                seen.add(norm(json.loads(line)["text"]))
+    # 학습: 그룹 ID는 목록 순번이 아니라 문장 내용으로 정한다(앞에 문장을 끼워도 기존 그룹이 바뀌지 않음)
+    gid = lambda t: "p_" + hashlib.sha1(norm(t).encode()).hexdigest()[:10]  # noqa: E731
     rows, dropped = [], 0
-    items = ([(f"p_en_{i:03d}", sc, t, "en-US") for i, (sc, t) in enumerate(EN, 1)]
-             + [(f"p_ko_{i:03d}", sc, t, "ko-KR") for i, (sc, t) in enumerate(KO, 1)]
+    items = ([(gid(t), sc, t, "en-US") for sc, t in EN]
+             + [(gid(t), sc, t, "ko-KR") for sc, t in KO]
              + [(g, sc, t, "en-US") for g, sc, t in expand(EN_T)]
              + [(g, sc, t, "ko-KR") for g, sc, t in expand(KO_T)])
     for group, scenario, text, src in items:
@@ -165,7 +173,7 @@ def main():
                      "target_locale": "ko-KR" if src == "en-US" else "en-US", "scenario": scenario, "text": text})
     out = ROOT / "train" / "sources" / "pool.jsonl"
     out.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8", newline="\n")
-    print(f"{len(rows)} sentences ({dropped} dropped as eval/few-shot overlap) -> {out}")
+    print(f"{len(rows)} sentences ({dropped} dropped: already in eval, few-shot or train/data) -> {out}")
 
 
 if __name__ == "__main__":

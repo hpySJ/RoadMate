@@ -77,6 +77,23 @@ EN_TIME = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*([ap])(?:\.\s?m\.|\s?m)(?![A-Z
 KO_TIME = re.compile(r"(오전|오후)\s?(\d{1,2})시(?:\s?(\d{1,2})분|\s?(반))?")
 
 
+KO_MONEY = re.compile(r"(?<![가-힣\d])([\d,.\s일이삼사오육칠팔구십백천만억]+?)\s?원")
+
+
+def _money_hints(text: str) -> dict[str, str]:
+    # QWEN 구현: 한국어 금액(만 오천 원, 6만 5천 원)은 숫자로 바꿔 알려 준다(15,000 won). 구원·회원 같은 낱말은 제외
+    from validation import extract_numbers  # validation이 prompting을 불러서 여기서 늦게 불러온다
+    out = {}
+    for m in KO_MONEY.finditer(text):
+        phrase = m.group(1).strip()
+        if not phrase or not re.search(r"[\d십백천만억]", phrase):
+            continue
+        vals = [n.value for n in extract_numbers(m.group(0), "ko-KR") if n.unit == "KRW"]
+        if len(vals) == 1:
+            out[m.group(0).strip()] = f"{vals[0]:,.0f} won"
+    return out
+
+
 def _time_hints(text: str, src: str) -> dict[str, str]:
     # QWEN 구현: 오전·오후가 붙은 시각은 목표 언어 표기를 직접 알려 준다(6 p.m. = 오후 6시)
     out = {}
@@ -108,6 +125,9 @@ def select_glossary(text: str, source_locale: str, target_locale: str) -> dict[s
         out.setdefault(k, v)
     for k, v in _time_hints(text, src).items():
         out.setdefault(k, v)
+    if src == "ko":
+        for k, v in _money_hints(text).items():
+            out.setdefault(k, v)
     return out
 
 

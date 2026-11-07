@@ -9,7 +9,7 @@
   },
   {
     "input": {"english": "The other driver says it was my fault, but he backed into me.", "korean": "다른 운전자는 그것이 내 잘못이라고 말하지만, 그가 나에게 후진으로 박았어요.", "glossary": {}},
-    "output": {"text": "상대 운전자는 제 잘못이라고 하는데, 그쪽이 후진하다가 제 차를 박았어요."}
+    "output": {"text": "상대 운전자는 제 잘못이라고 하는데, 그쪽이 후진하다가 저를 박았어요."}
   },
   {
     "input": {"english": "Please don't park in front of the gate after 8 p.m.", "korean": "오후 8시 이후에는 출입문 앞에 주차하지 마세요.", "glossary": {"8 p.m.": "오후 8시"}},

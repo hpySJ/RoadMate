@@ -70,7 +70,12 @@ EN_ORD_ANY = re.compile(r"\b(" + "|".join(EN_ORD) + r")\s+(?=[A-Za-z])", re.IGNO
 KO_ORD = re.compile(r"(?<![가-힣])(첫|두|세|네|다섯|여섯|일곱|여덟|아홉|열|\d{1,2})\s?번째")
 KO_MERIDIEM = re.compile(r"(오전|새벽|아침|오후|저녁|낮)\s*$")
 EN_PAST_RE = re.compile(r"\b(quarter|half)\s+(past|after|to)\s+(\d{1,2}|" + "|".join(EN_UNITS) + r")\b", re.IGNORECASE)
-EN_SPAN_RE = re.compile(r"\b(?:(half)(?:\s+an)?\s+hour|(?:a\s+)?(quarter)(?:\s+of\s+an)?\s+hour)\b", re.IGNORECASE)
+EN_SPAN_RE = re.compile(r"\b(?:(half)\s+(?:an\s+)?hour|(?:a\s+)?(quarter)\s+(?:of\s+an\s+)?hour"
+                        r"|(?:an|one|a)\s+hour(\s+and\s+a\s+half)?)\b", re.IGNORECASE)
+DUR_EN = re.compile(r"\s?(?:(minutes?|mins?)|(hours?|hrs?))\b", re.IGNORECASE)
+DUR_KO = re.compile(r"\s?(?:(분)|(시간)(\s?반)?)")
+UNIT_ABBR = {"km", "kg", "cc", "ml", "cm", "mm", "kw", "kwh", "mph", "kmh", "gb"}
+PLATE_RE = re.compile(r"\d{2,3}\s?[가-힣]\s?\d{4}")
 CUR_EN = re.compile(r"\s?(?:k|thousand|million|mil)?\s?(won|krw|dollars?|usd|bucks)\b", re.IGNORECASE)
 CUR_KO = re.compile(r"\s?(원|달러|불)")
 
@@ -103,6 +108,19 @@ def _unit(before: str, after: str, locale: str) -> str | None:
     if not m:
         return None
     return "KRW" if m.group(1).lower() in ("won", "krw", "원") else "USD"
+
+
+def _num(v: float, before: str, after: str, locale: str) -> Num:
+    # 검증: 금액은 통화, 시간 길이는 분 단위로 맞춰 비교한다(half an hour = 30분 = 반 시간 ≠ 30시간)
+    cur = _unit(before, after, locale)
+    if cur:
+        return Num(v, "n", unit=cur)
+    m = (DUR_EN if locale == "en-US" else DUR_KO).match(after)
+    if not m:
+        return Num(v, "n")
+    if m.group(1):
+        return Num(v, "n", unit="min")
+    return Num(v * 60 + (30 if locale == "ko-KR" and m.group(3) else 0), "n", unit="min")
 
 
 def _parse_sino(s: str) -> int | None:
@@ -173,25 +191,30 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
     text = _mask(text, spans)
 
     if locale == "en-US":
+        # 검증: 말로 하는 시각(quarter past 4 p.m.)은 숫자 시각보다 먼저 읽어 두 번 세지 않는다
+        for m in EN_PAST_RE.finditer(text):
+            h = int(m.group(3)) if m.group(3).isdigit() else EN_UNITS[m.group(3).lower()]
+            mins = 15 if m.group(1).lower() == "quarter" else 30
+            t = EN_TIME_TAIL.match(text, m.end())
+            anchor = _time(h, _en_pm(t))  # 오전·오후를 먼저 적용한 뒤 "to"를 뺀다(quarter to 12 p.m. = 11:45)
+            if m.group(2).lower() == "to":
+                val = (anchor.value - 1) % 24 if anchor.exact else float((h - 1) or 12)
+                anchor, mins = Num(val, "time", exact=anchor.exact), 60 - mins
+            out += [anchor, Num(float(mins), "n")]
+            spans.append((m.start(), t.end() if t else m.end()))
+        text = _mask(text, spans)
         for m in re.finditer(r"(?<![\d.,])(\d{1,2})\b", text):
             t = EN_TIME_TAIL.match(text, m.end())
             if t:
                 out.append(_time(int(m.group(1)), _en_pm(t)))
                 spans.append((m.start(), t.end()))
-        # 검증: 말로 하는 시각·시간(noon, a quarter past four, half an hour)
+        # 검증: 정오·자정, 말로 하는 시간 길이(half an hour, an hour and a half)
         for m in re.finditer(r"\b(noon|midday|midnight)\b", text, re.IGNORECASE):
             out.append(Num(0.0 if m.group(1).lower() == "midnight" else 12.0, "time", exact=True))
             spans.append(m.span())
-        for m in EN_PAST_RE.finditer(text):
-            h = int(m.group(3)) if m.group(3).isdigit() else EN_UNITS[m.group(3).lower()]
-            mins = 15 if m.group(1).lower() == "quarter" else 30
-            if m.group(2).lower() == "to":
-                h, mins = (h - 1) or 12, 60 - mins
-            t = EN_TIME_TAIL.match(text, m.end())
-            out += [_time(h, _en_pm(t)), Num(float(mins), "n")]
-            spans.append((m.start(), t.end() if t else m.end()))
         for m in EN_SPAN_RE.finditer(text):
-            out.append(Num(30.0 if m.group(1) else 15.0, "n"))
+            v = 30.0 if m.group(1) else 15.0 if m.group(2) else 90.0 if m.group(3) else 60.0
+            out.append(Num(v, "n", unit="min"))
             spans.append(m.span())
         text = _mask(text, spans)
         for m in DIGIT_RE.finditer(text):
@@ -203,7 +226,7 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
                 v *= 1_000_000
             elif re.match(r"\s?thousand\b", tail):
                 v *= 1000
-            out.append(Num(v, "n", unit=_unit(text[:m.start()], text[m.end():], locale)))
+            out.append(_num(v, text[:m.start()], text[m.end():], locale))
         ords = list(EN_ORD_RE.finditer(text))
         for m in ords:
             out.append(Num(float(EN_ORD[m.group(1).lower()]), "n"))
@@ -220,7 +243,7 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
             if t and v <= 12:
                 out.append(_time(v, _en_pm(t)))
             else:
-                out.append(Num(float(v), "n", unit=_unit(text[:m.start()], text[m.end():], locale)))
+                out.append(_num(float(v), text[:m.start()], text[m.end():], locale))
     else:
         for m in KO_ORD.finditer(text):
             g = m.group(1)
@@ -228,17 +251,21 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
         text = _mask(text, [m.span() for m in KO_ORD.finditer(text)])
         for m in re.finditer(r"정오|자정", text):
             out.append(Num(12.0 if m.group() == "정오" else 0.0, "time", exact=True))
+        for m in re.finditer(r"(?<![가-힣])반\s?시간", text):
+            out.append(Num(30.0, "n", unit="min"))
+            spans.append(m.span())
         for m in re.finditer(r"(\d{1,2})\s?시(?!간)(\s?반)?", text):
             out.append(_time(int(m.group(1)), _ko_pm(text[:m.start()])))
             if m.group(2):
                 out.append(Num(30.0, "n"))
             spans.append(m.span())
         for m in NATIVE_RE.finditer(text):
-            if (m.group(2) == "시" and m.start(2) == m.end(1) and re.match(r"[가-힣]", text[m.end():])
-                    and not re.match(r"에|까지|부터|쯤|반|정각", text[m.end():])):
-                continue  # 검증: 붙여 쓴 "두시는/두시면"은 동사(두다·세다)라 시각이 아니다
+            if m.group(1) == "두" and m.group(2) == "시" and re.search(r"[어아여해놔]\s?$", text[:m.start()]):
+                continue  # 검증: "찍어 두시는·놔두시면"은 보조동사 '두다'라 시각이 아니다(지금 두시입니다는 시각)
             if m.group(2) == "시":
                 out.append(_time(NATIVE[m.group(1)], _ko_pm(text[:m.start()])))
+            elif m.group(2) == "시간":
+                out.append(_num(float(NATIVE[m.group(1)]), "", text[m.start(2):], locale))
             else:
                 out.append(Num(float(NATIVE[m.group(1)]), "n"))
             if m.group(2) == "시" and re.match(r"\s?반", text[m.end():]):
@@ -257,11 +284,11 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
                 pending += v
             else:
                 if pending is not None:
-                    out.append(Num(pending, "n", unit=_unit(text[:start], text[last_end:], locale)))
+                    out.append(_num(pending, text[:start], text[last_end:], locale))
                 pending, start = v, m.start()
             last_end, last_rank = m.end(), r
         if pending is not None:
-            out.append(Num(pending, "n", unit=_unit(text[:start], text[last_end:], locale)))
+            out.append(_num(pending, text[:start], text[last_end:], locale))
         text = _mask(text, [m.span() for m in tok.finditer(text)])
         sino = r"[일이삼사오육칠팔구십백천만억]{1,8}"
         for m in re.finditer(rf"(?<![가-힣])({sino}(?:\s{sino})*)(?=\s?" + KO_COUNTER + ")", text):
@@ -270,8 +297,8 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
                 continue
             v = _parse_sino(s)
             if v:
-                out.append(Num(float(v), "n", unit=_unit(text[:m.start()], text[m.end():], locale)))
-    return [n for n in out if not (n.kind == "n" and n.value == 1)]
+                out.append(_num(float(v), text[:m.start()], text[m.end():], locale))
+    return [n for n in out if not (n.kind == "n" and n.value == 1 and n.unit is None)]
 
 
 def _num_match(a: Num, b: Num) -> bool:
@@ -298,10 +325,15 @@ def compare_numbers(src: list[Num], tgt: list[Num]) -> list[str]:
         hit = next((t for t in pool if _num_match(s, t)), None)
         if hit is not None:
             pool.remove(hit)
-        elif s.kind != "ord" or both_ord:
+        elif (s.kind != "ord" or both_ord) and not _is_zero(s):
             issues.append(f"number_missing:{s.value:g}")
-    issues += [f"number_added:{t.value:g}" for t in pool if t.kind != "ord" or both_ord]
+    issues += [f"number_added:{t.value:g}" for t in pool if (t.kind != "ord" or both_ord) and not _is_zero(t)]
     return issues
+
+
+def _is_zero(n: Num) -> bool:
+    # 검증: 0은 "없다"와 같은 뜻으로 옮겨질 수 있어 짝이 없어도 넘어간다(면책금이 없어요 = deductible is zero)
+    return n.kind == "n" and n.value == 0
 
 
 def add_meridiem(tt: str, source: str, src_locale: str, tgt_locale: str) -> str:
@@ -321,10 +353,12 @@ def add_meridiem(tt: str, source: str, src_locale: str, tgt_locale: str) -> str:
 NEG = {
     "en-US": (
         re.compile(r"\b(not|no|never|none|nobody|nothing|nowhere|neither|nor|cannot|without|no one|unhurt|uninjured|unharmed)\b|n't\b", re.I),
-        re.compile(r"\b(instead|rather than|other than|except|excluding|apart from|only|stop|refuse|fine|okay|ok|all right|free)\b", re.I),
+        re.compile(r"\b(instead|rather than|other than|except|excluding|apart from|zero|only|stop|refuse|fine|okay|ok|all right|free)\b", re.I),
     ),
     "ko-KR": (
-        re.compile(r"않|(?<!잘)못|없|말고|마세요|마십시오|말아|지 ?마|아니(?!면)|아닌|아닙|아냐|아녜|금지|불가"
+        # 검증: "A, 아니면 B"(또는)는 부정이 아니지만 "회원이 아니면"(조건부 부정)은 부정이다
+        re.compile(r"않|(?<!잘)못|없|말고|마세요|마십시오|말아|지 ?마|아니(?!면)|(?<=[이가게] )아니면|(?<=[이가게])아니면"
+                   r"|아닌|아닙|아냐|아녜|금지|불가"
                    r"|(?<![가-힣])안\s?(?!녕|내|전|에|쪽|경|심|과|개|건|부|마|방|색|약|면|정|팎|으로|까)[가-힣]"),
         re.compile(r"무사|괜찮|모르|몰라|싫|아직|대신|그만|무료|제외|빼고"),
     ),
@@ -355,6 +389,24 @@ def check_direction(en: str, ko: str) -> list[str]:
             issues.append(f"direction_missing:{d}")
         if DIR_KO[d].search(ko) and not DIR_EN_WORD[d].search(en):
             issues.append(f"direction_mismatch:{d}")
+    return issues
+
+
+# 검증: 뒤바뀌기 쉬운 반대말(안/밖, 전/후). 원문에 한쪽만 있는데 번역에 반대쪽만 있으면 실패
+OPPOSITES = [
+    ("inside", r"\binside\b", r"안에|안으로|안쪽|내부", "outside", r"\boutside\b", r"밖|바깥|외부"),
+    ("before", r"\bbefore\b", r"전에|전까지|이전", "after", r"\bafter\b", r"후에|다음에|이후"),
+]
+
+
+def check_opposites(en: str, ko: str) -> list[str]:
+    issues = []
+    for na, ea, ka, nb, eb, kb in OPPOSITES:
+        for name, e1, k1, e2, k2 in ((na, ea, ka, eb, kb), (nb, eb, kb, ea, ka)):
+            en_only = re.search(e1, en, re.I) and not re.search(e2, en, re.I)
+            ko_flip = re.search(k2, ko) and not re.search(k1, ko)
+            if en_only and ko_flip:
+                issues.append(f"opposite_mismatch:{name}")
     return issues
 
 
@@ -437,15 +489,17 @@ def validate_translation(out: dict, source: str, src_locale: str, tgt_locale: st
     min_src, ratio = MIN_LEN_RATIO[src_locale]
     if len(source) >= min_src and len(tt) < ratio * len(source):
         issues.append("too_short")
-    if not in_locale_script(tt, tgt_locale):
+    # 검증: 번호판(34하 5678)의 한글은 원문 그대로 옮겨도 된다
+    script_tt = PLATE_RE.sub(" ", tt) if PLATE_RE.search(source) else tt
+    if not in_locale_script(script_tt, tgt_locale):
         issues.append("wrong_language")
     if HAN_KANA.search(tt) and not HAN_KANA.search(source):
         issues.append("foreign_script")
     if tgt_locale == "ko-KR":
         # 검증: "페anut"처럼 한글에 붙은 영문 조각이 원문 단어가 아니면 깨진 출력(U턴·B동·GPS가처럼 원문·약어는 허용)
         src_words = {w.lower() for w in re.findall(r"[A-Za-z]+", source)}
-        frags = re.findall(r"(?<=[가-힣])[A-Za-z]{2,}|[A-Za-z]{2,}(?=[가-힣])", tt)
-        if any(f.lower() not in src_words and not f.isupper() for f in frags):
+        frags = re.findall(r"(?<=[가-힣])[A-Za-z]{2,}|(?<![\dA-Za-z])[A-Za-z]{2,}(?=[가-힣])", tt)
+        if any(f.lower() not in src_words | UNIT_ABBR and not f.isupper() for f in frags):
             issues.append("mixed_script")
     if tt.strip().lower() == source.strip().lower():
         issues.append("untranslated")
@@ -457,6 +511,7 @@ def validate_translation(out: dict, source: str, src_locale: str, tgt_locale: st
     issues += check_fuel_polarity(source, src_locale, tt, tgt_locale)
     en, ko = (source, tt) if src_locale == "en-US" else (tt, source)
     issues += check_direction(en, ko)
+    issues += check_opposites(en, ko)
     return issues
 
 

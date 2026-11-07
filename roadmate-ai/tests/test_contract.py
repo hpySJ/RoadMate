@@ -148,6 +148,19 @@ def test_polish_replaces_only_when_checks_pass():
         assert '"korean"' in fake.messages[1][-1]["content"]  # 2차 요청은 다듬기 프롬프트
 
 
+def test_polish_rewrite_or_model_errors_keep_draft():
+    from inference import ModelTimeout, ModelUnavailable
+    s = dataclasses.replace(SETTINGS, polish_ko=True)
+    draft = "차 안에서 기다려 주세요."
+    for second in ({"text": "차 밖에서 기다려 주세요."},  # 반대말로 바뀜
+                   {"text": "날씨가 좋으니 잠깐 산책하고 오세요, 천천히요."},  # 통째로 다시 씀
+                   ModelUnavailable("down"), ModelTimeout("slow")):
+        fake = FakeLlama(outputs=[ok(draft), second])
+        with TestClient(create_app(s, fake)) as c:
+            r = c.post("/internal/v1/translate", json=body(text="Please wait inside the car.", scenario="general"))
+        assert r.status_code == 200 and r.json()["translated_text"] == draft, second
+
+
 def test_polish_off_by_default_and_not_for_english_target():
     fake = FakeLlama(outputs=[ok("전화번호 좀 적어 주시겠어요?")])
     with TestClient(create_app(SETTINGS, fake)) as c:

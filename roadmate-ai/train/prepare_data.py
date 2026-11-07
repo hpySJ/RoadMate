@@ -52,6 +52,14 @@ def check(rec: dict) -> list[str]:
     return [f"bad_task:{rec['task']}"]
 
 
+def duplicate_groups(recs: list[dict]) -> list[str]:
+    # 검증: 같은 문장이 다른 group_id로 두 번 들어오면 학습·검증 분할을 넘을 수 있으니 멈춘다
+    groups_by_text: dict[str, set] = {}
+    for r in recs:
+        groups_by_text.setdefault(norm(r["text"]), set()).add(r["group_id"])
+    return [f"same text in groups {sorted(g)}: {t}" for t, g in groups_by_text.items() if len(g) > 1]
+
+
 def split_groups(groups: list[str], seed: int) -> dict[str, str]:
     # 학습: group_id 해시로 80/10/10 분할 → 자료를 추가해도 기존 그룹의 분할이 바뀌지 않는다(같은 원문·변형은 같은 분할)
     def bucket(g: str) -> int:
@@ -87,6 +95,7 @@ def main():
                 errors.append(f"{where} {issues}")
                 continue
             recs.append(r)
+    errors += duplicate_groups(recs)
     if errors:
         print("\n".join(errors))
         sys.exit(f"{len(errors)} invalid records. Fix them before training.")

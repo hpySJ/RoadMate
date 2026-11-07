@@ -40,6 +40,13 @@ def test_place_hint_wins_over_area_inside_it():
     assert P.select_glossary("한라산 등산은 아침 일찍 하세요.", "ko-KR", "en-US") == {"한라산": "Hallasan"}
 
 
+def test_korean_money_hints():
+    assert P.select_glossary("만 오천 원 거슬러 드릴게요.", "ko-KR", "en-US") == {"만 오천 원": "15,000 won"}
+    assert P.select_glossary("총 12만 3천 원 나왔습니다.", "ko-KR", "en-US") == {"12만 3천 원": "123,000 won"}
+    assert P.select_glossary("회원이 아니면 여기에 서세요.", "ko-KR", "en-US") == {}
+    assert P.select_glossary("구원 투수예요.", "ko-KR", "en-US") == {}
+
+
 def test_time_hints():
     assert P.select_glossary("We'll be back by 6 p.m.", "en-US", "ko-KR") == {"6 p.m.": "오후 6시"}
     assert P.select_glossary("Meet at 3:30 pm.", "en-US", "ko-KR") == {"3:30 pm": "오후 3시 30분"}

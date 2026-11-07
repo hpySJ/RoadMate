@@ -33,6 +33,26 @@ def test_import_rejects_approved_rows_that_break_checks():
     assert not recs and "negation_mismatch" in errors[0]
 
 
+def test_pool_groups_are_stable_and_parallel_templates_share_group():
+    import hashlib
+    norm = lambda s: "".join(s.lower().split())  # noqa: E731
+    pool = [json.loads(x) for x in (ROOT / "train" / "sources" / "pool.jsonl").read_text(encoding="utf-8").splitlines()]
+    for p in pool:
+        if p["group_id"].startswith("p_"):  # 손으로 쓴 문장: 내용으로 정한 ID(목록 순서와 무관)
+            assert p["group_id"] == "p_" + hashlib.sha1(norm(p["text"]).encode()).hexdigest()[:10]
+    langs = {}
+    for p in pool:
+        langs.setdefault(p["group_id"], set()).add(p["source_locale"])
+    assert langs["t_not_fuel"] == langs["t_amount_fuel"] == {"en-US", "ko-KR"}
+
+
+def test_prepare_rejects_same_text_in_two_groups():
+    recs = [{"group_id": "g1", "text": "반납은 오후 4시까지 해 주세요."}, {"group_id": "g2", "text": "반납은 오후 4시까지  해 주세요."},
+            {"group_id": "g3", "text": "다른 문장이에요."}]
+    errs = prepare_data.duplicate_groups(recs)
+    assert len(errs) == 1 and "g1" in errs[0] and "g2" in errs[0]
+
+
 def test_pool_has_no_eval_overlap():
     norm = lambda s: "".join(s.lower().split())  # noqa: E731
     pool = [json.loads(x) for x in (ROOT / "train" / "sources" / "pool.jsonl").read_text(encoding="utf-8").splitlines()]
