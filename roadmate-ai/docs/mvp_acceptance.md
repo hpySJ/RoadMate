@@ -12,7 +12,7 @@
 | 스쿨존 진입·과속 | `guidance.py` | 유효하고 신선한 구역·경로 정보. 제한값 미상일 때 숫자를 추측하지 않음 |
 | 우회전·비보호 좌회전 설명 | `guidance.py` | 조건부 교육 안내. 전용 신호등·횡단 예정 보행자 포함. 실제 신호색이나 통행 가능 여부를 판단하지 않음 |
 | 정차 중 한↔영·한↔스 통역 | `engine.py`, `validation.py`, `prompts/` | 최종 STT만 전송, P·속도 확인, epoch 취소, TTS 직전 재확인 |
-| 자연스러운 회화 번역 | `translate-v6`, 선택적 `polish-v4` | 원문 의미·주체·정도·숫자·부정·질문 의도 유지. 보험 조건 추정 금지 |
+| 자연스러운 회화 번역 | `translate-v7`, 선택적 `polish-v4` | 원문 의미·주체·정도·숫자·부정·질문 의도 유지. 보험 조건 추정 금지 |
 | 목적지 후보 | `PoiCatalog`, `packs/poi.demo.json` | 목록의 좌표만 반환. 미검증 좌표는 항상 확인, 모델이 좌표 생성하지 않음 |
 
 세부 SDK 계약은 `pleos_sdk.md`, HTTP 계약은 `openapi.json`을 따른다. `unprotected_left`는 SDK에서 자동 제공한다고 가정하지 않는다. 앱이 확인한 표지·지도 맥락이 없으면 필드를 생략한다.
@@ -33,12 +33,12 @@
 ```bash
 bash scripts/run.sh setup
 bash scripts/run.sh start
-.venv/bin/python eval/evaluate.py --file eval/dev.jsonl --label base-v6
-.venv/bin/python eval/evaluate.py --file eval/general.jsonl --label base-v6
-.venv/bin/python eval/evaluate.py --file eval/general_es.jsonl --label base-v6
-.venv/bin/python eval/evaluate.py --file eval/naturalness.dev.jsonl --label base-v6
+.venv/bin/python eval/evaluate.py --file eval/dev.jsonl --label base-v7
+.venv/bin/python eval/evaluate.py --file eval/general.jsonl --label base-v7
+.venv/bin/python eval/evaluate.py --file eval/general_es.jsonl --label base-v7
+.venv/bin/python eval/evaluate.py --file eval/naturalness.dev.jsonl --label base-v7
 # 개발 평가와 설정 선택이 끝난 뒤에만:
-.venv/bin/python eval/evaluate.py --file eval/test.locked.v2.jsonl --label final-v6 --final
+.venv/bin/python eval/evaluate.py --file eval/test.locked.v2.jsonl --label final-v7 --final
 ```
 
 평가 결과의 `run.json`에는 사용 자료·결과 SHA256과 서버가 시작할 때의 코드·문구 해시, 모델·버전·다듬기 설정을 기록한다. `/health/ready`의 `artifact_hashes`와 실행 중 checkout이 같아야 평가를 시작한다. 토큰·원문 실사용 로그는 이 메타데이터에 포함하지 않는다.

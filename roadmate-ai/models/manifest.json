@@ -25,12 +25,12 @@
     "cache_ram_mib": 0
   },
   "versions": {
-    "translate_prompt": "translate-v6",
+    "translate_prompt": "translate-v7",
     "destination_prompt": "destination-v3",
     "polish_prompt": "polish-v4",
-    "glossary": "rental-ko-en-es-v8",
+    "glossary": "rental-ko-en-es-v9",
     "rules": "rules-v5",
     "poi": "poi-jeju-demo-v3",
-    "eval": "eval-ko-en-es-v3"
+    "eval": "eval-ko-en-es-v4"
   }
 }

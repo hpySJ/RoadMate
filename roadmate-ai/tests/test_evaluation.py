@@ -7,7 +7,37 @@ from pathlib import Path
 
 from config import Settings, artifact_hashes
 from eval.release_gate import check_run
-from eval.evaluate import reserve_final
+from eval.evaluate import attach_attempts, reserve_final
+
+
+def test_retry_measurement_counts_only_traced_attempts(tmp_path):
+    rows = [{"case": {"task": "translate"}, "request_id": rid} for rid in ("fixed", "same", "error", "first", "missing")]
+    bad = {"status": "ok", "translated_text": "wrong"}
+    good = {"status": "ok", "translated_text": "correct"}
+    attempts = [("fixed", 1, ["term_missing"], bad), ("fixed", 2, [], good),
+                ("same", 1, ["term_missing"], bad), ("same", 2, ["term_missing"], bad),
+                ("error", 1, ["bad_output"], None), ("error", 2, ["model_timeout"], None),
+                ("first", 1, [], good), ("unrelated", 1, [], good)]
+    log = tmp_path / "ai.err.log"
+    log.write_text("startup\n" + "".join("2026-11-08 12:00:00,123 WARNING roadmate.ai translation_attempt " + json.dumps(
+        {"request_id": rid, "attempt": attempt, "issues": issues, "output": out}) + "\n"
+        for rid, attempt, issues, out in attempts), encoding="utf-8")
+    assert attach_attempts(rows, log) == {"translate_cases": 5, "traced_cases": 4, "retried": 3,
+                                         "recovered": 1, "identical": 1, "incomplete": 0, "log_errors": 0}
+    assert rows[0]["translation_attempts"][0]["output"] == bad
+    assert rows[-1]["translation_attempts"] == []
+
+
+def test_corrupt_or_missing_attempt_log_does_not_lose_http_results(tmp_path):
+    row = {"case": {"task": "translate"}, "request_id": "case-1", "http": 200, "body": {"status": "ok"}}
+    log = tmp_path / "ai.err.log"
+    log.write_text('rejected case-x | Please print translation_attempt on a receipt.\n'
+                   'translation_attempt {"request_id": "case-1",\n'
+                   'translation_attempt {"request_id": "case-1", "attempt": "invalid"}\n', encoding="utf-8")
+    stats = attach_attempts([row], log)
+    assert stats["traced_cases"] == 0 and stats["log_errors"] == 2
+    assert row["http"] == 200 and row["body"] == {"status": "ok"}
+    assert attach_attempts([row], tmp_path / "missing.log")["log_errors"] == 1
 
 
 def test_quality_gate_rejects_mock_unreviewed_and_changed_evidence(tmp_path, monkeypatch):

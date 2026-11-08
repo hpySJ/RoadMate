@@ -1,5 +1,5 @@
 {
-  "version": "rental-ko-en-es-v8",
+  "version": "rental-ko-en-es-v9",
   "review": {"status": "draft", "reviewer": null, "checked_at": "2026-11-08"},
   "ko_only_hints": {
     "완전자차": {
@@ -52,6 +52,8 @@
     {"id": "hazard_lights", "category": "vehicle", "critical": false, "en": ["hazard lights", "emergency lights"], "es": ["luces de emergencia", "intermitentes de emergencia", "luces intermitentes"], "ko": ["비상등"]},
     {"id": "child_seat", "category": "rental", "critical": false, "en": ["child seat", "car seat", "booster seat"], "es": ["silla para niños", "asiento para niños", "asiento infantil", "silla de bebé"], "ko": ["카시트"]},
     {"id": "crosswalk", "category": "road", "critical": false, "en": ["crosswalk", "pedestrian crossing"], "es": ["paso peatonal", "cruce peatonal", "paso de cebra"], "ko": ["횡단보도"]},
+    {"id": "right_turn", "category": "road", "critical": false, "en": ["right turn", "turn right"], "es": ["vuelta a la derecha", "girar a la derecha", "gire a la derecha", "gira a la derecha", "doblar a la derecha", "doble a la derecha"], "ko": ["우회전"]},
+    {"id": "left_turn", "category": "road", "critical": false, "en": ["left turn", "turn left"], "es": ["vuelta a la izquierda", "girar a la izquierda", "gire a la izquierda", "gira a la izquierda", "doblar a la izquierda", "doble a la izquierda"], "ko": ["좌회전"]},
     {"id": "u_turn", "category": "road", "critical": false, "en": ["U-turn"], "es": ["vuelta en U", "cambio de sentido"], "ko": ["유턴"]},
     {"id": "speed_camera", "category": "road", "critical": false, "en": ["speed camera"], "es": ["cámara de velocidad", "radar de velocidad", "fotomulta", "fotorradar"], "ko": ["과속 단속 카메라"]},
     {"id": "convenience_store", "category": "place", "critical": false, "en": ["convenience store"], "es": ["tienda de conveniencia", "minisúper"], "ko": ["편의점"]},

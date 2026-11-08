@@ -88,6 +88,11 @@ CLOCK_RE = re.compile(r"(?<!\d)([01]?\d|2[0-4]):([0-5]\d)(?!\d)")
 DIGIT_RE = re.compile(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?!\d|,\d)")
 _EN_DAYPART = r"(in the morning|in the afternoon|in the evening|at night|tonight|this morning|this afternoon|this evening)"
 EN_TIME_TAIL = re.compile(rf"\s*(?:o'clock(?:\s+{_EN_DAYPART})?|([ap])\.?\s?m\.?(?![A-Za-z])|{_EN_DAYPART})", re.IGNORECASE)
+# 검증: at 5처럼 단위 없는 시각만 허용한다. 뒤의 수량·금액·날짜나 소수/범위는 시각으로 추정하지 않는다.
+EN_BARE_TIME_RE = re.compile(
+    r"\b(?:at|by|until|around|before|after)\s+(?P<hour>1[0-2]|[1-9]|"
+    + "|".join(w for w, v in EN_UNITS.items() if 1 <= v <= 12)
+    + r")\b(?=\s*(?:$|[.!?,;](?!\d)|(?:today|tomorrow|yesterday|sharp|please)\b))", re.IGNORECASE)
 EN_ORD_ANY = re.compile(r"\b(" + "|".join(EN_ORD) + r")\s+(?=[A-Za-z])", re.IGNORECASE)
 KO_ORD = re.compile(r"(?<![가-힣])(첫|두|세|네|다섯|여섯|일곱|여덟|아홉|열|\d{1,2})\s?번째")
 KO_MERIDIEM = re.compile(r"(오전|새벽|아침|오후|저녁|낮|밤)\s*$")
@@ -391,6 +396,11 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
             out += [anchor, Num(float(mins), "n")]
             spans.append((m.start(), t.end() if t else m.end()))
         text = _mask(text, spans)
+        bare_times = list(EN_BARE_TIME_RE.finditer(text))
+        for m in bare_times:
+            h = m.group("hour")
+            out.append(_time(int(h) if h.isdigit() else EN_UNITS[h.lower()], None))
+        text = _mask(text, [m.span("hour") for m in bare_times])
         for m in re.finditer(r"(?<![\d.,])(\d{1,2})\b", text):
             t = EN_TIME_TAIL.match(text, m.end())
             if t:

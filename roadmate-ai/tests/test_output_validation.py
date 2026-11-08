@@ -376,6 +376,61 @@ def test_english_dayparts_in_both_directions(source, good, bad):
     assert v(bad, "ko-KR", source, "en-US")
 
 
+@pytest.mark.parametrize("source,good", [
+    ("Come back at 5.", "5시에 돌아오면 돼요."),
+    ("Return by five.", "5시까지 돌아오세요."),
+    ("Wait until 5.", "5시까지 기다리세요."),
+    ("Come around five.", "5시쯤 오세요."),
+    ("Return before 5.", "5시 전에 돌아오세요."),
+    ("Come after five.", "5시 후에 오세요."),
+])
+def test_bare_english_hours_allow_unspecified_meridiem(source, good):
+    assert v(source, "en-US", good, "ko-KR") == []
+    assert v(good, "ko-KR", source, "en-US") == []
+    assert v(source, "en-US", "오후 " + good, "ko-KR") == []
+    bad = good.replace("5시", "6시")
+    assert v(source, "en-US", bad, "ko-KR")
+    assert v(bad, "ko-KR", source, "en-US")
+    # 원문에 명시된 오후는 at 5로 생략할 수 없다.
+    assert v("오후 " + good, "ko-KR", source, "en-US")
+
+
+@pytest.mark.parametrize("source,good", [
+    ("Meet at one.", "1시에 만나요."),
+    ("Meet at 1, please.", "1시에 만나 주세요."),
+    ("Return by twelve tomorrow.", "내일 12시까지 돌아오세요."),
+    ("Come back at 12 sharp.", "12시 정각에 돌아오세요."),
+])
+def test_bare_english_hour_boundaries_and_modifiers(source, good):
+    assert v(source, "en-US", good, "ko-KR") == []
+    assert v(good, "ko-KR", source, "en-US") == []
+
+
+@pytest.mark.parametrize("source,good,bad", [
+    ("Return by 5 a.m.", "오전 5시까지 돌아오세요.", "오후 5시까지 돌아오세요."),
+    ("Come after five p.m.", "오후 5시 후에 오세요.", "오전 5시 후에 오세요."),
+])
+def test_bare_hour_recognition_keeps_explicit_meridiem(source, good, bad):
+    assert v(source, "en-US", good, "ko-KR") == []
+    assert v(good, "ko-KR", source, "en-US") == []
+    assert v(source, "en-US", bad, "ko-KR")
+    assert v(bad, "ko-KR", source, "en-US")
+
+
+@pytest.mark.parametrize("source", [
+    "Return after 5 minutes.", "Come after five hours.", "Wait until one minute has passed.",
+    "It was checked by 5 people.", "It holds around five passengers.", "We need at least 5.",
+    "It costs around $5.", "It costs around five dollars.", "It costs around 5,000 won.",
+    "It costs around five hundred won.", "Return before 5/12.", "Return by 5 May.",
+    "Return by 5th May.", "Return by five days from now.", "Return after 5-10 minutes.",
+    "It is around 5.5 kilometers.", "It is around 5%.", "At 5 km, turn left.",
+    "It is around 5 to 10 dollars.", "It is around 5 million won.",
+    "It costs around 5 an hour.", "It costs around five a minute.",
+])
+def test_english_prepositions_do_not_turn_quantities_or_dates_into_hours(source):
+    assert not any(n.kind == "time" for n in extract_numbers(source, "en-US"))
+
+
 @pytest.mark.parametrize("locale,source", [
     ("en-US", "Wait one minute."), ("en-US", "Wait a minute."),
     ("es-US", "Espere un minuto."), ("es-MX", "Espere un minuto."),

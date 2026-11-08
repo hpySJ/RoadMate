@@ -8,6 +8,7 @@ import csv
 import hashlib
 import json
 import os
+import re
 import statistics
 import sys
 import time
@@ -59,6 +60,56 @@ def pct(xs, q):
     return xs[min(len(xs) - 1, int(round(q * (len(xs) - 1))))]
 
 
+def attach_attempts(rows: list[dict], path: Path) -> dict:
+    """서버의 opt-in 로그만 읽는다. 검사 통과는 의미 정확도와 별개다."""
+    by_id = {}
+    stats = Counter(translate_cases=0, traced_cases=0, retried=0, recovered=0, identical=0,
+                    incomplete=0, log_errors=0)
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        lines = []
+        stats["log_errors"] += 1
+    for line in lines:
+        if "translation_attempt " not in line:
+            continue
+        prefix, payload = line.split("translation_attempt ", 1)
+        if (prefix.strip() not in ("", "WARNING:", "WARNING:roadmate.ai:") and not re.fullmatch(
+                r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} WARNING roadmate\.ai\s+", prefix)):
+            continue
+        try:
+            record = json.loads(payload)
+            if (not isinstance(record, dict) or not isinstance(record.get("request_id"), str)
+                    or type(record.get("attempt")) is not int or record["attempt"] not in (1, 2)
+                    or not isinstance(record.get("issues"), list)
+                    or not all(isinstance(i, str) for i in record["issues"])
+                    or not (record.get("output") is None or isinstance(record["output"], dict))):
+                raise ValueError("invalid attempt record")
+        except (ValueError, TypeError):
+            stats["log_errors"] += 1
+            continue
+        by_id.setdefault(record["request_id"], []).append(record)
+    for row in rows:
+        if row["case"]["task"] != "translate":
+            continue
+        stats["translate_cases"] += 1
+        attempts = by_id.get(row["request_id"], [])
+        row["translation_attempts"] = attempts
+        if not attempts:
+            continue
+        stats["traced_cases"] += 1
+        if [a["attempt"] for a in attempts] not in ([1], [1, 2]):
+            stats["incomplete"] += 1
+            continue
+        if len(attempts) == 2:
+            first, second = attempts
+            stats["retried"] += 1
+            stats["identical"] += first["output"] is not None and first["output"] == second["output"]
+            stats["recovered"] += (bool(first["issues"]) and not second["issues"]
+                                   and (second["output"] or {}).get("status") == "ok")
+    return dict(stats)
+
+
 def final_input_digest(path: Path) -> str:
     # 검수 메타데이터나 행 순서만 바꿔 같은 시험을 다시 고르지 못하게 입력으로 식별한다.
     cases = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -86,7 +137,10 @@ def main():
     ap.add_argument("--label", default="run")
     ap.add_argument("--allow-mock", action="store_true", help="계약 점검 전용. 모델 품질 평가로 사용할 수 없음")
     ap.add_argument("--final", action="store_true", help="설정 확정 후 잠근 시험을 실행함을 명시")
+    ap.add_argument("--attempt-log", type=Path, help="LOG_REJECTED=1인 서버 로그(예: logs/ai.err.log). 재시도 회복률 집계")
     a = ap.parse_args()
+    if a.attempt_log and not a.attempt_log.is_file():
+        ap.error("--attempt-log 파일이 없습니다. LOG_REJECTED=1로 서버를 먼저 시작하세요")
 
     locked = Path(a.file).name.startswith("test.locked")
     if Path(a.file).name == "test.locked.jsonl":
@@ -135,11 +189,13 @@ def main():
             time.sleep(1)
         body = r.json()
         passed, flags = judge(c, r.status_code, body)
-        rows.append({"case": c, "http": r.status_code, "body": body, "wall_ms": wall, "pass": passed, "flags": flags})
+        rows.append({"case": c, "request_id": req["request_id"], "http": r.status_code, "body": body,
+                     "wall_ms": wall, "pass": passed, "flags": flags})
         print(f"[{i + 1}/{len(cases)}] {'PASS' if passed else 'FAIL'} {c['id']} {wall}ms {' '.join(flags)}")
 
     ready_end_response = client.get(f"{a.url}/health/ready")
     ready_end = ready_end_response.json()
+    retry_stats = attach_attempts(rows, a.attempt_log) if a.attempt_log else None
 
     with (out_dir / "results.jsonl").open("w", encoding="utf-8") as f:
         for row in rows:
@@ -159,6 +215,7 @@ def main():
 
     meta = {"dataset": Path(a.file).name, "dataset_sha256": hashlib.sha256(Path(a.file).read_bytes()).hexdigest(),
             "ready": ready, "ready_end": ready_end, "label": a.label, "timestamp": stamp, "final_attempt": final_attempt,
+            "retry_stats": retry_stats,
             "results_sha256": hashlib.sha256((out_dir / "results.jsonl").read_bytes()).hexdigest()}
     (out_dir / "run.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     client.close()
@@ -187,8 +244,17 @@ def main():
               f"- HTTP wall p50/p95 ms: {pct(wall, .5)} / {pct(wall, .95)}",
               f"- mean model latency ms: {round(statistics.mean(lat)) if lat else None}",
               f"- errors: {dict(errors) or 'none'}",
-              f"- 502 reasons: {dict(issues) or 'none'}", "",
-              "자동 통과는 보조 지표다. review.csv에서 사람이 의미 보존·치명 오류를 판정한다."]
+              f"- 502 reasons: {dict(issues) or 'none'}"]
+    if retry_stats is not None:
+        n = retry_stats["retried"]
+        rate = f"{retry_stats['recovered'] / n:.1%}" if n else "N/A"
+        lines += [f"- retry trace coverage: {retry_stats['traced_cases']}/{retry_stats['translate_cases']} "
+                  f"(incomplete: {retry_stats['incomplete']}, log errors: {retry_stats['log_errors']})",
+                  f"- retry validator recovery: {retry_stats['recovered']}/{n} ({rate})",
+                  f"- retry identical output: {retry_stats['identical']}/{n}"]
+    else:
+        lines.append("- retry recovery: not measured (use LOG_REJECTED=1 and --attempt-log)")
+    lines += ["", "자동 통과·재시도 회복은 보조 지표다. review.csv에서 사람이 의미 보존·치명 오류를 판정한다."]
     (out_dir / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines))
     print(f"\nsaved: {out_dir}")

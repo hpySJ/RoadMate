@@ -65,6 +65,21 @@ class ValidationFailed(ModelError):
         self.issues = issues
 
 
+def translation_repair(messages: list[dict], issues: list[str]) -> list[dict]:
+    payload = json.loads(messages[-1]["content"])
+    hints = dict.fromkeys(REPAIR_HINT[i.split(":")[0]] for i in issues if i.split(":")[0] in REPAIR_HINT)
+    payload["repair"] = (
+        "Translate the utterance again from " + LANG_NAME[payload["source_locale"]]
+        + " into " + LANG_NAME[payload["target_locale"]] + ". The previous attempt failed: "
+        + ", ".join(dict.fromkeys(i.split(":")[0] for i in issues)) + ". " + " ".join(hints)
+        + " Use these term equivalents, inflecting naturally without changing their meaning: "
+        + json.dumps(payload["glossary"], ensure_ascii=False)
+        + ". Preserve which action or fuel is negated. Do not copy the utterance. JSON only."
+    )
+    # 오답을 대화에 넣으면 같은 표현을 재생성하기 쉬워 원문과 교정 지시만 보낸다.
+    return messages[:-1] + [{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
+
+
 def _with_meridiem(out, req):
     # QWEN 구현: 모델이 원문의 오전·오후를 빼면 원문 기준으로 채운다(모델 재호출 없이)
     if isinstance(out, dict) and out.get("status") == "ok" and isinstance(out.get("translated_text"), str):
@@ -255,9 +270,9 @@ class Engine:
             issues = validate_translation(out, req.text, req.source_locale, req.target_locale, structural)
         except (ModelBadOutput, ModelTruncated) as e:
             issues = [e.code]
+        self._log_attempt(req, 1, issues, out)
         if not issues:
             return await self._polish(req, out, deadline)
-        self._log_rejected(req, issues, out)
         if set(issues) <= CLARIFY_ISSUES:
             # QWEN 구현: 확인 질문만 잘못 썼으면 다시 생성하지 않고 말한 사람 언어의 고정 문구로 바꾼다(재생할 번역 없음)
             return {"status": "clarification_required", "translated_text": None,
@@ -265,23 +280,19 @@ class Engine:
         # QWEN 구현: 검증 실패 시 이유를 알려 주고 한 번만 결정적(temperature 0)으로 다시 생성
         if deadline - time.monotonic() < MIN_RETRY_S:
             raise ValidationFailed(issues)
-        hints = dict.fromkeys(REPAIR_HINT[i.split(":")[0]] for i in issues if i.split(":")[0] in REPAIR_HINT)
-        repair = messages + ([{"role": "assistant", "content": P.completion_text(out)}] if out else []) + [{
-            "role": "user",
-            # QWEN 구현: 재시도 때 원문을 그대로 돌려주지 않도록 번역 방향과 원문을 다시 적는다
-            "content": json.dumps({"repair": "The previous output broke these checks: " + ", ".join(issues) + ". "
-                                   + " ".join(hints) + f" Translate the utterance from {LANG_NAME[req.source_locale]} "
-                                   f"into {LANG_NAME[req.target_locale]} again, following every rule. Do not copy the "
-                                   "utterance. JSON only.", "utterance": req.text}, ensure_ascii=False),
-        }]
+        repair = translation_repair(messages, issues)
         try:
             out = _with_meridiem(await self.client.chat_json(repair, P.TRANSLATE_SCHEMA, P.TRANSLATE_MAX_TOKENS,
                                                              P.RETRY_SAMPLING, deadline - time.monotonic()), req)
         except (ModelBadOutput, ModelTruncated) as e:
+            self._log_attempt(req, 2, [e.code], None)
             raise ValidationFailed(issues + [e.code]) from e
+        except ModelError as e:
+            self._log_attempt(req, 2, [e.code], None)
+            raise
         issues = validate_translation(out, req.text, req.source_locale, req.target_locale, structural)
+        self._log_attempt(req, 2, issues, out)
         if issues:
-            self._log_rejected(req, issues, out)
             raise ValidationFailed(issues)
         return await self._polish(req, out, deadline)
 
@@ -312,6 +323,11 @@ class Engine:
             self._log_rejected(req, ["polish"] + issues, cand)
             return out
         return cand
+
+    def _log_attempt(self, req, attempt: int, issues: list[str], out: dict | None):
+        if self.s.log_rejected:
+            log.warning("translation_attempt %s", json.dumps({"request_id": req.request_id, "attempt": attempt,
+                        "issues": issues, "output": out}, ensure_ascii=False))
 
     def _log_rejected(self, req, issues: list[str], out: dict | None):
         if self.s.log_rejected:

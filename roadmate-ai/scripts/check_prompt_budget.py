@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import prompting as P  # noqa: E402
 from config import load_manifest  # noqa: E402
-from engine import LANG_NAME, REPAIR_HINT  # noqa: E402
+from engine import REPAIR_HINT, translation_repair  # noqa: E402
 
 
 def main() -> int:
@@ -46,12 +46,8 @@ def main() -> int:
             continue
         messages = P.translate_messages(c["source_locale"], c["target_locale"], c["scenario"], c["text"])
         check(c["id"], messages, P.TRANSLATE_MAX_TOKENS)
-        # 출력 256토큰과 교정 지시를 보수적으로 예약한다. 초안의 실제 출력은 생성하지 않는다.
-        repair = {"repair": "The previous output broke these checks. " + " ".join(REPAIR_HINT.values())
-                  + f" Translate from {LANG_NAME[c['source_locale']]} into {LANG_NAME[c['target_locale']]}. JSON only.",
-                  "utterance": c["text"]}
-        check(c["id"] + ":retry", messages + [{"role": "assistant", "content": ""},
-              {"role": "user", "content": json.dumps(repair, ensure_ascii=False)}], 2 * P.TRANSLATE_MAX_TOKENS)
+        # 실제와 같은 재시도 프롬프트에 모든 교정 지시를 넣어 상한을 확인한다. 오답 초안은 넣지 않는다.
+        check(c["id"] + ":retry", translation_repair(messages, list(REPAIR_HINT)), P.TRANSLATE_MAX_TOKENS)
         if c["target_locale"] == "ko-KR":
             # 초안 256토큰 전체를 예약한다. 짧은 정답/자리표시자를 실제 초안 상한으로 쓰지 않는다.
             check(c["id"] + ":polish", P.polish_messages(c["source_locale"], c["text"], "",

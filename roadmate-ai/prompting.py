@@ -1,5 +1,6 @@
 """서버 추론과 학습 데이터가 같은 프롬프트를 쓰도록 하는 단일 빌더."""
 import json
+import math
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -92,17 +93,39 @@ WON = {"en": "won", "es": "wones"}
 KO_MONEY = re.compile(r"(?<![가-힣\d])([\d,.\s일이삼사오육칠팔구십백천만억]+?)\s?원")
 
 
-def _money_hints(text: str, tgt: str) -> dict[str, str]:
-    # QWEN 구현: 한국어 금액(만 오천 원, 6만 5천 원)은 숫자로 바꿔 알려 준다(15,000 won / 15,000 wones). 구원·회원 같은 낱말은 제외
-    from validation import extract_numbers  # validation이 prompting을 불러서 여기서 늦게 불러온다
+def _money_hints(text: str, src: str, tgt: str) -> dict[str, str]:
+    # 검증기와 같은 숫자·통화 해석을 사용한다. 외국어의 won/wones도 금액 전체를 원으로 알려 준다.
+    from validation import CUR, DIGIT_RE, EN_WORD_RE, ES_WORD_RE, _es_prep, extract_numbers
     out = {}
-    for m in KO_MONEY.finditer(text):
-        phrase = m.group(1).strip()
-        if not phrase or not re.search(r"[\d십백천만억]", phrase):
-            continue
-        vals = [n.value for n in extract_numbers(m.group(0), "ko-KR") if n.unit == "KRW"]
-        if len(vals) == 1:
-            out[m.group(0).strip()] = f"{vals[0]:,.0f} {WON[tgt]}"
+    if src == "ko":
+        surfaces = [m.group().strip() for m in KO_MONEY.finditer(text)
+                    if re.search(r"[\d십백천만억]", m.group(1))]
+    else:
+        prepared = _es_prep(fold(text)) if src == "es" else text
+        words = ES_WORD_RE if src == "es" else EN_WORD_RE
+        surfaces = []
+        covered = []
+        for pattern in (DIGIT_RE, words):
+            for m in pattern.finditer(prepared):
+                currency = CUR[src].match(prepared, m.end())
+                if not currency or currency.group(1).lower() not in ("won", "wons", "wones", "krw"):
+                    continue
+                if any(m.start() < end and start < currency.end() for start, end in covered):
+                    continue  # 28 thousand won 안의 thousand won을 별도 금액으로 넣지 않는다.
+                if pattern is words and re.search(r"\d[\d.,]*\s+$", prepared[:m.start()]):
+                    continue
+                # 달러 기호와 원화 이름이 충돌하는 입력은 원화 힌트로 단정하지 않는다.
+                if re.search(r"\$\s*$", text[:m.start()]):
+                    continue
+                surfaces.append(text[m.start():currency.end()].strip())
+                covered.append((m.start(), currency.end()))
+    locale = {"ko": "ko-KR", "en": "en-US", "es": "es-US"}[src]
+    for surface in surfaces:
+        nums = extract_numbers(surface, locale)
+        # shortcut: 1.234,50처럼 공용 파서가 못 읽는 혼합 표기는 힌트를 생략한다. 숫자 파서 확장 후 지원한다.
+        if len(nums) == 1 and nums[0].unit == "KRW" and math.isfinite(nums[0].value):
+            amount = f"{nums[0].value:,}".removesuffix(".0")
+            out[surface] = f"{amount} {'원' if tgt == 'ko' else WON[tgt]}"
     return out
 
 
@@ -154,9 +177,8 @@ def select_glossary(text: str, source_locale: str, target_locale: str) -> dict[s
         out.setdefault(k, v)
     for k, v in _time_hints(text, src, tgt).items():
         out.setdefault(k, v)
-    if src == "ko":
-        for k, v in _money_hints(text, tgt).items():
-            out.setdefault(k, v)
+    for k, v in _money_hints(text, src, tgt).items():
+        out.setdefault(k, v)
     return out
 
 

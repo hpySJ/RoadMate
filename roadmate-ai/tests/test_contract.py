@@ -47,7 +47,7 @@ def test_translate_ok_and_ready(client):
     assert r.status_code == 200, r.text
     d = r.json()
     assert d["status"] == "ok" and d["model_id"] == "mock" and d["translated_text"].startswith("[모의 번역]")
-    assert d["prompt_version"] == "translate-v6" and r.headers["content-type"].endswith("charset=utf-8")
+    assert d["prompt_version"] == "translate-v7" and r.headers["content-type"].endswith("charset=utf-8")
     assert client.get("/health/live").json() == {"status": "ok"}
     ready = client.get("/health/ready")
     assert ready.status_code == 200 and ready.json()["ready"] is True
@@ -125,16 +125,62 @@ def test_retry_explains_what_to_fix():
         d = c.post("/internal/v1/translate", json=body(text="Can I pay by credit card?")).json()
     assert d["translated_text"] == "신용카드로 결제할 수 있어요?"
     assert "Hangul only" in fake.messages[1][-1]["content"]
+    assert fake.messages[1][:-1] == fake.messages[0][:-1]
+    assert "信用" not in json.dumps(fake.messages[1], ensure_ascii=False)
 
 
-def test_log_rejected_only_when_enabled(caplog):
+def test_retry_deduplicates_checks_without_dropping_the_source():
+    import prompting as P
+    from engine import translation_repair
+    text = ("Read these numbers: " + "2 " * 200)[:400]
+    original = P.translate_messages("en-US", "ko-KR", "general", text)
+    repair = json.loads(translation_repair(original, ["number_missing:2"] * 190)[-1]["content"])
+    assert repair["utterance"] == text
+    assert repair["repair"].count("number_missing") == 1
+
+
+@pytest.mark.parametrize("text,source,target,bad,good,term,equivalent", [
+    ("Gire a la derecha.", "es-MX", "ko-KR", "유턴하세요.", "우회전하세요.", "Gire a la derecha", "우회전"),
+    ("우회전해 주세요.", "ko-KR", "en-US", "Please make a U-turn.", "Please turn right.", "우회전", "right turn"),
+    ("No pagué la gasolina.", "es-US", "ko-KR", "가스 비용을 내지 않았어요.", "휘발유 비용을 내지 않았어요.",
+     "gasolina", "휘발유"),
+])
+def test_retry_uses_concrete_source_glossary(text, source, target, bad, good, term, equivalent):
+    fake = RecordingLlama([ok(bad), ok(good)])
+    with TestClient(create_app(SETTINGS, fake)) as c:
+        r = c.post("/internal/v1/translate", json=body(text=text, source_locale=source, target_locale=target))
+    assert r.status_code == 200 and r.json()["translated_text"] == good
+    repair = json.loads(fake.messages[1][-1]["content"])
+    assert repair["glossary"][term] == equivalent
+    assert term in repair["repair"] and equivalent in repair["repair"]
+    assert bad not in fake.messages[1][-1]["content"]
+
+
+def test_attempt_log_only_when_enabled(caplog):
     bad = ok("휘발유와 경유로 5만 원어치 넣어 주세요.")
     text = "Please put in 50,000 won of gasoline, not diesel."
     for flag, expect in ((False, 0), (True, 2)):
         caplog.clear()
         with TestClient(create_app(dataclasses.replace(SETTINGS, log_rejected=flag), FakeLlama(outputs=[bad, bad]))) as c:
             assert c.post("/internal/v1/translate", json=body(text=text)).status_code == 502
-        assert sum("rejected" in r.getMessage() for r in caplog.records) == expect
+        records = [json.loads(r.getMessage().split("translation_attempt ", 1)[1]) for r in caplog.records
+                   if r.getMessage().startswith("translation_attempt ")]
+        assert len(records) == expect
+        if records:
+            assert [r["attempt"] for r in records] == [1, 2]
+            assert all(r["issues"] and r["output"] == bad for r in records)
+
+
+def test_recovered_retry_is_logged_but_failed_output_not_returned(caplog):
+    bad, good = ok("경유 가득 넣어 주세요."), ok("휘발유 가득 넣어 주세요.")
+    with TestClient(create_app(dataclasses.replace(SETTINGS, log_rejected=True), FakeLlama(outputs=[bad, good]))) as c:
+        response = c.post("/internal/v1/translate", json=body())
+    assert response.status_code == 200 and response.json()["translated_text"] == good["translated_text"]
+    assert "경유" not in response.text
+    attempts = [json.loads(r.getMessage().split("translation_attempt ", 1)[1]) for r in caplog.records
+                if r.getMessage().startswith("translation_attempt ")]
+    assert attempts[0]["issues"] and attempts[0]["output"] == bad
+    assert attempts[1]["issues"] == [] and attempts[1]["output"] == good
 
 
 def test_polish_replaces_only_when_checks_pass():

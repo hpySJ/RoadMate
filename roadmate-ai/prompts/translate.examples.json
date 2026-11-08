@@ -1,6 +1,6 @@
 [
   {
-    "input": {"source_locale": "en-US", "target_locale": "ko-KR", "scenario": "gas_station", "glossary": {"gasoline": "휘발유", "diesel": "경유"}, "utterance": "Please put in 30,000 won worth of gasoline, not diesel."},
+    "input": {"source_locale": "en-US", "target_locale": "ko-KR", "scenario": "gas_station", "glossary": {"gasoline": "휘발유", "diesel": "경유", "30,000 won": "30,000 원"}, "utterance": "Please put in 30,000 won worth of gasoline, not diesel."},
     "output": {"status": "ok", "translated_text": "경유 말고 휘발유로 3만 원어치 넣어 주세요.", "clarification_question": null}
   },
   {
@@ -28,7 +28,7 @@
     "output": {"status": "clarification_required", "translated_text": null, "clarification_question": "Sorry, I didn't catch what to fill it with. Could you say the whole sentence again?"}
   },
   {
-    "input": {"source_locale": "es-US", "target_locale": "ko-KR", "scenario": "gas_station", "glossary": {"gasolina": "휘발유", "diésel": "경유"}, "utterance": "Póngale 30,000 wones de gasolina, no de diésel, por favor."},
+    "input": {"source_locale": "es-US", "target_locale": "ko-KR", "scenario": "gas_station", "glossary": {"gasolina": "휘발유", "diésel": "경유", "30,000 wones": "30,000 원"}, "utterance": "Póngale 30,000 wones de gasolina, no de diésel, por favor."},
     "output": {"status": "ok", "translated_text": "경유 말고 휘발유로 3만 원어치 넣어 주세요.", "clarification_question": null}
   },
   {

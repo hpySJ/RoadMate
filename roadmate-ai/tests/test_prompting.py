@@ -114,6 +114,57 @@ def test_korean_money_hints():
     assert P.select_glossary("구원 투수예요.", "ko-KR", "en-US") == {}
 
 
+@pytest.mark.parametrize("source_locale,text,expected", [
+    ("en-US", "The total is 28,540 won.", {"28,540 won": "28,540 원"}),
+    ("en-US", "It costs twenty-eight thousand won.", {"twenty-eight thousand won": "28,000 원"}),
+    ("en-US", "The amount is 28 thousand won.", {"28 thousand won": "28,000 원"}),
+    ("en-US", "The adjustment is 12.5 won.", {"12.5 won": "12.5 원"}),
+    ("es-US", "Son 28,540 wones.", {"28,540 wones": "28,540 원"}),
+    ("es-MX", "Son veintidós mil wones.", {"veintidós mil wones": "22,000 원"}),
+    ("es-MX", "El total es 28 mil wones.", {"28 mil wones": "28,000 원"}),
+    ("es-US", "Son 28.540 wones.", {"28.540 wones": "28,540 원"}),
+    ("es-MX", "La diferencia es 12,5 wones.", {"12,5 wones": "12.5 원"}),
+])
+def test_foreign_won_hints_preserve_complete_amounts(source_locale, text, expected):
+    from validation import extract_numbers
+    assert P.select_glossary(text, source_locale, "ko-KR") == expected
+    for source, target in expected.items():
+        assert extract_numbers(source, source_locale) == extract_numbers(target, "ko-KR")
+
+
+@pytest.mark.parametrize("source_locale,text,expected", [
+    ("en-US", "It costs 28 dollars or 35 euros.", {}),
+    ("es-MX", "Cuesta 28 dólares o 35 pesos.", {}),
+    ("en-US", "I won 28 dollars.", {}),
+    ("en-US", "It says $28 thousand won.", {}),
+    ("es-US", "Dice $28 mil wones.", {}),
+    ("en-US", "I paid 28,540 won and 12 dollars.", {"28,540 won": "28,540 원"}),
+    ("es-MX", "Pagué 28,540 wones y 12 dólares.", {"28,540 wones": "28,540 원"}),
+])
+def test_money_hints_do_not_convert_other_currencies(source_locale, text, expected):
+    assert P.select_glossary(text, source_locale, "ko-KR") == expected
+
+
+def test_unparsed_money_format_keeps_original_utterance_without_a_hint():
+    text = "Son 1.234,50 wones."
+    payload = json.loads(P.translate_messages("es-US", "ko-KR", "general", text)[-1]["content"])
+    assert payload["utterance"] == text
+    assert payload["glossary"] == {}
+
+
+@pytest.mark.parametrize("source,target,text,expected", [
+    ("ko-KR", "en-US", "우회전 다음에 좌회전하세요.", {"우회전": "right turn", "좌회전": "left turn"}),
+    ("ko-KR", "es-MX", "우회전 다음에 좌회전하세요.", {"우회전": "vuelta a la derecha", "좌회전": "vuelta a la izquierda"}),
+    ("en-US", "ko-KR", "Turn right, then take a left turn.", {"Turn right": "우회전", "left turn": "좌회전"}),
+    ("es-MX", "ko-KR", "Gire a la derecha y luego dé vuelta a la izquierda.", {"Gire a la derecha": "우회전", "vuelta a la izquierda": "좌회전"}),
+    ("es-US", "ko-KR", "Puede girar a la izquierda.", {"girar a la izquierda": "좌회전"}),
+    ("en-US", "ko-KR", "The right door is open.", {}),
+    ("es-MX", "ko-KR", "Siga derecho por esta calle.", {}),
+])
+def test_turn_terms_preserve_direction_without_guessing_an_action(source, target, text, expected):
+    assert P.select_glossary(text, source, target) == expected
+
+
 def test_time_hints():
     assert P.select_glossary("We'll be back by 6 p.m.", "en-US", "ko-KR") == {"6 p.m.": "오후 6시"}
     assert P.select_glossary("Meet at 3:30 pm.", "en-US", "ko-KR") == {"3:30 pm": "오후 3시 30분"}

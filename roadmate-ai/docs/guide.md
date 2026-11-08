@@ -129,7 +129,7 @@ POST /internal/v1/translate
 {"request_id":"req-001","session_id":"sess-001","session_epoch":3,"turn_id":1,
  "status":"ok","translated_text":"휘발유로 가득 넣어 주세요.","clarification_question":null,
  "engine_bundle":"roadmate-ko-en-q4-v1","model_id":"roadmate-qwen4b-q4",
- "prompt_version":"translate-v6","glossary_version":"rental-ko-en-es-v8","latency_ms":850}
+ "prompt_version":"translate-v7","glossary_version":"rental-ko-en-es-v9","latency_ms":850}
 ```
 - `source_locale`/`target_locale`: `ko-KR`, `en-US`, `es-US`, `es-MX` 중 한쪽은 반드시 `ko-KR`(한↔영, 한↔스). Pleos STT·TTS locale 값을 그대로 쓴다 / `scenario`: `gas_station`, `parking`, `rental_counter`, `accident`, `general`
 - 스페인어는 `es-US`와 `es-MX`를 같은 말로 처리한다. 번역문은 중남미식 존댓말(usted), 원화는 `30,000 wones`, 시각은 `3 p. m.`.
@@ -196,10 +196,22 @@ APK의 `127.0.0.1`은 PC가 아니다. APK → `http://10.0.2.2:8080`(백엔드)
 ```
 결과: `eval\results\<label>-dev-<시각>\summary.md`, `results.jsonl`, `review.csv`(엑셀로 열림)
 
+재시도 비교는 서버를 `LOG_REJECTED=1`로 시작하고 아래 개발 평가를 실행한다. 이 옵션은 번역 시도별 출력과 검사 결과를 서버 로그에 기록하므로 개발·평가 때만 켠다. 앱 응답에는 거절된 번역이 포함되지 않는다.
+
+```bash
+bash scripts/run.sh stop
+LOG_REJECTED=1 bash scripts/run.sh start
+for dataset in dev general general_es naturalness.dev; do
+  .venv/bin/python eval/evaluate.py --file "eval/$dataset.jsonl" --label repair-v7 --attempt-log logs/ai.err.log
+done
+```
+
+`results.jsonl`의 `translation_attempts`에 요청별 첫 출력·재시도 출력·검사 결과를 보존한다. `summary.md`의 `retry validator recovery`는 첫 시도 실패 후 재시도가 검사를 통과한 비율이며, 의미 정확도를 뜻하지 않는다. 동일 출력 수와 로그 수집 범위도 함께 표시한다. 로그가 누락·손상되면 회복 0%로 단정하지 않는다. 같은 모델·GPU·다듬기 설정과 개발 자료를 사용하고, 반복 횟수를 미리 정해 모든 실행을 보존한다. 고정 seed도 출력 일치를 보장한다고 가정하지 않으며 좋은 실행만 고르지 않는다. 잠근 최종 시험은 반복 비교에 사용하지 않는다.
+
 - `eval/dev.jsonl` 100건(통역 60 · 목적지 25 · 모호/지시 삽입 15): 프롬프트·용어집·추론 설정을 고를 때 사용.
 - `eval/general.jsonl` 180건(영→한 80 · 한→영 80 · 목적지 20): 정답 없이 주유·주차·렌터카·사고·도로·여행·숫자·부정·구어체·긴 문장·외래어 섞인 문장을 고르게 담은 범용 점검용. 요약에 상황(category)별 통과율과 502가 걸린 검사 종류가 나온다. 특정 문장에 맞춘 땜질이 아니라 걸린 검사 종류·상황을 보고 일반적인 규칙으로 고치고, 의미는 `review.csv`에서 사람이 본다.
 - `eval/general_es.jsonl` 100건(스→한 45 · 한→스 45 · 스페인어 목적지 10, `es-US`·`es-MX` 섞음): 스페인어 범용 점검용. 쓰는 법은 general과 같다. 스페인어는 원어민 검토가 따로 필요하다.
-- `eval/test.locked.v2.jsonl` 60건: **설정을 확정한 뒤 한 번만** 실행. 결과를 보고 설정을 바꾸면 그 파일은 회귀용으로 돌리고 새 시험셋을 만든다.
+- `eval/test.locked.v2.jsonl` 44건: **설정을 확정한 뒤 한 번만** 실행. 결과를 보고 설정을 바꾸면 그 파일은 회귀용으로 돌리고 새 시험셋을 만든다.
 - 자동 통과는 보조 지표다. `review.csv`의 `human_meaning_ok`, `critical_error`를 원문·번역을 아는 사람이 채운다. 모델 채점으로 통과시키지 않는다.
 - 필수 최소쌍: 휘발유/경유, 5만/15만 원, 가득/3만 원만, 다친 사람 있다/없다, 오세요/오지 마세요, 왼쪽/오른쪽.
 - 1차 목표(측정 전 목표값): 잠근 시험 의미 보존 90% 이상, 준비 후 짧은 문장 번역 p95 3초, 발화 종료→TTS 시작 p95 5초, 에뮬레이터와 30분 동시 실행, P 해제 후 이전 결과 재생 0건.
@@ -207,6 +219,8 @@ APK의 `127.0.0.1`은 PC가 아니다. APK → `http://10.0.2.2:8080`(백엔드)
 
 ### 서버가 자동으로 하는 출력 검증(`validation.py`)
 JSON 계약 → 목표 언어 문자 → 설명문 섞임 → 길이 → 숫자·금액·시간·전화번호 보존(3만 원=30,000 won, 오후 3시=3 p.m. / 원↔달러, 오전↔오후가 바뀌면 실패) → 부정 보존 → 연료 용어(gas는 휘발유로 확정 금지)와 연료별 긍정·부정(“휘발유, 경유 말고”가 뒤집히면 실패) → 좌/우. 실패하면 이유를 붙여 **한 번만** temperature 0으로 다시 생성하고, 그래도 실패하면 502로 재생을 막는다.
+
+재시도는 오답 초안을 다시 보내지 않고 원문·검사 종류·구체적인 용어 대응을 보낸다. 외국어의 원화 금액은 한국어 `원` 표기를 힌트로 제공한다. `at 5`, `before eight`처럼 분명한 영어 시각은 오전·오후 미정으로 비교하지만, 수량·기간·돈·날짜는 이 규칙에서 제외한다. `at 5 on Monday` 같은 추가 문맥과 `1.234,50` 혼합 금액 표기는 아직 보수적으로 기존 파서를 따른다.
 
 ## 7. 튜닝
 
@@ -329,7 +343,7 @@ POLISH_KO=1 bash scripts/run.sh start              # 다듬기를 켠 서버로 
 | 429 `busy`가 잦음 | 앱에서 같은 세션 중복 호출, 버튼 연타 방지 |
 | 취소·504 뒤 계속 429 | llama-server가 아직 계산 중이면 슬롯을 열지 않는다(`logs\ai.err.log`에 `still processing`). 계속되면 `stop_all.ps1` → `start_all.ps1` |
 | `already running` / `port ... in use` | 이전 서버가 남아 있음. `stop_all.ps1`, 그래도 남으면 `netstat -ano \| findstr :8000`(또는 8081)의 PID 종료 |
-| 502 `output_validation_failed` | `message`에 원인(예: `number_missing:30000`, `negation_mismatch`). 실제로 걸린 출력을 보려면 `LOG_REJECTED=1`로 서버를 띄우고 `logs/ai.err.log`에서 `rejected`를 찾는다(개발·평가 전용). dev 평가로 패턴 확인 → 프롬프트·용어집·검사기 수정 |
+| 502 `output_validation_failed` | `message`에 원인(예: `number_missing:30000`, `negation_mismatch`). 실제 시도 출력을 보려면 `LOG_REJECTED=1`로 서버를 띄우고 `logs/ai.err.log`에서 `translation_attempt`를 찾는다(개발·평가 전용). `evaluate.py --attempt-log logs/ai.err.log`로 재시도 집계. dev 평가로 패턴 확인 → 프롬프트·용어집·검사기 수정 |
 | 504 | 첫 요청 지연(모델 준비 전) 또는 GPU 미사용 |
 | PowerShell에서 한글 깨짐 | 스크립트는 UTF-8 BOM으로 저장되어 있다. 편집기에서 BOM 유지 |
 | `Expand-Archive`·다운로드 실패 | 사내망 프록시, `%TEMP%\roadmate-llama-<tag>` 삭제 후 재시도 |
