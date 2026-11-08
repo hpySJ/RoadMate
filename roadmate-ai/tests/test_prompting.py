@@ -57,6 +57,9 @@ def test_count_and_deadline_are_not_minutes_before_the_hour(locale, source, expe
     ("Somos diez para las nueve de la noche.", {"nueve de la noche": "오후 9시"}),
     ("Tengo veinte para las ocho de la noche.", {"ocho de la noche": "오후 8시"}),
     ("Necesito cuatro para las ocho.", {}),
+    ("Quiero una reserva para cinco para las nueve.", {}),
+    ("Una mesa para diez para las ocho de la noche, por favor.", {"ocho de la noche": "오후 8시"}),
+    ("Reservé para veinte para las nueve.", {}),
 ])
 def test_time_hints_distinguish_typical_minutes_from_quantities(locale, source, expected):
     assert P.select_glossary(source, locale, "ko-KR") == expected

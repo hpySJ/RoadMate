@@ -406,6 +406,10 @@ def test_positive_fuel_auxiliary_and_indefinite_articles():
     ("Necesito diez para las ocho.", "8시까지 열 개 필요해요.", "7시 50분까지 필요해요."),
     ("Somos diez para las nueve.", "9시에 열 명이에요.", "8시 50분이에요."),
     ("Tengo veinte para las ocho.", "8시까지 스무 개 있어요.", "7시 40분에 있어요."),
+    ("Quiero una reserva para cinco para las nueve.", "9시에 5명 예약하고 싶어요.", "8시 55분에 예약하고 싶어요."),
+    ("Quiero una reserva para cinco para las nueve.", "9시에 5명 예약하고 싶어요.", "9시 5분에 예약하고 싶어요."),
+    ("Una mesa para diez para las ocho de la noche, por favor.", "오후 8시에 10명 자리를 주세요.", "오후 7시 50분에 자리를 주세요."),
+    ("Reservé para veinte para las nueve.", "9시에 20명 예약했어요.", "8시 40분에 예약했어요."),
 ])
 def test_minutes_before_an_hour_with_new_verbs_and_real_quantities(locale, source, good, bad):
     assert v(source, locale, good, "ko-KR") == []

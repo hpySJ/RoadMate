@@ -133,7 +133,7 @@ ES_HOUR_RE = re.compile(rf"\b(?:a|hasta|desde|son|es|para|de|entre|y|tipo|sobre|
 ES_TO_RE = re.compile(rf"\b(?:un\s+)?(?P<minute>{_ES_MIN})\b(?:\s+(?P<unit>minutos?))?\s+para\s+las?\s+"
                       rf"(?P<hour>{_ES_HOUR})\b", re.IGNORECASE)
 ES_TO_BEFORE = re.compile(r"(?:^\s*|\b(?:son|es|faltan?|lleg\w*|vuelv\w*|regres\w*|vemos)\s+(?:a\s+)?)$", re.I)
-ES_QUANTITY_BEFORE = re.compile(r"\b(?:necesit\w*|quier\w*|quer\w*|teng\w*|tien\w*|ten\w*|somos|seremos|hay"
+ES_QUANTITY_BEFORE = re.compile(r"\b(?:necesit\w*|quier\w*|quer\w*|teng\w*|tien\w*|ten\w*|somos|seremos|hay|para"
                                 r"|reserv\w*|compr\w*|pid\w*|ped\w*|traig\w*|trae\w*)\s+"
                                 r"(?:(?:solo|solamente|unicamente|exactamente|otros?|otras?)\s+)*$", re.I)
 # 검증: "a las dos personas"(두 사람에게)처럼 뒤에 세는 말이 오면 시각이 아니다
