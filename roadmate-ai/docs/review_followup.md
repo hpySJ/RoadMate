@@ -53,3 +53,7 @@ S3은 공식 Kotlin·Java 예제의 좌표 순서가 서로 달라 생기는 연
 `para cinco/diez/veinte para las ...`는 숫자 바로 앞의 `para`를 수량 문맥으로 처리한다. 공통 판별식을 사용해 숫자 검증의 `count` 단위와 프롬프트 시각 힌트가 함께 교정되도록 했다. 세 예약 문장의 한↔스 정답·분전 오답·인원수를 분으로 바꾼 오답과 두 스페인어 locale의 정확한 힌트를 검사한다. `Salgo diez`, `Te veo cinco`, `Abrimos un cuarto` 등 기존 분전 표현의 검사는 유지한다.
 
 다듬기와 관용적 대기 표현의 비차단 한계는 이번 패치에서 확장하지 않았다. 다듬기는 기본 꺼짐이며, 실제 모델·언어 검토와 SDK 기어·차속 연결은 별도 검증이 필요하다.
+
+## a130275의 cuarto 회귀 후속
+
+`para (un) cuarto para las ...`는 수량 예외에서 제외해 15분 전 시각으로 읽는다. 예외는 `para` 문맥에만 적용하며, 직접적인 방 요청인 `Necesito un cuarto`와 `para cinco/diez/veinte` 인원수 판정은 유지한다. 약속·차례·예약의 세 문장에서 한↔스 정답·정각 오답과 두 스페인어 locale의 정확한 힌트를 검사했다.

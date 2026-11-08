@@ -309,7 +309,10 @@ def spanish_times(text: str):
                 if pattern is ES_TO_RE:
                     before = text[:m.start()]
                     typical_minutes = mins in (5, 10, 15, 20, 25, 30)
-                    if ES_QUANTITY_BEFORE.search(before) or not (m.group("unit") or typical_minutes or ES_TO_BEFORE.search(before)):
+                    quantity = ES_QUANTITY_BEFORE.search(before)
+                    # para (un) cuarto para las ...는 15분 전. necesito un cuarto의 방 요청은 그대로 둔다.
+                    quarter_time = w.lower() == "cuarto" and quantity and quantity.group().split()[0].lower() == "para"
+                    if (quantity and not quarter_time) or not (m.group("unit") or typical_minutes or ES_TO_BEFORE.search(before)):
                         continue  # 검증: 통상 분 표현은 동사와 무관하게 읽되, necesito diez / somos cuatro의 수량은 보존한다
                 start = m.start() if pattern is ES_TO_RE else m.start("hour")
                 subtract = pattern is ES_TO_RE or m.group("op") == "menos"
