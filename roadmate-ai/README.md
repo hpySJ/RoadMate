@@ -43,7 +43,7 @@ NVIDIA GPU(VRAM 8GB 이상), RAM 16GB, Python 3.11~3.12를 기준으로 만들�
 
 독립 검토의 지적별 반영과 남은 실제 장비 확인은 [`docs/review_followup.md`](docs/review_followup.md)에 있습니다.
 
-모델 없이 도는 테스트 893건과 주행 시나리오가 통과합니다. `python scripts/verify_mvp.py --local`로 함께 실행하고 `run/verify-*/report.json`에 결과를 남깁니다.
+모델 없이 도는 테스트 969건과 주행 시나리오가 통과합니다. `python scripts/verify_mvp.py --local`로 함께 실행하고 `run/verify-*/report.json`에 결과를 남깁니다.
 
 온보딩 3개 외국어 × 11개 국가 × 3개 경험을 검증합니다. 국가·경험 선택지의 현지화 사전, 모든 운전자의 스쿨존 진입 경고, 확인된 비보호 좌회전 맥락의 조건부 안내가 있습니다. 번역 프롬프트는 관용구·부탁·허락·전언을 자연스럽게 전달하도록 보강했고, 자연스러움 개발평가 20건을 추가했습니다.
 

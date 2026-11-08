@@ -93,7 +93,7 @@ KO_ORD = re.compile(r"(?<![가-힣])(첫|두|세|네|다섯|여섯|일곱|여덟
 KO_MERIDIEM = re.compile(r"(오전|새벽|아침|오후|저녁|낮|밤)\s*$")
 EN_PAST_RE = re.compile(r"\b(quarter|half)\s+(past|after|to)\s+(\d{1,2}|" + "|".join(EN_UNITS) + r")\b", re.IGNORECASE)
 EN_SPAN_RE = re.compile(r"\b(?:(half)\s+(?:an\s+)?hour|(?:a\s+)?(quarter)\s+(?:of\s+an\s+)?hour"
-                        r"|(?:an|one|a)\s+hour(\s+and\s+a\s+half)?|(?:a|one)\s+(minutes?|mins?))\b", re.IGNORECASE)
+                        r"|(?:an|one|a)\s+hour(\s+and\s+a\s+half)?|(?:a|one)\s+(?:full\s+)?(minutes?|mins?))\b", re.IGNORECASE)
 DUR_EN = re.compile(r"\s?(?:(minutes?|mins?)|(hours?|hrs?))\b", re.IGNORECASE)
 DUR_KO = re.compile(r"\s?(?:(분)|(시간)(\s?반)?)")
 UNIT_ABBR = {"km", "kg", "cc", "ml", "cm", "mm", "kw", "kwh", "mph", "kmh", "gb"}
@@ -133,6 +133,9 @@ ES_HOUR_RE = re.compile(rf"\b(?:a|hasta|desde|son|es|para|de|entre|y|tipo|sobre|
 ES_TO_RE = re.compile(rf"\b(?:un\s+)?(?P<minute>{_ES_MIN})\b(?:\s+(?P<unit>minutos?))?\s+para\s+las?\s+"
                       rf"(?P<hour>{_ES_HOUR})\b", re.IGNORECASE)
 ES_TO_BEFORE = re.compile(r"(?:^\s*|\b(?:son|es|faltan?|lleg\w*|vuelv\w*|regres\w*|vemos)\s+(?:a\s+)?)$", re.I)
+ES_QUANTITY_BEFORE = re.compile(r"\b(?:necesit\w*|quier\w*|quer\w*|teng\w*|tien\w*|ten\w*|somos|seremos|hay"
+                                r"|reserv\w*|compr\w*|pid\w*|ped\w*|traig\w*|trae\w*)\s+"
+                                r"(?:(?:solo|solamente|unicamente|exactamente|otros?|otras?)\s+)*$", re.I)
 # 검증: "a las dos personas"(두 사람에게)처럼 뒤에 세는 말이 오면 시각이 아니다
 ES_COUNT_AFTER = re.compile(r"\s+(?:personas?|gente|adultos?|ninos?|ninas?|bebes?|senoras?|senores?|hombres?|mujeres"
                             r"|clientes?|pasajeros?|amigos?|chicos?|chicas?|carros?|autos?|coches?|maletas?|llaves?"
@@ -234,7 +237,8 @@ def _num(v: float, before: str, after: str, lang: str) -> Num:
         return Num(v, "n", unit=cur)
     m = DUR[lang].match(after)
     if not m:
-        return Num(v, "n")
+        # 검증: necesito dos 같은 수량은 시각의 2분과 구분한다. 기존 단독 1 생략 규칙은 유지한다.
+        return Num(v, "n", unit="count" if v != 1 and lang == "es" and ES_QUANTITY_BEFORE.search(before) else None)
     if m.group(1):
         return Num(v, "n", unit="min")
     extra = m.group(3) if m.re.groups >= 3 else None  # 시간 반, y media = +30분, y cuarto = +15분
@@ -292,8 +296,6 @@ def spanish_times(text: str):
     for pattern in (CLOCK_RE, ES_TO_RE, ES_HOUR_RE):
         spans = []
         for m in pattern.finditer(text):
-            if pattern is ES_TO_RE and not (m.group("unit") or ES_TO_BEFORE.search(text[:m.start()])):
-                continue  # 검증: necesito dos / somos cuatro para las ocho는 수량 + 시각이지 '몇 분 전'이 아니다
             if pattern is CLOCK_RE:
                 h, mins, start, subtract = int(m.group(1)), int(m.group(2)), m.start(), False
             else:
@@ -304,6 +306,11 @@ def spanish_times(text: str):
                     continue
                 mins = (None if not w else 30 if w.lower() == "media" else 15 if w.lower() == "cuarto"
                         else int(w) if w.isdigit() else _parse_es_words(w))
+                if pattern is ES_TO_RE:
+                    before = text[:m.start()]
+                    typical_minutes = mins in (5, 10, 15, 20, 25, 30)
+                    if ES_QUANTITY_BEFORE.search(before) or not (m.group("unit") or typical_minutes or ES_TO_BEFORE.search(before)):
+                        continue  # 검증: 통상 분 표현은 동사와 무관하게 읽되, necesito diez / somos cuatro의 수량은 보존한다
                 start = m.start() if pattern is ES_TO_RE else m.start("hour")
                 subtract = pattern is ES_TO_RE or m.group("op") == "menos"
             t = ES_TIME_TAIL.match(text, m.end())
@@ -741,6 +748,12 @@ def check_fuel_polarity(src: str, src_locale: str, tgt: str, tgt_locale: str) ->
 # 스페인어 원문은 영어보다 길어 영→한보다 낮게 둔다(검수 자료가 쌓이면 다시 잡는다)
 MIN_LEN_RATIO = {"en": (30, 0.22), "es": (30, 0.18), "ko": (12, 0.8)}
 LEAK_RE = re.compile(r"^\s*(translation|translated|here is|note|traducci[oó]n|traducido|nota|번역|통역|참고)\s*[:：]|\n", re.I)
+BRIEF_WAIT = {
+    "en": re.compile(r"(?:(?:just\s+a\s+minute|wait\s+a\s+minute)(?:[,\s]+please)?"
+                     r"|please[,\s]+wait\s+a\s+minute|a\s+minute[,\s]+please)[.!?]*", re.I),
+    "es": re.compile(r"(?:un\s+minuto[,\s]+por\s+favor|por\s+favor[,\s]+un\s+minuto)[.!?]*", re.I),
+    "ko": re.compile(r"(?:잠시|잠깐)(?:만)?(?:요|\s*기다려\s*주세요)?[.!?]*"),
+}
 
 
 def validate_translation(out: dict, source: str, src_locale: str, tgt_locale: str, structural_only: bool = False) -> list[str]:
@@ -789,7 +802,12 @@ def validate_translation(out: dict, source: str, src_locale: str, tgt_locale: st
             issues.append("mixed_script")
     if tt.strip().lower() == source.strip().lower():
         issues.append("untranslated")
-    issues += compare_numbers(extract_numbers(source, src_locale), extract_numbers(tt, tgt_locale))
+    source_nums, target_nums = extract_numbers(source, src_locale), extract_numbers(tt, tgt_locale)
+    if all(BRIEF_WAIT[LANG_KEY[loc]].fullmatch(fold(text).strip()) for text, loc in ((source, src_locale), (tt, tgt_locale))):
+        # 검증: 완결된 '잠시만요' 요청끼리만 관용적 a minute/un minuto의 1분을 정규화한다.
+        source_nums = [n for n in source_nums if n != Num(1.0, "n", unit="min")]
+        target_nums = [n for n in target_nums if n != Num(1.0, "n", unit="min")]
+    issues += compare_numbers(source_nums, target_nums)
     a, b = neg_level(source, src_locale), neg_level(tt, tgt_locale)
     if max(a, b) == 2 and min(a, b) == 0:
         issues.append("negation_mismatch")

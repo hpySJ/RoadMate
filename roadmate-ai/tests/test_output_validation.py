@@ -393,3 +393,58 @@ def test_positive_fuel_auxiliary_and_indefinite_articles():
              "경유는 다시 넣어도 되지만 휘발유는 넣지 마세요.", "ko-KR") == []
     assert extract_numbers("Necesito una gasolinera.", "es-US") == []
     assert extract_numbers("I need a gas station.", "en-US") == []
+
+
+@pytest.mark.parametrize("locale", ["es-US", "es-MX"])
+@pytest.mark.parametrize("source,good,bad", [
+    ("Salgo diez para las ocho.", "7시 50분에 출발해요.", "8시 10분에 출발해요."),
+    ("Te veo cinco para las nueve.", "8시 55분에 봐요.", "9시 5분에 봐요."),
+    ("Abrimos un cuarto para las diez.", "9시 45분에 문을 열어요.", "10시 15분에 문을 열어요."),
+    ("Necesito dos para las ocho.", "8시까지 두 개 필요해요.", "7시 58분까지 필요해요."),
+    ("Necesito dos para las ocho.", "8시까지 두 개 필요해요.", "8시 2분에 필요해요."),
+    ("Necesito cuatro para las ocho.", "8시까지 네 개 필요해요.", "7시 56분까지 필요해요."),
+    ("Necesito diez para las ocho.", "8시까지 열 개 필요해요.", "7시 50분까지 필요해요."),
+    ("Somos diez para las nueve.", "9시에 열 명이에요.", "8시 50분이에요."),
+    ("Tengo veinte para las ocho.", "8시까지 스무 개 있어요.", "7시 40분에 있어요."),
+])
+def test_minutes_before_an_hour_with_new_verbs_and_real_quantities(locale, source, good, bad):
+    assert v(source, locale, good, "ko-KR") == []
+    assert v(good, "ko-KR", source, locale) == []
+    assert any(i.startswith("number_") for i in v(source, locale, bad, "ko-KR"))
+    assert v(bad, "ko-KR", source, locale)
+
+
+@pytest.mark.parametrize("locale,source,target", [
+    ("en-US", "Just a minute please.", "잠시만요."),
+    ("en-US", "Wait a minute.", "잠깐만 기다려 주세요."),
+    ("en-US", "Please wait a minute.", "잠시만 기다려 주세요."),
+    ("es-US", "Un minuto por favor.", "잠깐만요."),
+    ("es-MX", "Un minuto, por favor.", "잠시만요."),
+])
+def test_complete_courtesy_wait_requests_can_use_an_idiom(locale, source, target):
+    assert v(source, locale, target, "ko-KR") == []
+    assert v(target, "ko-KR", source, locale) == []
+    assert v(source, locale, "1분만 기다려 주세요.", "ko-KR") == []
+    assert v("1분만 기다려 주세요.", "ko-KR", source, locale) == []
+    assert "number_missing:1" in v(source, locale, "1시간만 기다려 주세요.", "ko-KR")
+
+
+@pytest.mark.parametrize("source,good,bad", [
+    ("Wait exactly one minute.", "정확히 1분 기다려 주세요.", "잠시만 기다려 주세요."),
+    ("Wait one full minute.", "1분 내내 기다려 주세요.", "잠깐만요."),
+    ("Wait one minute.", "1분 기다려 주세요.", "잠시만요."),
+    ("Wait 1 minute.", "1분 기다려 주세요.", "잠시만요."),
+    ("Wait a minute before leaving.", "출발 전에 1분 기다려 주세요.", "출발 전에 잠시 기다려 주세요."),
+    ("Wait a minute each time.", "매번 1분 기다려 주세요.", "매번 잠시 기다려 주세요."),
+])
+def test_precise_or_relative_minute_instructions_keep_the_duration(source, good, bad):
+    assert v(source, "en-US", good, "ko-KR") == []
+    assert v(good, "ko-KR", source, "en-US") == []
+    assert "number_missing:1" in v(source, "en-US", bad, "ko-KR")
+    assert "number_added:1" in v(bad, "ko-KR", source, "en-US")
+
+
+def test_numeric_and_repeated_korean_minutes_cannot_be_dropped():
+    assert "number_missing:1" in v("정확히 1분 기다려 주세요.", "ko-KR", "Please wait briefly.", "en-US")
+    assert "number_missing:1" in v("1분씩 기다려 주세요.", "ko-KR", "Please wait briefly each time.", "en-US")
+    assert "number_missing:1" in v("Espere exactamente un minuto.", "es-US", "잠시만요.", "ko-KR")

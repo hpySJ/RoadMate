@@ -3,6 +3,7 @@ import copy
 import hashlib
 import json
 import os
+import threading
 
 import httpx
 import pytest
@@ -65,4 +66,36 @@ def test_llama_restart_is_rejected_even_with_same_alias(tmp_path, monkeypatch):
         with pytest.raises(ModelUnavailable, match="runtime changed"):
             await client.runtime_identity()
         await client.aclose()
+    asyncio.run(run())
+
+
+def test_hash_verification_does_not_block_the_event_loop(tmp_path, monkeypatch):
+    _, manifest, props = fixture(tmp_path)
+    monkeypatch.setattr("inference.process_identity", lambda path: {"pid": 123, "started": "test"})
+    release = threading.Event()
+
+    async def run():
+        entered = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        def slow_verification(*args):
+            loop.call_soon_threadsafe(entered.set)
+            if not release.wait(3):
+                raise ValueError("event loop could not release hash worker")
+            return {"verified": True}
+        monkeypatch.setattr("inference.verify_runtime", slow_verification)
+        client = LlamaClient("http://127.0.0.1:8081/v1", "alias", manifest)
+        await client.http.aclose()
+        client.http = httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda req: httpx.Response(200, json=props if req.url.path == "/props" else [])))
+        task = asyncio.create_task(client.runtime_identity())
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            # 해시가 아직 대기 중이어도 다른 코루틴을 실행할 수 있어야 한다.
+            assert not task.done()
+            await asyncio.sleep(0)
+            release.set()
+            assert await task == {"verified": True}
+        finally:
+            release.set()
+            await client.aclose()
     asyncio.run(run())

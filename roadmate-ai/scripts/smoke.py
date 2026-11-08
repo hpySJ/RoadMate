@@ -21,7 +21,7 @@ HEADERS = {"X-Internal-Token": os.environ["AI_INTERNAL_TOKEN"]} if os.environ.ge
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     c = httpx.Client(timeout=60, headers=HEADERS)
-    ready = c.get(f"{AI}/health/ready")
+    ready = c.get(f"{AI}/health/ready", timeout=httpx.Timeout(300, connect=2))
     print("ready:", ready.status_code, ready.json())
     if ready.status_code != 200:
         return 1

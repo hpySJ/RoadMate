@@ -47,8 +47,8 @@ class LlamaClient:
         try:
             props = await self.http.get(f"{self.root_url}/props", timeout=2.0)
             props.raise_for_status()
-            current = verify_runtime(props.json(), await self.lora_adapters(), self.manifest,
-                                     process_identity(ROOT / "run" / "llama.pid"))
+            current = await asyncio.to_thread(verify_runtime, props.json(), await self.lora_adapters(), self.manifest,
+                                              process_identity(ROOT / "run" / "llama.pid"))
         except (OSError, ValueError, KeyError, TypeError, httpx.HTTPError) as e:
             raise ModelUnavailable(f"model runtime verification failed: {e}") from e
         if self._identity is not None and current != self._identity:

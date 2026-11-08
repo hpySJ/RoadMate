@@ -48,6 +48,20 @@ def test_count_and_deadline_are_not_minutes_before_the_hour(locale, source, expe
     assert P.select_glossary(source, locale, "ko-KR") == expected
 
 
+@pytest.mark.parametrize("locale", ["es-US", "es-MX"])
+@pytest.mark.parametrize("source,expected", [
+    ("Salgo diez para las ocho de la noche.", {"diez para las ocho de la noche": "오후 7시 50분"}),
+    ("Te veo cinco para las nueve de la noche.", {"cinco para las nueve de la noche": "오후 8시 55분"}),
+    ("Abrimos un cuarto para las diez de la mañana.", {"un cuarto para las diez de la mañana": "오전 9시 45분"}),
+    ("Necesito diez para las ocho de la noche.", {"ocho de la noche": "오후 8시"}),
+    ("Somos diez para las nueve de la noche.", {"nueve de la noche": "오후 9시"}),
+    ("Tengo veinte para las ocho de la noche.", {"ocho de la noche": "오후 8시"}),
+    ("Necesito cuatro para las ocho.", {}),
+])
+def test_time_hints_distinguish_typical_minutes_from_quantities(locale, source, expected):
+    assert P.select_glossary(source, locale, "ko-KR") == expected
+
+
 def test_messages_shape_and_glossary():
     m = P.translate_messages("en-US", "ko-KR", "gas_station", "Fill it up with gasoline at the gas station.")
     assert m[0]["role"] == "system" and m[-1]["role"] == "user"

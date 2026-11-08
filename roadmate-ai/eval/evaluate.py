@@ -102,7 +102,7 @@ def main():
     stamp = time.strftime("%Y%m%d-%H%M%S")
     out_dir = ROOT / "eval" / "results" / f"{a.label}-{Path(a.file).stem}-{stamp}"
     client = httpx.Client(timeout=60, headers=headers)
-    response = client.get(f"{a.url}/health/ready")
+    response = client.get(f"{a.url}/health/ready", timeout=httpx.Timeout(300, connect=2))
     ready = response.json()
     if response.status_code != 200 or not ready.get("ready"):
         raise SystemExit("model is not ready; evaluation not started")
