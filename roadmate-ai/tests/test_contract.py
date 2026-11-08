@@ -140,7 +140,7 @@ def test_log_rejected_only_when_enabled(caplog):
 def test_polish_replaces_only_when_checks_pass():
     s = dataclasses.replace(SETTINGS, polish_ko=True)
     text = "Can you write down your phone number for me?"
-    draft, good, bad = "전화번호를 제가 써 주세요.", "전화번호 좀 적어 주시겠어요?", "전화번호를 적지 마세요."
+    draft, good, bad = "전화번호를 적어 주시겠습니까?", "전화번호 좀 적어 주시겠어요?", "전화번호를 적지 마세요."
     for polished, expect in ((good, good), (bad, draft)):
         fake = RecordingLlama([ok(draft), {"text": polished}])
         with TestClient(create_app(s, fake)) as c:
@@ -172,6 +172,20 @@ def test_polish_off_by_default_and_not_for_english_target():
         c.post("/internal/v1/translate", json=body(text="번호 좀 적어 주세요.", source_locale="ko-KR",
                                                      target_locale="en-US", scenario="general"))
     assert fake.calls == 1
+
+
+@pytest.mark.parametrize("source,draft,changed", [
+    ("May I park here?", "여기에 주차해도 될까요?", "여기에 주차해도 돼요."),
+    ("I'll bring the car.", "제가 차를 가져올게요.", "제가 차를 가져와 주세요."),
+    ("The clerk said it was paid.", "직원이 결제됐다고 했어요.", "직원이 결제됐어요."),
+    ("I'm not sure it was there before.", "원래 있었는지는 모르겠어요.", "원래 있었어요."),
+    ("I signed the contract.", "제가 계약서에 서명했어요.", "고객님이 계약서에 서명했어요."),
+])
+def test_polish_keeps_draft_when_intent_markers_change(source, draft, changed):
+    fake = FakeLlama(outputs=[ok(draft), {"text": changed}])
+    with TestClient(create_app(dataclasses.replace(SETTINGS, polish_ko=True), fake)) as c:
+        r = c.post("/internal/v1/translate", json=body(text=source, scenario="general"))
+    assert r.status_code == 200 and r.json()["translated_text"] == draft
 
 
 def test_dropped_pm_is_filled_without_retry():

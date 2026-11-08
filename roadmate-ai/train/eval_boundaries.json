@@ -1,0 +1,42 @@
+{
+  "fingerprint_version": "slots-v1",
+  "scope": "Same-language numeric, fuel and known POI substitutions plus filler normalization. Paraphrases and cross-language idioms still require human review.",
+  "legacy_test_status": "retired_exposed",
+  "active_test": "eval/test.locked.v2.jsonl",
+  "active_test_cases": 44,
+  "active_test_review_status": "draft",
+  "active_test_model_evaluation_performed": false,
+  "seal_note": "Reference text and review metadata are not approved. After human review, update the seal deliberately before the one final model run.",
+  "frozen_files": {
+    "eval/test.locked.jsonl": "bfc1f0de2b585250d0be9e2de3f8002cd4e63cdb926f73d4275f27937233811d",
+    "eval/test.locked.v2.jsonl": "a728db2d562a58ddfa0cf3d10812836e5cc57b07b0f6eaaeec965568a27920f5"
+  },
+  "prompt_template_overlap": {
+    "dev.jsonl": [
+      "d-t-001",
+      "d-a-004",
+      "d-d-001"
+    ],
+    "general.jsonl": [],
+    "general_es.jsonl": [],
+    "naturalness.dev.jsonl": [],
+    "test.locked.jsonl": [
+      "t-a-006",
+      "t-d-001"
+    ],
+    "test.locked.v2.jsonl": []
+  },
+  "removed_training_sources": [
+    "Please put in 20,000 won of gasoline.",
+    "Please put in 40,000 won of gasoline.",
+    "Please put in 40,000 won of diesel.",
+    "Please put in 60,000 won of gasoline.",
+    "Please put in 60,000 won of diesel.",
+    "주차비는 10분에 500원이에요.",
+    "주차비는 10분에 천 원이에요.",
+    "주차비는 10분에 2천 원이에요.",
+    "주차비는 30분에 500원이에요.",
+    "주차비는 30분에 2천 원이에요."
+  ],
+  "replaced_naturalness_case": "nat-esko-001: replaced the luggage-help idiom shared with give-me-a-hand prompt examples with a late-exit-search utterance."
+}

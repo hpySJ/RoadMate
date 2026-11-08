@@ -18,9 +18,10 @@ $a = @(
 )
 if ($m.adapter) { $a += @("--lora", (Join-Path $Root $m.adapter.file)) }
 
-if ($Background) {
-    $p = Start-Bg "llama" $exe $a $r.port
-    Wait-Http "http://127.0.0.1:$($r.port)/health" 300 $p
-} else {
-    & $exe @a
+$p = Start-Bg "llama" $exe $a $r.port
+Wait-Http "http://127.0.0.1:$($r.port)/health" 300 $p
+if (-not $Background) {
+    try { Wait-Process -Id $p.Id } finally {
+        if (-not $p.HasExited) { Stop-Process -Id $p.Id }
+    }
 }

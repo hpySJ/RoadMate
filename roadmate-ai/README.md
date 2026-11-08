@@ -19,7 +19,7 @@ APK → 백엔드(8080) → AI 서버(8000) → llama-server(8081)
 | `validation.py` | 번역 결과 검사(숫자, 시간, 통화, 부정, 연료, 좌우) |
 | `guidance.py`, `packs/` | 주행 안내 규칙, 용어집, 안내 문구, 데모 장소 |
 | `models/manifest.json` | 모델 파일, 버전, 실행 옵션 |
-| `eval/` | 평가셋(dev 100건, 범용 general 180건, 스페인어 general_es 100건, 최종 test 60건)과 평가 스크립트 |
+| `eval/` | 평가셋(dev 100건, 범용 general 180건, 스페인어 general_es 100건, 최종 test v2 44건, 퇴역 test 60건 보존)과 평가 스크립트 |
 | `train/` | 검수 학습 자료 만들기(초안·검수·가져오기), QLoRA 학습, 어댑터 변환 |
 | `scripts/` | 설치·실행·종료 스크립트 |
 | `docs/` | API 계약(`openapi.json`), 사용 안내(`guide.md`), Pleos SDK 연결(`pleos_sdk.md`) |
@@ -41,7 +41,9 @@ NVIDIA GPU(VRAM 8GB 이상), RAM 16GB, Python 3.11~3.12를 기준으로 만들�
 
 ## 지금 상태
 
-모델 없이 도는 테스트 715건과 주행 시나리오가 통과합니다. `python scripts/verify_mvp.py --local`로 함께 실행하고 `run/verify-*/report.json`에 결과를 남깁니다.
+독립 검토의 지적별 반영과 남은 실제 장비 확인은 [`docs/review_followup.md`](docs/review_followup.md)에 있습니다.
+
+모델 없이 도는 테스트 893건과 주행 시나리오가 통과합니다. `python scripts/verify_mvp.py --local`로 함께 실행하고 `run/verify-*/report.json`에 결과를 남깁니다.
 
 온보딩 3개 외국어 × 11개 국가 × 3개 경험을 검증합니다. 국가·경험 선택지의 현지화 사전, 모든 운전자의 스쿨존 진입 경고, 확인된 비보호 좌회전 맥락의 조건부 안내가 있습니다. 번역 프롬프트는 관용구·부탁·허락·전언을 자연스럽게 전달하도록 보강했고, 자연스러움 개발평가 20건을 추가했습니다.
 

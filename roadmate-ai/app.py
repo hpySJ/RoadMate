@@ -19,7 +19,7 @@ from sessions import ModelSlot, TurnRegistry, payload_hash
 from validation import HANGUL
 
 log = logging.getLogger("roadmate.ai")
-API_VERSION = "1.2.0"  # 백엔드 연동: 계약이 바뀌면 올리고 docs/openapi.json 재생성
+API_VERSION = "1.3.0"  # 백엔드 연동: 계약이 바뀌면 올리고 docs/openapi.json 재생성
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -45,7 +45,7 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app):
-        c = client or (MockClient() if s.model_backend == "mock" else LlamaClient(s.model_base_url, s.model_id))
+        c = client or (MockClient() if s.model_backend == "mock" else LlamaClient(s.model_base_url, s.model_id, s.manifest))
         st.update(client=c, engine=Engine(c, s), registry=TurnRegistry(s.dedupe_ttl_s), slot=ModelSlot(),
                   self_check=None, settle=None, artifact_hashes=artifact_hashes(), instance_id=uuid.uuid4().hex)
         log.info("ai server up: backend=%s bundle=%s", s.model_backend, s.engine_bundle)
@@ -236,7 +236,9 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
     @app.get("/health/ready")
     async def ready():
         c = st["client"]
-        checks = {"model_server": await c.health(), "model_alias": False, "adapter": True}
+        checks = {"model_server": await c.health(), "model_alias": False, "adapter": True,
+                  "runtime_identity": c.is_mock}
+        identity = None
         if checks["model_server"]:
             try:
                 checks["model_alias"] = c.is_mock or s.model_id in await c.model_ids()
@@ -244,11 +246,18 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
                     checks["adapter"] = bool(await c.lora_adapters())
             except Exception:  # noqa: BLE001 - 준비 확인은 실패로만 보고
                 checks["model_alias"] = False
+            if checks["model_alias"]:
+                try:
+                    identity = await c.runtime_identity()
+                    checks["runtime_identity"] = c.is_mock or bool(identity)
+                except ModelError as e:
+                    log.warning("model runtime not verified: %s", e)
         checks["self_check"] = await _self_check() if all(checks.values()) else "not_run"
         is_ready = all(v is True for k, v in checks.items() if k != "self_check") and checks["self_check"] in (
             "ok", "skipped_busy")
         body = {"ready": is_ready, "checks": checks, "engine_bundle": s.engine_bundle, "model_id": c.model_id,
                 "instance_id": st["instance_id"],
+                "model_runtime": identity,
                 "backend": s.model_backend, "versions": s.manifest["versions"], "polish_ko": s.polish_ko,
                 "runtime_config": {"model_id": c.model_id, "polish_ko": s.polish_ko,
                                    "model_timeout_s": s.model_timeout_s, "max_text_chars": s.max_text_chars},

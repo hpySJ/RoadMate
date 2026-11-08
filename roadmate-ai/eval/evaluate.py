@@ -59,6 +59,25 @@ def pct(xs, q):
     return xs[min(len(xs) - 1, int(round(q * (len(xs) - 1))))]
 
 
+def final_input_digest(path: Path) -> str:
+    # 검수 메타데이터나 행 순서만 바꿔 같은 시험을 다시 고르지 못하게 입력으로 식별한다.
+    cases = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    inputs = [json.dumps({k: c.get(k) for k in ("task", "source_locale", "target_locale", "scenario", "text")},
+                         ensure_ascii=False, sort_keys=True) for c in cases]
+    return hashlib.sha256("\n".join(sorted(inputs)).encode("utf-8")).hexdigest()
+
+
+def reserve_final(path: Path, ready: dict) -> str:
+    """같은 자료의 재시도를 막는 로컬 기록. 삭제·변조를 막는 전자서명은 아니다."""
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    directory = ROOT / "run" / "final-evaluations"
+    directory.mkdir(parents=True, exist_ok=True)
+    attempt = uuid.uuid4().hex
+    with (directory / f"{final_input_digest(path)}.json").open("x", encoding="utf-8") as f:
+        json.dump({"attempt_id": attempt, "dataset_sha256": digest, "started": time.time(), "ready": ready}, f, ensure_ascii=False)
+    return attempt
+
+
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
@@ -69,12 +88,17 @@ def main():
     ap.add_argument("--final", action="store_true", help="설정 확정 후 잠근 시험을 실행함을 명시")
     a = ap.parse_args()
 
-    if Path(a.file).name == "test.locked.jsonl" and not a.final:
+    locked = Path(a.file).name.startswith("test.locked")
+    if Path(a.file).name == "test.locked.jsonl":
+        ap.error("기존 잠근 시험은 노출되어 폐기됐습니다. test.locked.v2.jsonl을 사용하세요")
+    if locked and not a.final:
         ap.error("잠근 시험은 튜닝 종료 후 --final로 한 번만 실행하세요")
 
     bundle = json.loads((ROOT / "models" / "manifest.json").read_text(encoding="utf-8"))["engine_bundle"]
     headers = {"X-Internal-Token": os.environ["AI_INTERNAL_TOKEN"]} if os.environ.get("AI_INTERNAL_TOKEN") else {}
     cases = [json.loads(x) for x in Path(a.file).read_text(encoding="utf-8").splitlines() if x.strip()]
+    if locked and any(c.get("review_status") != "approved" or not c.get("reviewer") or not c.get("reviewed_at") for c in cases):
+        ap.error("잠근 시험은 정답·기준 검수 완료 후 실행하세요")
     stamp = time.strftime("%Y%m%d-%H%M%S")
     out_dir = ROOT / "eval" / "results" / f"{a.label}-{Path(a.file).stem}-{stamp}"
     client = httpx.Client(timeout=60, headers=headers)
@@ -86,6 +110,10 @@ def main():
         raise SystemExit("mock is not a translation quality evaluation; use --allow-mock only for contract checks")
     if ready.get("artifact_hashes") != artifact_hashes():
         raise SystemExit("server artifacts differ from this checkout; restart/deploy matching code before evaluation")
+    try:
+        final_attempt = reserve_final(Path(a.file), ready) if locked else None
+    except FileExistsError:
+        raise SystemExit("이 잠근 시험은 이미 시도했습니다. 재선택 대신 실패 원인과 기존 기록을 보존하세요")
     out_dir.mkdir(parents=True, exist_ok=False)
 
     rows = []
@@ -130,7 +158,7 @@ def main():
                         c.get("reference", ""), output, row["pass"], " ".join(row["flags"]), "", "", "", ""])
 
     meta = {"dataset": Path(a.file).name, "dataset_sha256": hashlib.sha256(Path(a.file).read_bytes()).hexdigest(),
-            "ready": ready, "ready_end": ready_end, "label": a.label, "timestamp": stamp,
+            "ready": ready, "ready_end": ready_end, "label": a.label, "timestamp": stamp, "final_attempt": final_attempt,
             "results_sha256": hashlib.sha256((out_dir / "results.jsonl").read_bytes()).hexdigest()}
     (out_dir / "run.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     client.close()

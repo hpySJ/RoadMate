@@ -86,14 +86,14 @@ NATIVE_ALONE_RE = re.compile(r"(?<![가-힣])(둘|셋|넷|다섯|여섯|일곱|�
 PHONE_RE = re.compile(r"(?<!\d)(?:\+?82[\s-]?)?0?\d{1,3}[\s-]\d{3,4}[\s-]\d{4}(?!\d)")
 CLOCK_RE = re.compile(r"(?<!\d)([01]?\d|2[0-4]):([0-5]\d)(?!\d)")
 DIGIT_RE = re.compile(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?!\d|,\d)")
-_EN_DAYPART = r"(in the morning|in the afternoon|in the evening|at night)"
+_EN_DAYPART = r"(in the morning|in the afternoon|in the evening|at night|tonight|this morning|this afternoon|this evening)"
 EN_TIME_TAIL = re.compile(rf"\s*(?:o'clock(?:\s+{_EN_DAYPART})?|([ap])\.?\s?m\.?(?![A-Za-z])|{_EN_DAYPART})", re.IGNORECASE)
 EN_ORD_ANY = re.compile(r"\b(" + "|".join(EN_ORD) + r")\s+(?=[A-Za-z])", re.IGNORECASE)
 KO_ORD = re.compile(r"(?<![가-힣])(첫|두|세|네|다섯|여섯|일곱|여덟|아홉|열|\d{1,2})\s?번째")
 KO_MERIDIEM = re.compile(r"(오전|새벽|아침|오후|저녁|낮|밤)\s*$")
 EN_PAST_RE = re.compile(r"\b(quarter|half)\s+(past|after|to)\s+(\d{1,2}|" + "|".join(EN_UNITS) + r")\b", re.IGNORECASE)
 EN_SPAN_RE = re.compile(r"\b(?:(half)\s+(?:an\s+)?hour|(?:a\s+)?(quarter)\s+(?:of\s+an\s+)?hour"
-                        r"|(?:an|one|a)\s+hour(\s+and\s+a\s+half)?)\b", re.IGNORECASE)
+                        r"|(?:an|one|a)\s+hour(\s+and\s+a\s+half)?|(?:a|one)\s+(minutes?|mins?))\b", re.IGNORECASE)
 DUR_EN = re.compile(r"\s?(?:(minutes?|mins?)|(hours?|hrs?))\b", re.IGNORECASE)
 DUR_KO = re.compile(r"\s?(?:(분)|(시간)(\s?반)?)")
 UNIT_ABBR = {"km", "kg", "cc", "ml", "cm", "mm", "kw", "kwh", "mph", "kmh", "gb"}
@@ -130,8 +130,9 @@ _ES_MIN = "|".join(["media", "cuarto", r"\d{1,2}", rf"(?:{_ES_TENS})\s+y\s+(?:{_
 # 검증: 시·분·때를 한 덩어리로 읽는다(a las tres y diez de la tarde = 15:10, cinco menos cuarto = 4:45)
 ES_HOUR_RE = re.compile(rf"\b(?:a|hasta|desde|son|es|para|de|entre|y|tipo|sobre|por)\s+las?\s+(?P<hour>{_ES_HOUR})\b"
                         rf"(?:\s+(?P<op>y|menos)\s+(?P<minute>{_ES_MIN})\b(?:\s+minutos?\b)?)?", re.IGNORECASE)
-ES_TO_RE = re.compile(rf"\b(?:un\s+)?(?P<minute>{_ES_MIN})\b(?:\s+minutos?)?\s+para\s+las?\s+"
+ES_TO_RE = re.compile(rf"\b(?:un\s+)?(?P<minute>{_ES_MIN})\b(?:\s+(?P<unit>minutos?))?\s+para\s+las?\s+"
                       rf"(?P<hour>{_ES_HOUR})\b", re.IGNORECASE)
+ES_TO_BEFORE = re.compile(r"(?:^\s*|\b(?:son|es|faltan?|lleg\w*|vuelv\w*|regres\w*|vemos)\s+(?:a\s+)?)$", re.I)
 # 검증: "a las dos personas"(두 사람에게)처럼 뒤에 세는 말이 오면 시각이 아니다
 ES_COUNT_AFTER = re.compile(r"\s+(?:personas?|gente|adultos?|ninos?|ninas?|bebes?|senoras?|senores?|hombres?|mujeres"
                             r"|clientes?|pasajeros?|amigos?|chicos?|chicas?|carros?|autos?|coches?|maletas?|llaves?"
@@ -291,6 +292,8 @@ def spanish_times(text: str):
     for pattern in (CLOCK_RE, ES_TO_RE, ES_HOUR_RE):
         spans = []
         for m in pattern.finditer(text):
+            if pattern is ES_TO_RE and not (m.group("unit") or ES_TO_BEFORE.search(text[:m.start()])):
+                continue  # 검증: necesito dos / somos cuatro para las ocho는 수량 + 시각이지 '몇 분 전'이 아니다
             if pattern is CLOCK_RE:
                 h, mins, start, subtract = int(m.group(1)), int(m.group(2)), m.start(), False
             else:
@@ -388,7 +391,7 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
             out.append(Num(0.0 if m.group(1).lower() == "midnight" else 12.0, "time", exact=True))
             spans.append(m.span())
         for m in EN_SPAN_RE.finditer(text):
-            v = 30.0 if m.group(1) else 15.0 if m.group(2) else 90.0 if m.group(3) else 60.0
+            v = 30.0 if m.group(1) else 15.0 if m.group(2) else 90.0 if m.group(3) else 1.0 if m.group(4) else 60.0
             out.append(Num(v, "n", unit="min"))
             spans.append(m.span())
         text = _mask(text, spans)
@@ -435,7 +438,7 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
         for m in ES_WORD_RE.finditer(_mask(text, dspans)):
             words = m.group()
             t = ES_TIME_TAIL.match(text, m.end())
-            if not t and re.fullmatch(r"(un|uno|una)", words, re.IGNORECASE):
+            if not t and re.fullmatch(r"(un|uno|una)", words, re.IGNORECASE) and not DUR_ES.match(text, m.end()):
                 continue  # 관사 un/una는 숫자로 세지 않는다
             v = _parse_es_words(words)
             if v is None:
@@ -589,7 +592,7 @@ NEG = {
     ),
     "ko": (
         # 검증: "A, 아니면 B"(또는)는 부정이 아니지만 "회원이 아니면"(조건부 부정)은 부정이다
-        re.compile(r"않|(?<!잘)못|없|말고|마세요|마십시오|말아|지 ?마|아니(?!면)|(?<=[이가게] )아니면|(?<=[이가게])아니면"
+        re.compile(r"않|(?<!잘)못|없|말고|마세요|마십시오|말아|지 ?마|지\s?말(?:라[고는]|랬)|아니(?!면)|(?<=[이가게] )아니면|(?<=[이가게])아니면"
                    r"|아닌|아닙|아냐|아녜|금지|불가"
                    r"|(?<![가-힣])안\s?(?!녕|내|전|에|쪽|경|심|과|개|건|부|마|방|색|약|면|정|팎|으로|까)[가-힣]"),
         re.compile(r"무사|괜찮|모르|몰라|싫|아직|대신|그만|무료|제외|빼고"),
@@ -616,7 +619,7 @@ DIR_EN_WORD = {d: re.compile(rf"\b{d}\b", re.I) for d in ("left", "right")}
 # 검증: 스페인어 derecho는 문맥에 따라 직진·권리·오른쪽을 구분한다
 _ES_STRAIGHT_BEFORE = re.compile(r"(?:^|[,.;:!?]|\b(?:sig\w*|segu\w*|todo|vay\w*|ve|vete|continu\w*|manej\w*"
                                  r"|condu\w*|camin\w*|ir|va|voy|vamos|van|avanc\w*|avanz\w*|siempre|teng\w*|tien\w*"
-                                 r"|ten\w*|tuv\w*))\s*$", re.I)
+                                 r"|ten\w*|tuv\w*|dele|dale|tom[ae]\w*|agarr\w*|es|esta))\s*$", re.I)
 _ES_RIGHTS_BEFORE = re.compile(r"\b(?:el|su|mi|tu|nuestro|vuestro|este|ese|un)\s*$", re.I)
 _ES_RIGHTS_AFTER = re.compile(r"\s+(?:a|al|de|del)\b", re.I)
 
@@ -681,8 +684,11 @@ def check_critical_terms(src: str, src_locale: str, tgt: str, tgt_locale: str) -
 
 _EN_FUEL_VERB = r"(?:put(?:\s+in)?|use|want|need|take|pump|add|give\s+me|fill\s+(?:it\s+)?(?:up\s+)?with)"
 _ES_FUEL_VERB = r"pon\w*|ech\w*|carg\w*|us[aeo]\w*|llen\w*|met\w*|surt\w*|llev\w*|acept\w*|admit\w*|sirv\w*"
+# 검증: 보조동사는 연결어까지 읽어 부정의 범위를 유지한다(volver a, ir a, tener que + 주유 동사).
+_ES_FUEL_AUX = (r"(?:vuelv\w*|volv\w*)\s+a|(?:ir|voy|vas?|vamos|van|vay\w*|ib[ao]\w*)\s+a"
+                r"|(?:teng\w*|tien\w*|ten\w*|tuv\w*)\s+que|pued\w*|pod\w*|deb\w*")
 _ES_FUEL_FILL = (rf"de|del|el|la|los|las|un|una|con|le|les|me|lo|nos|te|se|es|sea|mas|quier\w*|quer\w*|necesit\w*"
-                 rf"|que|a|pued\w*|pod\w*|deb\w*|vay\w*|{_ES_FUEL_VERB}")
+                 rf"|que|a|{_ES_FUEL_AUX}|{_ES_FUEL_VERB}")
 FUEL_NEG_BEFORE = {
     "en": re.compile(
         r"(?:\b(?:not|no|never|instead\s+of|rather\s+than|other\s+than|except|excluding|apart\s+from|without)|n't"
@@ -695,7 +701,8 @@ FUEL_NEG_AFTER = {
     "en": re.compile(r"^\s+(?:(?:is|was)\s+not|isn't|wasn't|is\s+(?:wrong|prohibited|forbidden)|not\s+allowed)\b", re.I),
     "es": re.compile(rf"^\s+(?:no\s+(?:(?:se|le|les|me|lo|la|nos|te)\s+)*(?:es|esta|va|puede|permite|debe|{_ES_FUEL_VERB})\b"
                      r"|(?:esta|es|queda)\s+(?:prohibid[oa]|mal|incorrect[oa])\b)", re.I),
-    "ko": re.compile(r"^(?:차)?(?:은|는|이|가|을|를|으로|로|도|만)?\s*(?:말고|아니(?!면)|아닙|아냐|아녜|대신|빼|제외|금지|절대|안\s?(?:돼|되|됩|넣|쓰)"
+    "ko": re.compile(r"^(?:차)?(?:은|는|이|가|을|를|으로|로|도|만)?\s*(?:다시\s*)?(?:말고|아니(?!면)|아닙|아냐|아녜|대신|빼|제외|금지|절대|안\s?(?:돼|되|됩|넣|쓰)"
+                     r"|(?:넣을|쓸|주유할|사용할|채울)\s*필요(?:가)?\s*없"
                      r"|(?:넣|주유하|주유|쓰|사용하|채우)(?:지\s?(?:마|말|않)|으?시?면\s?안))"),
 }
 # 검증: "diésel no, gasolina"처럼 끊어 말한 no만 앞 연료의 부정으로 본다("diésel no gasolina"의 no는 뒤 연료 몫)

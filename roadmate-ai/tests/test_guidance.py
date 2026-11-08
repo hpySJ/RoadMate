@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from guidance import DriverProfile, GuidanceEngine, SpeechQueue, load_pack, run_scenarios
+from guidance import DriverProfile, GuidanceEngine, SpeechQueue, StopLock, load_pack, run_scenarios
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -210,3 +210,133 @@ def test_same_road_personas_share_safety_warnings():
         assert [rid for rid in spoken[p] if rid.startswith("school_zone_")] == [
             "school_zone_entry", "school_zone_current_speed", "school_zone_entry"]
     assert all(rid.startswith("school_zone_") for rid in spoken[profiles[2]])
+
+
+def test_adjacent_zones_keep_independent_speed_warning_cooldowns():
+    eng = GuidanceEngine(load_pack(), "en-US")
+    for now in (0, 1000, 2000):
+        warnings = eng.evaluate(school_snap(now, "a"), "d1")
+    played = next(u for u in warnings if u.rule_id == "school_zone_current_speed")
+    eng.mark_played(played, "d1", 2000)
+    for now in (60000, 61000, 62000):
+        warnings = eng.evaluate(school_snap(now, "b"), "d1")
+    assert "school_zone_current_speed" in {u.rule_id for u in warnings}
+    for now in (63000, 64000, 65000):
+        warnings = eng.evaluate(school_snap(now, "a"), "d1")
+    assert "school_zone_current_speed" not in {u.rule_id for u in warnings}
+
+
+@pytest.mark.parametrize("known_limit", [True, False])
+def test_adjacent_zones_keep_independent_approach_warning_cooldowns(known_limit):
+    eng = GuidanceEngine(load_pack(), "en-US")
+    def snap(now, zone_id):
+        value = school_snap(now, zone_id)
+        value["school_zone"].update(state="ahead", on_route=True, distance_m=100,
+                                    limit_kph=30 if known_limit else None,
+                                    limit_status="valid" if known_limit else "unknown")
+        return value
+    first = eng.evaluate(snap(0, "a"), "d1")[0]
+    eng.mark_played(first, "d1", 0)
+    assert [u.rule_id for u in eng.evaluate(snap(90000, "b"), "d1")] == [first.rule_id]
+    assert eng.evaluate(snap(91000, "a"), "d1") == []
+
+
+def test_clock_restart_resets_cooldowns_and_discards_old_queue_and_callbacks():
+    eng, q = GuidanceEngine(load_pack(), "en-US"), SpeechQueue()
+    old = eng.evaluate(school_snap(0, "a", 20), "d1")[0]
+    q.push([old])
+    later = eng.evaluate(school_snap(10000000, "b", 20), "d1")[0]
+    eng.mark_played(later, "d1", 10000000)
+    assert eng.evaluate(school_snap(0, "a", 20), "d1")[0].rule_id == "school_zone_entry"
+    assert q.next(eng, school_snap(0, "a", 20)) is None
+    eng.mark_played(old, "d1", 10001000)
+    assert eng.last_now == 0 and eng.last_played == {} and eng.played == {}
+    for now in (1000, 2000, 3000):
+        warnings = eng.evaluate(school_snap(now, "a"), "d1")
+    assert "school_zone_current_speed" in {u.rule_id for u in warnings}
+
+
+def test_speed_sustain_requires_two_seconds_of_observed_samples():
+    eng = GuidanceEngine(load_pack(), "en-US")
+    for now, observed in ((0, 0), (1500, 1500), (2000, 1500)):
+        snap = school_snap(now)
+        snap["speed"]["ts_ms"] = observed
+        assert "school_zone_current_speed" not in {u.rule_id for u in eng.evaluate(snap, "d1")}
+    snap = school_snap(2500)
+    snap["speed"]["ts_ms"] = 2000
+    assert "school_zone_current_speed" in {u.rule_id for u in eng.evaluate(snap, "d1")}
+
+
+def test_speed_before_zone_confirmation_does_not_count_toward_sustain():
+    eng = GuidanceEngine(load_pack(), "en-US")
+    first = school_snap(1000)
+    first["speed"]["ts_ms"] = 0
+    eng.evaluate(first, "d1")
+    eng.evaluate(school_snap(1500), "d1")
+    assert "school_zone_current_speed" not in {u.rule_id for u in eng.evaluate(school_snap(2000), "d1")}
+    assert "school_zone_current_speed" in {u.rule_id for u in eng.evaluate(school_snap(3000), "d1")}
+
+
+def stopped_snap(now, unit="m/s", value=0, gear_ts=None, speed_ts=None):
+    return {"now_ms": now, "gear": {"value": "P", "status": "valid", "ts_ms": now if gear_ts is None else gear_ts},
+            "speed": {"value": value, "unit": unit, "status": "valid", "ts_ms": now if speed_ts is None else speed_ts}}
+
+
+def test_stop_lock_requires_fresh_gear_and_observed_stop_duration():
+    lock = StopLock(load_pack())
+    assert not lock.update(stopped_snap(0))
+    assert not lock.update(stopped_snap(1000, speed_ts=0))
+    assert lock.update(stopped_snap(1000))
+    assert not lock.update(stopped_snap(6000, gear_ts=0))
+    assert not lock.update(stopped_snap(7000))
+    assert lock.update(stopped_snap(8000))
+
+
+def test_stop_duration_cannot_start_before_park_was_confirmed():
+    lock = StopLock(load_pack())
+    assert not lock.update(stopped_snap(1000, speed_ts=0))
+    assert not lock.update(stopped_snap(1000))
+    assert lock.update(stopped_snap(2000))
+
+
+@pytest.mark.parametrize("unit,value,expected", [("m/s", 0.1, True), ("km/h", 0.36, True),
+                                                   ("km/h", 0.4, False), ("mph", 0, False), (None, 0, False)])
+def test_stop_lock_converts_only_explicit_supported_speed_units(unit, value, expected):
+    lock = StopLock(load_pack())
+    assert not lock.update(stopped_snap(0, unit, value))
+    assert lock.update(stopped_snap(1000, unit, value)) is expected
+
+
+@pytest.mark.parametrize("unit,value", [("mph", 50), (None, 50), ("km/h", float("nan")),
+                                       ("m/s", float("inf")), ("m/s", "0"), ("m/s", True),
+                                       ("m/s", 10 ** 400)])
+def test_invalid_speed_cannot_unlock_or_produce_numeric_warning(unit, value):
+    eng, lock = GuidanceEngine(load_pack(), "en-US"), StopLock(load_pack())
+    for now in (0, 1000, 2000):
+        snap = school_snap(now)
+        snap["speed"].update(unit=unit, value=value)
+        assert "school_zone_current_speed" not in {u.rule_id for u in eng.evaluate(snap, "d1")}
+        assert not lock.update(stopped_snap(now, unit, value))
+
+
+@pytest.mark.parametrize("zone_id", [None, "", " ", " a ", [], {}])
+def test_unknown_zone_identity_cannot_produce_location_warning(zone_id):
+    eng = GuidanceEngine(load_pack(), "en-US")
+    assert eng.evaluate(school_snap(0, zone_id), "d1") == []
+
+
+@pytest.mark.parametrize("day_key", [None, "", " ", [], {}, 1])
+def test_day_key_rejects_missing_or_non_string_keys(day_key):
+    with pytest.raises(ValueError, match="day_key"):
+        GuidanceEngine(load_pack(), "en-US").evaluate(school_snap(0), day_key)
+
+
+@pytest.mark.parametrize("timestamp", [None, -1, True, "0", 0.5, float("nan")])
+def test_invalid_observation_timestamps_fail_closed(timestamp):
+    eng, lock = GuidanceEngine(load_pack(), "en-US"), StopLock(load_pack())
+    snap = school_snap(0)
+    snap["school_zone"]["ts_ms"] = timestamp
+    assert eng.evaluate(snap, "d1") == []
+    stopped = stopped_snap(1000)
+    stopped["gear"]["ts_ms"] = timestamp
+    assert not lock.update(stopped)

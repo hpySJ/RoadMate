@@ -1,5 +1,14 @@
 import pytest
 
+
+def test_reported_prohibition_keeps_negation():
+    from validation import validate_translation
+    source = "보험사에서는 제가 직접 운전해서 이동하지 말라고 했어요."
+    good = {"status": "ok", "translated_text": "La aseguradora me dijo que no condujera el carro yo mismo.", "clarification_question": None}
+    assert validate_translation(good, source, "ko-KR", "es-US") == []
+    bad = {**good, "translated_text": "La aseguradora me dijo que condujera el carro yo mismo."}
+    assert "negation_mismatch" in validate_translation(bad, source, "ko-KR", "es-US")
+
 from validation import extract_numbers, validate_translation
 
 
@@ -319,3 +328,68 @@ def test_english_clock_minutes_are_not_another_hour():
     assert "number_missing:10" in v("Come back at 3:10 p.m.", "en-US", "오후 3시와 오후 10시에 돌아오세요.", "ko-KR")
     assert "number_missing:10" in v("Come back at 3:10 p.m.", "en-US", "오후 3시와 오전 10시에 돌아오세요.", "ko-KR")
     assert v("Come back at 3:01 p.m.", "en-US", "오후 3시 1분에 돌아오세요.", "ko-KR") == []
+
+
+@pytest.mark.parametrize("locale", ["es-US", "es-MX"])
+@pytest.mark.parametrize("source,good,bad,issue", [
+    ("Dele derecho hasta el semáforo.", "신호등까지 직진하세요.", "신호등까지 오른쪽으로 가세요.", "direction_mismatch:right"),
+    ("Dale derecho por esta calle.", "이 길로 쭉 가세요.", "이 길에서 오른쪽으로 가세요.", "direction_mismatch:right"),
+    ("Tome derecho por esta calle.", "이 길로 쭉 가세요.", "이 길에서 오른쪽으로 가세요.", "direction_mismatch:right"),
+    ("Es derecho por esta calle.", "이 길로 쭉 가면 돼요.", "이 길에서 오른쪽으로 가면 돼요.", "direction_mismatch:right"),
+    ("Agarre derecho hasta el semáforo.", "신호등까지 직진하세요.", "신호등까지 오른쪽으로 가세요.", "direction_mismatch:right"),
+    ("Use el carril derecho hasta el semáforo.", "신호등까지 오른쪽 차선을 이용하세요.", "신호등까지 차선을 이용하세요.",
+     "direction_missing:right"),
+    ("Necesito dos para las ocho de la noche.", "오후 8시까지 두 개 필요해요.", "오후 7시 58분까지 필요해요.", "number_missing:20"),
+    ("Necesito cinco para las ocho de la noche.", "오후 8시까지 다섯 개 필요해요.", "오후 7시 55분까지 필요해요.",
+     "number_missing:20"),
+    ("Somos cuatro para las nueve.", "9시에 네 명이에요.", "8시 56분이에요.", "number_missing:9"),
+    ("Faltan dos minutos para las ocho de la noche.", "오후 7시 58분이에요.", "오후 8시예요.", "number_missing:19"),
+    ("Son cuatro para las nueve.", "8시 56분이에요.", "9시에 네 명이에요.", "number_missing:8"),
+    ("No le vuelva a poner diésel, solo gasolina.", "경유는 넣지 말고 휘발유만 넣어 주세요.",
+     "휘발유는 넣지 말고 경유만 넣어 주세요.", "fuel_polarity_mismatch:fuel_diesel"),
+    ("No le voy a poner diésel, solo gasolina.", "경유는 넣지 않고 휘발유만 넣을게요.",
+     "휘발유는 넣지 않고 경유만 넣을게요.", "fuel_polarity_mismatch:fuel_diesel"),
+    ("No tiene que poner diésel, solo gasolina.", "경유는 넣을 필요 없고 휘발유만 넣으면 돼요.",
+     "휘발유는 넣을 필요 없고 경유만 넣으면 돼요.", "fuel_polarity_mismatch:fuel_diesel"),
+    ("No debe volver a poner diésel, solo gasolina.", "경유는 다시 넣으면 안 되고 휘발유만 넣어야 해요.",
+     "휘발유는 다시 넣으면 안 되고 경유만 넣어야 해요.", "fuel_polarity_mismatch:fuel_diesel"),
+])
+def test_review_followup_spanish_context(locale, source, good, bad, issue):
+    assert v(source, locale, good, "ko-KR") == []
+    assert v(good, "ko-KR", source, locale) == []
+    assert issue in v(source, locale, bad, "ko-KR")
+    assert v(bad, "ko-KR", source, locale)
+
+
+@pytest.mark.parametrize("source,good,bad", [
+    ("See you at 7 tonight.", "오늘 밤 7시에 봬요.", "오늘 오전 7시에 봬요."),
+    ("See you at eleven tonight.", "오늘 밤 11시에 봬요.", "오늘 오전 11시에 봬요."),
+    ("Come back at 6 this evening.", "오늘 저녁 6시에 오세요.", "오늘 오전 6시에 오세요."),
+    ("Come back at 10 this morning.", "오늘 오전 10시에 오세요.", "오늘 오후 10시에 오세요."),
+    ("Come back at 2 this afternoon.", "오늘 오후 2시에 오세요.", "오늘 오전 2시에 오세요."),
+    ("See you at 7:15 tonight.", "오늘 밤 7시 15분에 봬요.", "오늘 오전 7시 15분에 봬요."),
+])
+def test_english_dayparts_in_both_directions(source, good, bad):
+    assert v(source, "en-US", good, "ko-KR") == []
+    assert v(good, "ko-KR", source, "en-US") == []
+    assert any(i.startswith("number_missing:") for i in v(source, "en-US", bad, "ko-KR"))
+    assert v(bad, "ko-KR", source, "en-US")
+
+
+@pytest.mark.parametrize("locale,source", [
+    ("en-US", "Wait one minute."), ("en-US", "Wait a minute."),
+    ("es-US", "Espere un minuto."), ("es-MX", "Espere un minuto."),
+])
+def test_single_minute_is_a_duration(locale, source):
+    good, bad = "1분만 기다려 주세요.", "1시간만 기다려 주세요."
+    assert v(source, locale, good, "ko-KR") == []
+    assert v(good, "ko-KR", source, locale) == []
+    assert "number_missing:1" in v(source, locale, bad, "ko-KR")
+    assert v(bad, "ko-KR", source, locale)
+
+
+def test_positive_fuel_auxiliary_and_indefinite_articles():
+    assert v("Puede volver a poner diésel, pero no gasolina.", "es-US",
+             "경유는 다시 넣어도 되지만 휘발유는 넣지 마세요.", "ko-KR") == []
+    assert extract_numbers("Necesito una gasolinera.", "es-US") == []
+    assert extract_numbers("I need a gas station.", "en-US") == []

@@ -8,9 +8,12 @@ dev·test·general 평가셋, few-shot, 이미 train/data에 있는 문장은 �
 import hashlib
 import itertools
 import json
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "train"))
+from data_boundary import fingerprint, protected_templates  # noqa: E402
 
 # (scenario, 문장) — 영어 화자(외국인 운전자)
 EN = [
@@ -145,14 +148,8 @@ def expand(templates):
 
 def main():
     norm = lambda s: "".join(s.lower().split())  # noqa: E731
+    blocked = protected_templates(ROOT)
     seen = set()
-    for path in (ROOT / "eval").glob("*.jsonl"):
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                seen.add(norm(json.loads(line)["text"]))
-    for name in ("translate", "polish"):
-        for e in json.loads((ROOT / "prompts" / f"{name}.examples.json").read_text(encoding="utf-8")):
-            seen.add(norm(e["input"].get("utterance") or e["input"]["source"]))
     for path in (ROOT / "train" / "data").glob("*.jsonl"):  # 이미 학습 자료(시드·승인분)에 있는 문장도 뺀다
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.strip():
@@ -165,7 +162,7 @@ def main():
              + [(g, sc, t, "en-US") for g, sc, t in expand(EN_T)]
              + [(g, sc, t, "ko-KR") for g, sc, t in expand(KO_T)])
     for group, scenario, text, src in items:
-        if norm(text) in seen:
+        if fingerprint(text, src) in blocked or norm(text) in seen:
             dropped += 1
             continue
         seen.add(norm(text))

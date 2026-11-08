@@ -36,6 +36,10 @@ def main() -> int:
     for target in ("en-US", "es-US"):
         cases.append({"id": f"max-ko-{target}", "task": "translate", "source_locale": "ko-KR", "target_locale": target,
                       "scenario": "general", "text": ("가나다라마바사아자차카타파하" * 29)[:400]})
+    for source, sentence in (("en-US", "Please explain the rental agreement and help with my luggage. "),
+                             ("es-US", "Necesito ayuda con el contrato y el equipaje. ")):
+        cases.append({"id": f"max-{source}-ko", "task": "translate", "source_locale": source, "target_locale": "ko-KR",
+                      "scenario": "general", "text": (sentence * 12)[:400]})
     for c in cases:
         if c["task"] != "translate":
             check(c["id"], P.destination_messages(c["source_locale"], c["text"]), P.DESTINATION_MAX_TOKENS)
@@ -49,8 +53,9 @@ def main() -> int:
         check(c["id"] + ":retry", messages + [{"role": "assistant", "content": ""},
               {"role": "user", "content": json.dumps(repair, ensure_ascii=False)}], 2 * P.TRANSLATE_MAX_TOKENS)
         if c["target_locale"] == "ko-KR":
-            check(c["id"] + ":polish", P.polish_messages(c["source_locale"], c["text"], c.get("reference") or "번역 초안",
-                  P.select_glossary(c["text"], c["source_locale"], "ko-KR")), P.POLISH_MAX_TOKENS)
+            # 초안 256토큰 전체를 예약한다. 짧은 정답/자리표시자를 실제 초안 상한으로 쓰지 않는다.
+            check(c["id"] + ":polish", P.polish_messages(c["source_locale"], c["text"], "",
+                  P.select_glossary(c["text"], c["source_locale"], "ko-KR")), P.POLISH_MAX_TOKENS + P.TRANSLATE_MAX_TOKENS)
     report = {"context": limit, "tokenizer_dir": str(args.tokenizer_dir), "checks": len(rows),
               "largest": sorted(rows, key=lambda r: -r["total"])[:5], "failures": [r for r in rows if not r["fits"]]}
     dest = ROOT / "run" / "prompt_budget.json"

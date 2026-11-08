@@ -2,8 +2,10 @@
 import asyncio
 import json
 import time
+from urllib.parse import urlsplit
 
 import httpx
+from runtime_identity import ROOT, process_identity, verify_runtime
 
 
 class ModelError(Exception):
@@ -32,13 +34,37 @@ class ModelBadOutput(ModelError):
 class LlamaClient:
     is_mock = False
 
-    def __init__(self, base_url: str, model_id: str):
+    def __init__(self, base_url: str, model_id: str, manifest: dict | None = None):
         self.base_url = base_url.rstrip("/")
         self.root_url = self.base_url.removesuffix("/v1")
         self.model_id = model_id
         self.http = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=2.0))
+        self.manifest, self._identity = manifest, None
+
+    async def runtime_identity(self) -> dict:
+        if not self.manifest or urlsplit(self.root_url).hostname not in ("localhost", "127.0.0.1", "::1"):
+            raise ModelUnavailable("verified local model launch required")
+        try:
+            props = await self.http.get(f"{self.root_url}/props", timeout=2.0)
+            props.raise_for_status()
+            current = verify_runtime(props.json(), await self.lora_adapters(), self.manifest,
+                                     process_identity(ROOT / "run" / "llama.pid"))
+        except (OSError, ValueError, KeyError, TypeError, httpx.HTTPError) as e:
+            raise ModelUnavailable(f"model runtime verification failed: {e}") from e
+        if self._identity is not None and current != self._identity:
+            raise ModelUnavailable("model runtime changed; restart AI server before using/evaluating it")
+        self._identity = current
+        return current
 
     async def chat_json(self, messages: list[dict], schema: dict, max_tokens: int, sampling: dict, timeout_s: float) -> dict:
+        started = time.monotonic()
+        deadline = started + timeout_s
+        if self.manifest:
+            try:
+                await asyncio.wait_for(self.runtime_identity(), max(0.0, timeout_s))
+            except asyncio.TimeoutError as e:
+                raise ModelTimeout("runtime verification exceeded deadline") from e
+            timeout_s -= time.monotonic() - started
         # QWEN 구현: JSON 스키마 문법으로 출력 형식 강제, stream=false로 최종 결과만 검증
         body = {
             "model": self.model_id,
@@ -69,6 +95,11 @@ class LlamaClient:
             raise ModelBadOutput("non-JSON output") from e
         if not isinstance(out, dict):
             raise ModelBadOutput("JSON is not an object")
+        if self.manifest:
+            try:
+                await asyncio.wait_for(self.runtime_identity(), max(0.0, deadline - time.monotonic()))
+            except asyncio.TimeoutError as e:
+                raise ModelTimeout("runtime verification exceeded deadline") from e
         return out
 
     async def health(self) -> bool:
@@ -142,6 +173,9 @@ class MockClient:
 
     async def model_ids(self):
         return [self.model_id]
+
+    async def runtime_identity(self):
+        return None
 
     async def lora_adapters(self):
         return []

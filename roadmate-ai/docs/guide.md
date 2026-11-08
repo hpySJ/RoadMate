@@ -7,7 +7,7 @@
 Ubuntu에서는 PowerShell 스크립트 대신 `scripts/run.sh` 하나로 설치하고 실행합니다. llama.cpp는 공식 Ubuntu CUDA 12.8 빌드를 받아 쓰므로 직접 빌드하지 않습니다. 명령은 JupyterLab 터미널의 `roadmate-ai` 폴더에서 실행합니다.
 
 ```bash
-git clone -b feat/roadmate-ai-server https://github.com/hpySJ/RoadMate.git
+git clone -b codex/roadmate-ai-mvp https://github.com/hpySJ/RoadMate.git
 cd RoadMate/roadmate-ai
 nvidia-smi                                   # GPU 이름과 VRAM 확인
 bash scripts/run.sh setup                    # .venv, llama.cpp, 모델 다운로드, 환경 확인
@@ -129,7 +129,7 @@ POST /internal/v1/translate
 {"request_id":"req-001","session_id":"sess-001","session_epoch":3,"turn_id":1,
  "status":"ok","translated_text":"휘발유로 가득 넣어 주세요.","clarification_question":null,
  "engine_bundle":"roadmate-ko-en-q4-v1","model_id":"roadmate-qwen4b-q4",
- "prompt_version":"translate-v6","glossary_version":"rental-ko-en-es-v7","latency_ms":850}
+ "prompt_version":"translate-v6","glossary_version":"rental-ko-en-es-v8","latency_ms":850}
 ```
 - `source_locale`/`target_locale`: `ko-KR`, `en-US`, `es-US`, `es-MX` 중 한쪽은 반드시 `ko-KR`(한↔영, 한↔스). Pleos STT·TTS locale 값을 그대로 쓴다 / `scenario`: `gas_station`, `parking`, `rental_counter`, `accident`, `general`
 - 스페인어는 `es-US`와 `es-MX`를 같은 말로 처리한다. 번역문은 중남미식 존댓말(usted), 원화는 `30,000 wones`, 시각은 `3 p. m.`.
@@ -199,7 +199,7 @@ APK의 `127.0.0.1`은 PC가 아니다. APK → `http://10.0.2.2:8080`(백엔드)
 - `eval/dev.jsonl` 100건(통역 60 · 목적지 25 · 모호/지시 삽입 15): 프롬프트·용어집·추론 설정을 고를 때 사용.
 - `eval/general.jsonl` 180건(영→한 80 · 한→영 80 · 목적지 20): 정답 없이 주유·주차·렌터카·사고·도로·여행·숫자·부정·구어체·긴 문장·외래어 섞인 문장을 고르게 담은 범용 점검용. 요약에 상황(category)별 통과율과 502가 걸린 검사 종류가 나온다. 특정 문장에 맞춘 땜질이 아니라 걸린 검사 종류·상황을 보고 일반적인 규칙으로 고치고, 의미는 `review.csv`에서 사람이 본다.
 - `eval/general_es.jsonl` 100건(스→한 45 · 한→스 45 · 스페인어 목적지 10, `es-US`·`es-MX` 섞음): 스페인어 범용 점검용. 쓰는 법은 general과 같다. 스페인어는 원어민 검토가 따로 필요하다.
-- `eval/test.locked.jsonl` 60건: **설정을 확정한 뒤 한 번만** 실행. 결과를 보고 설정을 바꾸면 그 파일은 회귀용으로 돌리고 새 시험셋을 만든다.
+- `eval/test.locked.v2.jsonl` 60건: **설정을 확정한 뒤 한 번만** 실행. 결과를 보고 설정을 바꾸면 그 파일은 회귀용으로 돌리고 새 시험셋을 만든다.
 - 자동 통과는 보조 지표다. `review.csv`의 `human_meaning_ok`, `critical_error`를 원문·번역을 아는 사람이 채운다. 모델 채점으로 통과시키지 않는다.
 - 필수 최소쌍: 휘발유/경유, 5만/15만 원, 가득/3만 원만, 다친 사람 있다/없다, 오세요/오지 마세요, 왼쪽/오른쪽.
 - 1차 목표(측정 전 목표값): 잠근 시험 의미 보존 90% 이상, 준비 후 짧은 문장 번역 p95 3초, 발화 종료→TTS 시작 p95 5초, 에뮬레이터와 30분 동시 실행, P 해제 후 이전 결과 재생 0건.
@@ -345,11 +345,11 @@ POLISH_KO=1 bash scripts/run.sh start              # 다듬기를 켠 서버로 
 
 ## 11. 검증 상태
 
-현재 버전은 `python scripts/verify_mvp.py --local`로 API·번역 검증·학습 경계·개인화 회귀 715건과 시나리오를 통과했다. 결과는 `run/verify-*/`에 기록한다. 이 명령은 실제 모델 번역이나 SDK 기기 시험이 아니다.
+현재 버전은 `python scripts/verify_mvp.py --local`로 API·번역 검증·학습 경계·개인화 회귀 893건과 시나리오를 통과했다. 결과는 `run/verify-*/`에 기록한다. 이 명령은 실제 모델 번역이나 SDK 기기 시험이 아니다.
 
 실제 모델 품질의 완료 기준과 실행 순서는 [mvp_acceptance.md](mvp_acceptance.md)에 있다. 평가기는 mock을 기본 거절하고, 실제 서버의 코드·팩 해시와 실행 설정을 기록한다. 자연스러움과 의미 보존은 review.csv에 별도로 검토해야 한다. 기존 버전의 모델 평가 수치를 이번 버전의 성적으로 쓰지 않는다.
 
-현재 기본 모델은 Qwen3-4B-Instruct-2507 Q4_K_M, 다듬기는 기본 꺼짐이다. 문맥은 4096으로 늘렸다. 실제 토크나이저로 개발 문장·400자 입력·교정 재시도·다듬기 926개 조합을 측정했고, 최대 예약 3184토큰으로 모두 문맥 안에 들어왔다. 이는 측정 사례의 결과이며 모든 400자 문자열에 대한 상한 증명은 아니다. GPU 메모리·지연은 재측정해야 한다.
+현재 기본 모델은 Qwen3-4B-Instruct-2507 Q4_K_M, 다듬기는 기본 꺼짐이다. 문맥은 4096으로 늘렸다. 실제 토크나이저로 개발 문장·400자 입력·교정 재시도·다듬기 932개 조합을 측정했고, 최대 예약 3184토큰으로 모두 문맥 안에 들어왔다. 이는 측정 사례의 결과이며 모든 400자 문자열에 대한 상한 증명은 아니다. GPU 메모리·지연은 재측정해야 한다.
 
 토큰 예산 재검사에는 모델 가중치 대신 해당 base_revision의 tokenizer 파일만 필요하다. `tokenizers`, `Jinja2`가 설치된 Python에서 다음 명령을 쓴다.
 

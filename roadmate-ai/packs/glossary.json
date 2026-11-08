@@ -1,6 +1,12 @@
 {
-  "version": "rental-ko-en-es-v7",
+  "version": "rental-ko-en-es-v8",
   "review": {"status": "draft", "reviewer": null, "checked_at": "2026-11-08"},
+  "ko_only_hints": {
+    "완전자차": {
+      "en": "full rental car damage coverage option",
+      "es": "opción de cobertura completa por daños al auto rentado"
+    }
+  },
   "entries": [
     {"id": "fuel_gasoline", "category": "fuel", "critical": true, "en": ["gasoline", "petrol", "unleaded"], "es": ["gasolina", "nafta", "bencina", "gasolina regular", "gasolina sin plomo", "magna"], "ko": ["휘발유"]},
     {"id": "fuel_premium", "category": "fuel", "critical": true, "en": ["premium gasoline", "premium petrol", "premium unleaded"], "es": ["gasolina premium", "gasolina súper", "gasolina de alto octanaje"], "ko": ["고급 휘발유", "고급휘발유"]},

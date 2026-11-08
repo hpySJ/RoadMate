@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 
 import prompting as P  # noqa: E402
 from validation import looks_like_other_language, validate_destination, validate_translation  # noqa: E402
+from data_boundary import fingerprint, protected_templates, server_prompt_hashes  # noqa: E402
 
 
 def norm(s: str) -> str:
@@ -53,11 +54,11 @@ def check(rec: dict) -> list[str]:
 
 
 def duplicate_groups(recs: list[dict]) -> list[str]:
-    # 검증: 같은 문장이 다른 group_id로 두 번 들어오면 학습·검증 분할을 넘을 수 있으니 멈춘다
+    # 검증: 같은 틀의 슬롯 변형도 group_id가 갈리면 분할을 넘을 수 있으니 멈춘다.
     groups_by_text: dict[str, set] = {}
     for r in recs:
-        groups_by_text.setdefault(norm(r["text"]), set()).add(r["group_id"])
-    return [f"same text in groups {sorted(g)}: {t}" for t, g in groups_by_text.items() if len(g) > 1]
+        groups_by_text.setdefault(fingerprint(r["text"], r["source_locale"]), set()).add(r["group_id"])
+    return [f"same template in groups {sorted(g)}: {t}" for t, g in groups_by_text.items() if len(g) > 1]
 
 
 def split_groups(groups: list[str], seed: int) -> dict[str, str]:
@@ -78,17 +79,15 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     a = ap.parse_args()
 
-    blocked = {norm(c["text"]) for path in (ROOT / "eval").glob("*.jsonl") for c in load_jsonl(path)}
-    blocked |= {norm(e["input"]["utterance"]) for n in ("translate", "destination") for e in P.examples(n)}
-    blocked |= {norm(e["input"]["source"]) for e in P.examples("polish")}
+    blocked = protected_templates(ROOT)
     recs, errors = [], []
     for path in map(Path, a.inputs):
         for i, r in enumerate(load_jsonl(path)):
             where = f"{path.name}:{i + 1}"
             if r.get("review_status") != "approved" and not a.allow_draft:
                 continue
-            if norm(r.get("text", "")) in blocked:
-                errors.append(f"{where} leak: text overlaps eval or few-shot")
+            if fingerprint(r.get("text", ""), r["source_locale"]) in blocked:
+                errors.append(f"{where} leak: template overlaps eval or few-shot")
                 continue
             issues = check(r)
             if issues:
@@ -102,6 +101,7 @@ def main():
     if not recs:
         sys.exit("no records (approved 자료가 없으면 --allow-draft는 스모크 시험에만 사용)")
 
+    prompt_hashes = server_prompt_hashes(ROOT)
     rows = [build(r) for r in recs]
     if a.tokenizer:
         from transformers import AutoTokenizer
@@ -118,6 +118,8 @@ def main():
     for split in ("train", "validation"):
         if split not in assign.values():
             sys.exit(f"{split} split is empty ({len(assign)} groups): add more groups or change --seed")
+    if prompt_hashes != server_prompt_hashes(ROOT):
+        sys.exit("prompt inputs changed during preparation: run it again")
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     counts = {}
@@ -133,6 +135,7 @@ def main():
         "allow_draft": a.allow_draft,
         "prompt_versions": {"translate": P.prompt("translate")[0], "destination": P.prompt("destination")[0]},
         "glossary_version": P.glossary()["version"],
+        "prompt_hashes": prompt_hashes,
         "counts": counts,
         "groups": len(assign),
         "outputs": {f"{s}.jsonl": sha(out / f"{s}.jsonl") for s in counts},

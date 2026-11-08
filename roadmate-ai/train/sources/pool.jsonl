@@ -75,70 +75,60 @@
 {"id": "pool-0075", "group_id": "p_d4dc1c628e", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "general", "text": "죄송한데 저희는 영어를 잘 못해요."}
 {"id": "pool-0076", "group_id": "p_b5731844bb", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "general", "text": "천천히 말씀해 주시면 알아들을 수 있어요."}
 {"id": "pool-0077", "group_id": "p_0f8c69f432", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "general", "text": "제주 시내까지는 차로 30분쯤 걸려요."}
-{"id": "pool-0078", "group_id": "t_amount_fuel", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "gas_station", "text": "Please put in 20,000 won of gasoline."}
-{"id": "pool-0079", "group_id": "t_amount_fuel", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "gas_station", "text": "Please put in 40,000 won of gasoline."}
-{"id": "pool-0080", "group_id": "t_amount_fuel", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "gas_station", "text": "Please put in 40,000 won of diesel."}
-{"id": "pool-0081", "group_id": "t_amount_fuel", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "gas_station", "text": "Please put in 60,000 won of gasoline."}
-{"id": "pool-0082", "group_id": "t_amount_fuel", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "gas_station", "text": "Please put in 60,000 won of diesel."}
-{"id": "pool-0083", "group_id": "t_not_fuel", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "gas_station", "text": "This car takes gasoline, not diesel."}
-{"id": "pool-0084", "group_id": "t_not_fuel", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "gas_station", "text": "This car takes diesel, not gasoline."}
-{"id": "pool-0085", "group_id": "t_en_park_until", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "parking", "text": "Can we park here until 4 p.m.?"}
-{"id": "pool-0086", "group_id": "t_en_park_until", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "parking", "text": "Can we park here until 7:30 p.m.?"}
-{"id": "pool-0087", "group_id": "t_en_park_until", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "parking", "text": "Can we park here until 11 a.m.?"}
-{"id": "pool-0088", "group_id": "t_en_park_until", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "parking", "text": "Can we park here until noon?"}
-{"id": "pool-0089", "group_id": "t_park_fee", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "parking", "text": "So it's 500 won for every 10 minutes?"}
-{"id": "pool-0090", "group_id": "t_park_fee", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "parking", "text": "So it's 500 won for every 30 minutes?"}
-{"id": "pool-0091", "group_id": "t_park_fee", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "parking", "text": "So it's 1,000 won for every 10 minutes?"}
-{"id": "pool-0092", "group_id": "t_park_fee", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "parking", "text": "So it's 1,000 won for every 30 minutes?"}
-{"id": "pool-0093", "group_id": "t_park_fee", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "parking", "text": "So it's 2,000 won for every 10 minutes?"}
-{"id": "pool-0094", "group_id": "t_park_fee", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "parking", "text": "So it's 2,000 won for every 30 minutes?"}
-{"id": "pool-0095", "group_id": "t_return_time", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "text": "I'll bring the car back to Jeju Airport by 9 a.m. tomorrow."}
-{"id": "pool-0096", "group_id": "t_return_time", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "text": "I'll bring the car back to Jeju Airport by 9 a.m. on Saturday."}
-{"id": "pool-0097", "group_id": "t_return_time", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "text": "I'll bring the car back to Jeju Airport by 5 p.m. tomorrow."}
-{"id": "pool-0098", "group_id": "t_return_time", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "text": "I'll bring the car back to Jeju Airport by 5 p.m. on Saturday."}
-{"id": "pool-0099", "group_id": "t_return_time", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "text": "I'll bring the car back to your downtown office by 9 a.m. tomorrow."}
-{"id": "pool-0100", "group_id": "t_return_time", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "text": "I'll bring the car back to your downtown office by 9 a.m. on Saturday."}
-{"id": "pool-0101", "group_id": "t_return_time", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "text": "I'll bring the car back to your downtown office by 5 p.m. tomorrow."}
-{"id": "pool-0102", "group_id": "t_return_time", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "text": "I'll bring the car back to your downtown office by 5 p.m. on Saturday."}
-{"id": "pool-0103", "group_id": "t_en_extend", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "text": "Can I keep the car for two more days?"}
-{"id": "pool-0104", "group_id": "t_en_extend", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "text": "Can I keep the car for three more days?"}
-{"id": "pool-0105", "group_id": "t_en_side", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "accident", "text": "Something hit the left side of the car while it was parked."}
-{"id": "pool-0106", "group_id": "t_en_side", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "accident", "text": "Something hit the right side of the car while it was parked."}
-{"id": "pool-0107", "group_id": "t_en_turn", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "general", "text": "Should I turn left at the next light?"}
-{"id": "pool-0108", "group_id": "t_en_turn", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "general", "text": "Should I turn left at the second light?"}
-{"id": "pool-0109", "group_id": "t_en_turn", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "general", "text": "Should I turn left at the third light?"}
-{"id": "pool-0110", "group_id": "t_en_turn", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "general", "text": "Should I turn right at the next light?"}
-{"id": "pool-0111", "group_id": "t_en_turn", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "general", "text": "Should I turn right at the second light?"}
-{"id": "pool-0112", "group_id": "t_en_turn", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "general", "text": "Should I turn right at the third light?"}
-{"id": "pool-0113", "group_id": "t_en_phone", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "accident", "text": "You can reach me at 010-2468-1357."}
-{"id": "pool-0114", "group_id": "t_en_phone", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "accident", "text": "You can reach me at 010-7777-0909."}
-{"id": "pool-0115", "group_id": "t_amount_fuel", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "gas_station", "text": "휘발유로 3만 원어치 넣어 드릴게요."}
-{"id": "pool-0116", "group_id": "t_amount_fuel", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "gas_station", "text": "휘발유로 5만 원어치 넣어 드릴게요."}
-{"id": "pool-0117", "group_id": "t_amount_fuel", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "gas_station", "text": "휘발유로 가득 넣어 드릴게요."}
-{"id": "pool-0118", "group_id": "t_amount_fuel", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "gas_station", "text": "경유로 3만 원어치 넣어 드릴게요."}
-{"id": "pool-0119", "group_id": "t_amount_fuel", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "gas_station", "text": "경유로 5만 원어치 넣어 드릴게요."}
-{"id": "pool-0120", "group_id": "t_amount_fuel", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "gas_station", "text": "경유로 가득 넣어 드릴게요."}
-{"id": "pool-0121", "group_id": "t_not_fuel", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "gas_station", "text": "이 차는 휘발유 차라서 경유는 넣으면 안 돼요."}
-{"id": "pool-0122", "group_id": "t_not_fuel", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "gas_station", "text": "이 차는 경유 차라서 휘발유는 넣으면 안 돼요."}
-{"id": "pool-0123", "group_id": "t_return_time", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "rental_counter", "text": "오후 3시까지 반납해 주세요."}
-{"id": "pool-0124", "group_id": "t_return_time", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "rental_counter", "text": "오후 6시 반까지 반납해 주세요."}
-{"id": "pool-0125", "group_id": "t_return_time", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "rental_counter", "text": "모레 정오까지 반납해 주세요."}
-{"id": "pool-0126", "group_id": "t_park_fee", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "parking", "text": "주차비는 10분에 500원이에요."}
-{"id": "pool-0127", "group_id": "t_park_fee", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "parking", "text": "주차비는 10분에 천 원이에요."}
-{"id": "pool-0128", "group_id": "t_park_fee", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "parking", "text": "주차비는 10분에 2천 원이에요."}
-{"id": "pool-0129", "group_id": "t_park_fee", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "parking", "text": "주차비는 30분에 500원이에요."}
-{"id": "pool-0130", "group_id": "t_park_fee", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "parking", "text": "주차비는 30분에 2천 원이에요."}
-{"id": "pool-0131", "group_id": "t_ko_insurance", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "rental_counter", "text": "보험을 추가하시면 하루에 만 원이 더 나와요."}
-{"id": "pool-0132", "group_id": "t_ko_insurance", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "rental_counter", "text": "보험을 추가하시면 하루에 만 5천 원이 더 나와요."}
-{"id": "pool-0133", "group_id": "t_ko_insurance", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "rental_counter", "text": "보험을 추가하시면 하루에 2만 원이 더 나와요."}
-{"id": "pool-0134", "group_id": "t_ko_lane", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "general", "text": "왼쪽 차선으로 미리 들어가세요."}
-{"id": "pool-0135", "group_id": "t_ko_lane", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "general", "text": "오른쪽 차선으로 미리 들어가세요."}
-{"id": "pool-0136", "group_id": "t_ko_exit", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "general", "text": "첫 번째 출구로 나가시면 돼요."}
-{"id": "pool-0137", "group_id": "t_ko_exit", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "general", "text": "두 번째 출구로 나가시면 돼요."}
-{"id": "pool-0138", "group_id": "t_ko_exit", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "general", "text": "세 번째 출구로 나가시면 돼요."}
-{"id": "pool-0139", "group_id": "t_ko_floor", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "parking", "text": "차는 지하 1층 A구역에 있어요."}
-{"id": "pool-0140", "group_id": "t_ko_floor", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "parking", "text": "차는 지하 1층 C구역에 있어요."}
-{"id": "pool-0141", "group_id": "t_ko_floor", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "parking", "text": "차는 지하 2층 A구역에 있어요."}
-{"id": "pool-0142", "group_id": "t_ko_floor", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "parking", "text": "차는 지하 2층 C구역에 있어요."}
-{"id": "pool-0143", "group_id": "t_ko_floor", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "parking", "text": "차는 지하 3층 A구역에 있어요."}
-{"id": "pool-0144", "group_id": "t_ko_floor", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "parking", "text": "차는 지하 3층 C구역에 있어요."}
+{"id": "pool-0078", "group_id": "t_not_fuel", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "gas_station", "text": "This car takes gasoline, not diesel."}
+{"id": "pool-0079", "group_id": "t_not_fuel", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "gas_station", "text": "This car takes diesel, not gasoline."}
+{"id": "pool-0080", "group_id": "t_en_park_until", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "parking", "text": "Can we park here until 4 p.m.?"}
+{"id": "pool-0081", "group_id": "t_en_park_until", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "parking", "text": "Can we park here until 7:30 p.m.?"}
+{"id": "pool-0082", "group_id": "t_en_park_until", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "parking", "text": "Can we park here until 11 a.m.?"}
+{"id": "pool-0083", "group_id": "t_en_park_until", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "parking", "text": "Can we park here until noon?"}
+{"id": "pool-0084", "group_id": "t_park_fee", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "parking", "text": "So it's 500 won for every 10 minutes?"}
+{"id": "pool-0085", "group_id": "t_park_fee", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "parking", "text": "So it's 500 won for every 30 minutes?"}
+{"id": "pool-0086", "group_id": "t_park_fee", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "parking", "text": "So it's 1,000 won for every 10 minutes?"}
+{"id": "pool-0087", "group_id": "t_park_fee", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "parking", "text": "So it's 1,000 won for every 30 minutes?"}
+{"id": "pool-0088", "group_id": "t_park_fee", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "parking", "text": "So it's 2,000 won for every 10 minutes?"}
+{"id": "pool-0089", "group_id": "t_park_fee", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "parking", "text": "So it's 2,000 won for every 30 minutes?"}
+{"id": "pool-0090", "group_id": "t_return_time", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "text": "I'll bring the car back to Jeju Airport by 9 a.m. tomorrow."}
+{"id": "pool-0091", "group_id": "t_return_time", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "text": "I'll bring the car back to Jeju Airport by 9 a.m. on Saturday."}
+{"id": "pool-0092", "group_id": "t_return_time", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "text": "I'll bring the car back to Jeju Airport by 5 p.m. tomorrow."}
+{"id": "pool-0093", "group_id": "t_return_time", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "text": "I'll bring the car back to Jeju Airport by 5 p.m. on Saturday."}
+{"id": "pool-0094", "group_id": "t_return_time", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "text": "I'll bring the car back to your downtown office by 9 a.m. tomorrow."}
+{"id": "pool-0095", "group_id": "t_return_time", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "text": "I'll bring the car back to your downtown office by 9 a.m. on Saturday."}
+{"id": "pool-0096", "group_id": "t_return_time", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "text": "I'll bring the car back to your downtown office by 5 p.m. tomorrow."}
+{"id": "pool-0097", "group_id": "t_return_time", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "text": "I'll bring the car back to your downtown office by 5 p.m. on Saturday."}
+{"id": "pool-0098", "group_id": "t_en_extend", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "text": "Can I keep the car for two more days?"}
+{"id": "pool-0099", "group_id": "t_en_extend", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "text": "Can I keep the car for three more days?"}
+{"id": "pool-0100", "group_id": "t_en_side", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "accident", "text": "Something hit the left side of the car while it was parked."}
+{"id": "pool-0101", "group_id": "t_en_side", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "accident", "text": "Something hit the right side of the car while it was parked."}
+{"id": "pool-0102", "group_id": "t_en_turn", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "general", "text": "Should I turn left at the next light?"}
+{"id": "pool-0103", "group_id": "t_en_turn", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "general", "text": "Should I turn left at the second light?"}
+{"id": "pool-0104", "group_id": "t_en_turn", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "general", "text": "Should I turn left at the third light?"}
+{"id": "pool-0105", "group_id": "t_en_turn", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "general", "text": "Should I turn right at the next light?"}
+{"id": "pool-0106", "group_id": "t_en_turn", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "general", "text": "Should I turn right at the second light?"}
+{"id": "pool-0107", "group_id": "t_en_turn", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "general", "text": "Should I turn right at the third light?"}
+{"id": "pool-0108", "group_id": "t_en_phone", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "accident", "text": "You can reach me at 010-2468-1357."}
+{"id": "pool-0109", "group_id": "t_en_phone", "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "accident", "text": "You can reach me at 010-7777-0909."}
+{"id": "pool-0110", "group_id": "t_amount_fuel", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "gas_station", "text": "휘발유로 3만 원어치 넣어 드릴게요."}
+{"id": "pool-0111", "group_id": "t_amount_fuel", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "gas_station", "text": "휘발유로 5만 원어치 넣어 드릴게요."}
+{"id": "pool-0112", "group_id": "t_amount_fuel", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "gas_station", "text": "휘발유로 가득 넣어 드릴게요."}
+{"id": "pool-0113", "group_id": "t_amount_fuel", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "gas_station", "text": "경유로 3만 원어치 넣어 드릴게요."}
+{"id": "pool-0114", "group_id": "t_amount_fuel", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "gas_station", "text": "경유로 5만 원어치 넣어 드릴게요."}
+{"id": "pool-0115", "group_id": "t_amount_fuel", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "gas_station", "text": "경유로 가득 넣어 드릴게요."}
+{"id": "pool-0116", "group_id": "t_not_fuel", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "gas_station", "text": "이 차는 휘발유 차라서 경유는 넣으면 안 돼요."}
+{"id": "pool-0117", "group_id": "t_not_fuel", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "gas_station", "text": "이 차는 경유 차라서 휘발유는 넣으면 안 돼요."}
+{"id": "pool-0118", "group_id": "t_return_time", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "rental_counter", "text": "오후 3시까지 반납해 주세요."}
+{"id": "pool-0119", "group_id": "t_return_time", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "rental_counter", "text": "오후 6시 반까지 반납해 주세요."}
+{"id": "pool-0120", "group_id": "t_return_time", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "rental_counter", "text": "모레 정오까지 반납해 주세요."}
+{"id": "pool-0121", "group_id": "t_ko_insurance", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "rental_counter", "text": "보험을 추가하시면 하루에 만 원이 더 나와요."}
+{"id": "pool-0122", "group_id": "t_ko_insurance", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "rental_counter", "text": "보험을 추가하시면 하루에 만 5천 원이 더 나와요."}
+{"id": "pool-0123", "group_id": "t_ko_insurance", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "rental_counter", "text": "보험을 추가하시면 하루에 2만 원이 더 나와요."}
+{"id": "pool-0124", "group_id": "t_ko_lane", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "general", "text": "왼쪽 차선으로 미리 들어가세요."}
+{"id": "pool-0125", "group_id": "t_ko_lane", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "general", "text": "오른쪽 차선으로 미리 들어가세요."}
+{"id": "pool-0126", "group_id": "t_ko_exit", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "general", "text": "첫 번째 출구로 나가시면 돼요."}
+{"id": "pool-0127", "group_id": "t_ko_exit", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "general", "text": "두 번째 출구로 나가시면 돼요."}
+{"id": "pool-0128", "group_id": "t_ko_exit", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "general", "text": "세 번째 출구로 나가시면 돼요."}
+{"id": "pool-0129", "group_id": "t_ko_floor", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "parking", "text": "차는 지하 1층 A구역에 있어요."}
+{"id": "pool-0130", "group_id": "t_ko_floor", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "parking", "text": "차는 지하 1층 C구역에 있어요."}
+{"id": "pool-0131", "group_id": "t_ko_floor", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "parking", "text": "차는 지하 2층 A구역에 있어요."}
+{"id": "pool-0132", "group_id": "t_ko_floor", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "parking", "text": "차는 지하 2층 C구역에 있어요."}
+{"id": "pool-0133", "group_id": "t_ko_floor", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "parking", "text": "차는 지하 3층 A구역에 있어요."}
+{"id": "pool-0134", "group_id": "t_ko_floor", "source_locale": "ko-KR", "target_locale": "en-US", "scenario": "parking", "text": "차는 지하 3층 C구역에 있어요."}

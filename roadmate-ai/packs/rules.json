@@ -1,5 +1,5 @@
 {
-  "version": "rules-v4",
+  "version": "rules-v5",
   "review": {
     "status": "draft",
     "reviewer": null,
@@ -52,6 +52,7 @@
     "first_time_lhd": {"ko-KR": "좌핸들 차량을 운전하는 건 처음이에요", "en-US": "It is my first time driving a car with the steering wheel on the left", "fr-CA": "C'est la première fois que je conduis une voiture avec le volant à gauche", "es-US": "Es mi primera vez manejando un auto con el volante a la izquierda"}
   },
   "freshness_ms": {
+    "gear": 5000,
     "speed": 1500,
     "turn_signal": 3000,
     "current_speed_limit": 5000,
@@ -66,7 +67,7 @@
   "rules": [
     {
       "rule_id": "school_zone_entry",
-      "rule_version": "rules-v4",
+      "rule_version": "rules-v5",
       "handler": "school_zone_entry",
       "priority": 3,
       "requires": [
@@ -86,7 +87,7 @@
     },
     {
       "rule_id": "school_zone_current_speed",
-      "rule_version": "rules-v4",
+      "rule_version": "rules-v5",
       "handler": "school_zone_current_speed",
       "priority": 1,
       "requires": [
@@ -115,7 +116,7 @@
     },
     {
       "rule_id": "school_zone_approach",
-      "rule_version": "rules-v4",
+      "rule_version": "rules-v5",
       "handler": "school_zone_approach",
       "priority": 2,
       "requires": [
@@ -145,7 +146,7 @@
     },
     {
       "rule_id": "school_zone_approach_no_limit",
-      "rule_version": "rules-v4",
+      "rule_version": "rules-v5",
       "handler": "school_zone_approach_no_limit",
       "priority": 3,
       "requires": [
@@ -169,7 +170,7 @@
     },
     {
       "rule_id": "right_turn_red_light_stop",
-      "rule_version": "rules-v4",
+      "rule_version": "rules-v5",
       "handler": "right_turn",
       "priority": 2,
       "requires": [
@@ -194,7 +195,7 @@
     },
     {
       "rule_id": "unprotected_left_turn",
-      "rule_version": "rules-v4",
+      "rule_version": "rules-v5",
       "handler": "unprotected_left",
       "priority": 2,
       "requires": [

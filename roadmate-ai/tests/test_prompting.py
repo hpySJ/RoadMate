@@ -5,6 +5,11 @@ import pytest
 import prompting as P
 
 
+def test_full_rental_coverage_hint_is_korean_source_only():
+    assert P.select_glossary("완전 자차도 포함인가요?", "ko-KR", "en-US")["완전 자차"] == "full rental car damage coverage option"
+    assert P.select_glossary("¿La cobertura total tiene deducible?", "es-MX", "ko-KR") == {"deducible": "면책금"}
+
+
 def test_manifest_versions_match_served_artifacts():
     from config import load_manifest
     from guidance import load_pack
@@ -29,6 +34,18 @@ def test_spanish_time_hints_use_the_whole_clock_expression(locale, source, surfa
     assert P.select_glossary(source, locale, "ko-KR") == {surface: korean}
     out = {"status": "ok", "translated_text": korean, "clarification_question": None}
     assert validate_translation(out, source, locale, "ko-KR") == []
+
+
+@pytest.mark.parametrize("locale", ["es-US", "es-MX"])
+@pytest.mark.parametrize("source,expected", [
+    ("Necesito dos para las ocho de la noche.", {"ocho de la noche": "오후 8시"}),
+    ("Necesito cinco para las ocho de la noche.", {"ocho de la noche": "오후 8시"}),
+    ("Somos cuatro para las nueve.", {}),
+    ("Faltan dos minutos para las ocho de la noche.", {"dos minutos para las ocho de la noche": "오후 7시 58분"}),
+    ("Necesito un cuarto para las ocho de la noche.", {"ocho de la noche": "오후 8시"}),
+])
+def test_count_and_deadline_are_not_minutes_before_the_hour(locale, source, expected):
+    assert P.select_glossary(source, locale, "ko-KR") == expected
 
 
 def test_messages_shape_and_glossary():

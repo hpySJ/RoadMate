@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "train"))
 import prepare_data  # noqa: E402
 import review_data  # noqa: E402
 import train_qlora  # noqa: E402
+import data_boundary as B  # noqa: E402
 
 
 def row(**kw):
@@ -40,34 +41,36 @@ def test_import_rejects_approved_rows_that_break_checks():
 
 def test_pool_groups_are_stable_and_parallel_templates_share_group():
     import hashlib
+    from sources import make_pool
     norm = lambda s: "".join(s.lower().split())  # noqa: E731
     pool = [json.loads(x) for x in (ROOT / "train" / "sources" / "pool.jsonl").read_text(encoding="utf-8").splitlines()]
     for p in pool:
         if p["group_id"].startswith("p_"):  # 손으로 쓴 문장: 내용으로 정한 ID(목록 순서와 무관)
             assert p["group_id"] == "p_" + hashlib.sha1(norm(p["text"]).encode()).hexdigest()[:10]
     langs = {}
-    for p in pool:
-        langs.setdefault(p["group_id"], set()).add(p["source_locale"])
+    for locale, templates in (("en-US", make_pool.EN_T), ("ko-KR", make_pool.KO_T)):
+        for group, _, _ in make_pool.expand(templates):
+            langs.setdefault(group, set()).add(locale)
     assert langs["t_not_fuel"] == langs["t_amount_fuel"] == {"en-US", "ko-KR"}
 
 
 def test_prepare_rejects_same_text_in_two_groups():
     recs = [{"group_id": "g1", "text": "반납은 오후 4시까지 해 주세요."}, {"group_id": "g2", "text": "반납은 오후 4시까지  해 주세요."},
             {"group_id": "g3", "text": "다른 문장이에요."}]
+    for rec in recs:
+        rec["source_locale"] = "ko-KR"
     errs = prepare_data.duplicate_groups(recs)
     assert len(errs) == 1 and "g1" in errs[0] and "g2" in errs[0]
 
 
 def test_pool_has_no_eval_overlap():
-    norm = lambda s: "".join(s.lower().split())  # noqa: E731
     pool = [json.loads(x) for x in (ROOT / "train" / "sources" / "pool.jsonl").read_text(encoding="utf-8").splitlines()]
-    evals = {norm(json.loads(x)["text"]) for path in (ROOT / "eval").glob("*.jsonl")
-             for x in path.read_text(encoding="utf-8").splitlines() if x.strip()}
-    assert pool and not {norm(p["text"]) for p in pool} & evals
+    assert pool and not {B.fingerprint(p["text"], p["source_locale"]) for p in pool} & B.protected_templates(ROOT)
     assert len({p["id"] for p in pool}) == len(pool)
 
 
 def test_seed_variants_share_pool_template_groups():
+    from sources import make_pool
     seed = prepare_data.load_jsonl(ROOT / "train" / "data" / "seed.draft.jsonl")
     expected = {
         "Just 10,000 won of diesel, please.": "t_amount_fuel",
@@ -75,22 +78,23 @@ def test_seed_variants_share_pool_template_groups():
         "Can I park here until 8 p.m.?": "t_en_park_until",
         "내일 오전 10시까지 반납해 주세요.": "t_return_time",
     }
-    pool_groups = {r["group_id"] for r in prepare_data.load_jsonl(ROOT / "train" / "sources" / "pool.jsonl")}
+    pool_groups = {g for templates in (make_pool.EN_T, make_pool.KO_T) for g, _, _ in make_pool.expand(templates)}
     for text, group in expected.items():
         rec = next(r for r in seed if r["text"] == text)
         assert rec["group_id"] == group and group in pool_groups
     assert all(r["review_status"] == "draft" for r in seed)
 
 
-@pytest.mark.parametrize("eval_name", ["general_es.jsonl", "naturalness.dev.jsonl", "test.locked.jsonl"])
+@pytest.mark.parametrize("eval_name", ["general_es.jsonl", "naturalness.dev.jsonl", "test.locked.jsonl", "test.locked.v2.jsonl"])
 def test_training_excludes_all_evaluation_files(monkeypatch, tmp_path, capsys, eval_name):
     from sources import make_pool
 
     for directory in ("eval", "prompts", "train/data", "train/sources"):
         (tmp_path / directory).mkdir(parents=True, exist_ok=True)
-    text = "평가에 쓰는 문장입니다."
-    (tmp_path / "eval" / eval_name).write_text(json.dumps({"text": text}) + "\n", encoding="utf-8")
-    for name in ("translate", "polish"):
+    text = "주차비는 30분에 2천 원이에요."
+    held = {"text": "주차비는 10분에 천 원이에요.", "source_locale": "ko-KR"}
+    (tmp_path / "eval" / eval_name).write_text(json.dumps(held) + "\n", encoding="utf-8")
+    for name in ("translate", "destination", "polish"):
         (tmp_path / "prompts" / f"{name}.examples.json").write_text("[]", encoding="utf-8")
     monkeypatch.setattr(make_pool, "ROOT", tmp_path)
     monkeypatch.setattr(make_pool, "KO", [("general", text)])
@@ -123,6 +127,9 @@ def test_prepare_rejects_unusable_training_data(tmp_path, case, message):
         rec.update(text=ex["input"]["source"], source_locale=ex["input"]["source_locale"],
                    output={"status": "ok", "translated_text": ex["output"]["text"], "clarification_question": None})
     elif case == "validation_only":
+        rec.update(text="The orange folder belongs in the glove compartment.",
+                   output={"status": "ok", "translated_text": "주황색 서류철은 글러브 박스에 넣어야 해요.",
+                           "clarification_question": None})
         rec["group_id"] = "s_rental_return_10am"
     source, output = tmp_path / "input.jsonl", tmp_path / "out"
     source.write_text(json.dumps(rec, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -146,7 +153,8 @@ def test_draft_does_not_overwrite_human_review(monkeypatch, tmp_path):
 @pytest.mark.parametrize("case, message", [("missing", "run train/prepare_data.py first"),
                                            ("draft", "smoke only"), ("changed", "changed after prepare_data.py"),
                                            ("prompt", "prompt/glossary versions changed"),
-                                           ("glossary", "prompt/glossary versions changed")])
+                                           ("glossary", "prompt/glossary versions changed"),
+                                           ("hashes", "prompt input hashes changed")])
 def test_training_rejects_bad_data_before_loading_model(tmp_path, case, message):
     cfg = json.loads((ROOT / "train/training_config.json").read_text(encoding="utf-8"))
     cfg.update(data_dir=str(tmp_path), base_model=str(tmp_path / "no-model"))
@@ -155,19 +163,56 @@ def test_training_rejects_bad_data_before_loading_model(tmp_path, case, message)
     if case != "missing":
         (tmp_path / "train.jsonl").write_text("changed", encoding="utf-8")
         manifest = {"allow_draft": case == "draft", "outputs": {"train.jsonl": "incorrect_hash"}}
-        if case in ("prompt", "glossary"):
+        if case in ("prompt", "glossary", "hashes"):
             manifest.update(outputs={"train.jsonl": prepare_data.sha(tmp_path / "train.jsonl")},
                             prompt_versions={n: prepare_data.P.prompt(n)[0] for n in ("translate", "destination")},
                             glossary_version=prepare_data.P.glossary()["version"])
             if case == "prompt":
                 manifest["prompt_versions"]["translate"] = "outdated"
-            else:
+            elif case == "glossary":
                 manifest["glossary_version"] = "outdated"
+            else:
+                manifest["prompt_hashes"] = B.server_prompt_hashes(ROOT)
+                manifest["prompt_hashes"]["prompts/translate.examples.json"] = "modified_without_version_bump"
         (tmp_path / "dataset_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     result = subprocess.run([sys.executable, "-B", str(ROOT / "train/train_qlora.py"), "--config", str(config)],
                             capture_output=True)
     assert result.returncode != 0 and message.encode() in result.stdout + result.stderr
     assert b"ModuleNotFoundError" not in result.stderr
+
+
+@pytest.mark.parametrize("locale, left, right", [
+    ("en-US", "Please put in 60,000 won of diesel.", "Please put in 20,000 won of gasoline."),
+    ("ko-KR", "주차비는 30분에 2천 원이에요.", "주차비는 10분에 천 원이에요."),
+    ("es-MX", "Ponga cuarenta mil wones de diésel.", "Ponga veinte mil wones de gasolina."),
+    ("en-US", "Take me to Jeju Airport.", "Take me to Hamdeok Beach."),
+    ("en-US", "Fill it up with gas, please.", "Fill it up with fuel, please."),
+    ("en-US", "Can you fill it with, um, the...", "Can you fill it with, uh..."),
+])
+def test_slot_variants_cannot_cross_training_groups(locale, left, right):
+    assert B.fingerprint(left, locale) == B.fingerprint(right, locale)
+    recs = [{"group_id": f"g{i}", "text": t, "source_locale": locale} for i, t in enumerate((left, right))]
+    assert len(prepare_data.duplicate_groups(recs)) == 1
+    recs[1]["group_id"] = "g0"
+    assert prepare_data.duplicate_groups(recs) == []
+
+
+def test_template_boundary_keeps_distinct_actions_separate():
+    assert B.fingerprint("Please refund 20,000 won.", "en-US") != B.fingerprint("Please charge 20,000 won.", "en-US")
+
+
+@pytest.mark.parametrize("path", ["prompts/translate.txt", "prompts/translate.examples.json", "packs/glossary.json",
+                                  "packs/poi.demo.json", "prompting.py"])
+def test_prompt_hashes_detect_content_edits_without_version_bump(tmp_path, path):
+    for name in B.server_prompt_hashes(ROOT):
+        target = tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((ROOT / name).read_bytes())
+    before = B.server_prompt_hashes(tmp_path)
+    with (tmp_path / path).open("ab") as f:
+        f.write(b"\n ")
+    after = B.server_prompt_hashes(tmp_path)
+    assert [p for p in before if before[p] != after[p]] == [path]
 
 
 @pytest.mark.parametrize("case, message", [("exact", None), ("train_empty", "train split is empty"),

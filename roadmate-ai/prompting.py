@@ -136,6 +136,10 @@ def select_glossary(text: str, source_locale: str, target_locale: str) -> dict[s
     by_id = {e["id"]: e for e in glossary()["entries"]}
     src, tgt = LANG_KEY[source_locale], LANG_KEY[target_locale]
     out = {surface: by_id[cid][tgt][0] for cid, surface in match_concepts(text, source_locale).items()}
+    if src == "ko":
+        for term, targets in glossary().get("ko_only_hints", {}).items():
+            for start, end, _ in _find_terms(text, [term], "ko"):
+                out[text[start:end]] = targets[tgt]
     found = {}
     for p in places():
         # 스페인어 화자도 영어 표기(Jeju Airport)를 말할 수 있어 외국어 쪽은 로마자 이름을 모두 본다

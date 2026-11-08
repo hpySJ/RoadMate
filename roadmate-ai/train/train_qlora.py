@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import prompting as P  # noqa: E402
+from data_boundary import server_prompt_hashes  # noqa: E402
 
 
 def check_lengths(ds, tok, max_length: int) -> None:
@@ -101,6 +102,8 @@ def main():
     current_prompts = {name: P.prompt(name)[0] for name in ("translate", "destination")}
     if dm.get("prompt_versions") != current_prompts or dm.get("glossary_version") != P.glossary()["version"]:
         raise SystemExit("prompt/glossary versions changed: re-run train/prepare_data.py")
+    if dm.get("prompt_hashes") != server_prompt_hashes(ROOT):
+        raise SystemExit("prompt input hashes changed: re-run train/prepare_data.py")
 
     # 검수·무결성 확인 전에는 학습 의존성이나 모델을 불러오지 않는다.
     import torch

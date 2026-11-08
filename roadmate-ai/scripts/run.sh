@@ -171,6 +171,8 @@ case "${1:-}" in
     model)
         model_args
         llama_env
+        mkdir -p run
+        echo "$$" > run/llama.pid
         exec "$SERVER" "${ARGS[@]}"
         ;;
     ai)

@@ -1,9 +1,12 @@
 """주행 안내 규칙 엔진 기준 구현. 모델 없이 동작하며 APK가 같은 동작으로 포팅한다.
 
 # 프론트 연동: APK(Kotlin)에서 이 파일과 packs/fixtures/guidance_scenarios.json을 기준으로 포팅·동등성 시험
+now_ms와 ts_ms는 같은 단조 시계의 밀리초. day_key는 앱의 Asia/Seoul 날짜를 권장한다.
+zone_id는 제공자·도로·구역을 구별하는 안정적인 ID이며, 확인할 수 없으면 구역 신호를 보내지 않는다.
 실행: python guidance.py packs/fixtures/guidance_scenarios.json
 """
 import json
+import math
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,24 +39,39 @@ class Utterance:
     ttl_ms: int
     zone_id: str | None = None
     day_key: str = ""
+    clock_epoch: int = 0
 
 
-def _fresh(sig: dict | None, now: int, max_age: int | None):
+def _fresh(sig: dict | None, now: int, max_age: int):
     """status=valid이고 값이 있고 max_age 안에 관측된 신호만 사용한다. now보다 미래 시각(시계 불일치)은 버린다."""
-    if not sig or sig.get("status") != "valid" or sig.get("value", sig.get("state")) is None:
+    if not isinstance(sig, dict) or sig.get("status") != "valid" or sig.get("value", sig.get("state")) is None:
         return None
     ts = sig.get("ts_ms")
-    if ts is not None and int(ts) > now:
-        return None
-    if max_age is not None and (ts is None or now - int(ts) > max_age):
+    if type(ts) is not int or ts < 0 or not 0 <= now - ts <= max_age:
         return None
     return sig
 
 
-def _kph(speed_sig: dict) -> int:
-    # 검증: Android 속도 속성은 m/s
-    v = float(speed_sig["value"])
-    return round(abs(v) * 3.6) if speed_sig.get("unit", "m/s") == "m/s" else round(abs(v))
+def _speed_mps(speed_sig: dict) -> float | None:
+    value, unit = speed_sig.get("value"), speed_sig.get("unit")
+    if type(value) not in (int, float) or unit not in ("m/s", "km/h"):
+        return None
+    try:
+        value = float(value)
+    except OverflowError:
+        return None
+    if not math.isfinite(value):
+        return None
+    return abs(value) if unit == "m/s" else abs(value) / 3.6
+
+
+def _valid_id(value) -> bool:
+    return isinstance(value, str) and bool(value) and value == value.strip()
+
+
+def _check_day_key(day_key):
+    if not _valid_id(day_key):
+        raise ValueError("day_key must be a nonempty string")
 
 
 class GuidanceEngine:
@@ -75,25 +93,41 @@ class GuidanceEngine:
         rules = [r for r in pack["rules"] if not (experienced and r["kind"] == "explanation")]
         self.rules = sorted(rules, key=lambda r: r["priority"])
         self.over_since: dict[str, tuple[int, int, str | None]] = {}
-        self.last_played: dict[str, int] = {}
+        self.last_played: dict[tuple[str, str | None], int] = {}
         self.played: dict[tuple[str, str], int] = {}
         self.announced_zones: set[tuple[str, str, str]] = set()
+        self.last_now: int | None = None
+        self.clock_epoch = 0
+
+    def _observe_time(self, now: int):
+        if type(now) is not int or now < 0:
+            raise ValueError("now_ms must be nonnegative monotonic milliseconds")
+        if self.last_now is not None and now < self.last_now:
+            self.over_since.clear()
+            self.last_played.clear()
+            self.played.clear()
+            self.announced_zones.clear()
+            # 이전 시계 구간에서 만든 큐 항목과 늦게 도착한 재생 완료 콜백도 폐기한다.
+            self.clock_epoch += 1
+        self.last_now = now
 
     # ------------------------------------------------------------ 조건(순수 함수)
     def _cond(self, rule: dict, snap: dict) -> tuple[dict, str | None] | None:
         now, t, h = snap["now_ms"], rule.get("trigger", {}), rule["handler"]
         speed = _fresh(snap.get("speed"), now, self.fresh["speed"])
+        mps = _speed_mps(speed) if speed else None
         zone = _fresh(snap.get("school_zone"), now, self.fresh["school_zone"])
+        if zone and not _valid_id(zone.get("zone_id")):
+            zone = None
         if h == "school_zone_entry":
-            if (zone and zone.get("state") == "inside" and isinstance(zone.get("zone_id"), str)
-                    and zone["zone_id"]):
+            if zone and zone.get("state") == "inside":
                 return {}, zone["zone_id"]
             return None
         if h == "school_zone_current_speed":
             lim = _fresh(snap.get("current_speed_limit"), now, self.fresh["current_speed_limit"])
-            if not (zone and zone["state"] == "inside" and lim and speed):
+            if not (zone and zone["state"] == "inside" and lim and mps is not None):
                 return None
-            limit, kph = int(lim["value"]), _kph(speed)
+            limit, kph = int(lim["value"]), round(mps * 3.6)
             if kph <= limit + t["over_limit_kph"]:
                 return None
             return {"limit_kph": limit, "speed_kph": kph}, zone.get("zone_id")
@@ -107,9 +141,9 @@ class GuidanceEngine:
             has_limit = zone.get("limit_status") == "valid" and zone.get("limit_kph") is not None
             if h == "school_zone_approach_no_limit":
                 return ({}, zone.get("zone_id")) if not has_limit else None
-            if not (has_limit and speed):
+            if not (has_limit and mps is not None):
                 return None
-            limit, kph = int(zone["limit_kph"]), _kph(speed)
+            limit, kph = int(zone["limit_kph"]), round(mps * 3.6)
             if kph <= limit + t["over_limit_kph"]:
                 return None  # 원안: 이미 느리면 말하지 않음
             return {"limit_kph": limit, "speed_kph": kph}, zone.get("zone_id")
@@ -128,7 +162,7 @@ class GuidanceEngine:
             tbt = _fresh(snap.get("tbt"), now, self.fresh["tbt"])
             # 비보호 표지·경로가 확인된 같은 교차로만 사용한다. 좌회전 TBT만으로 추측하지 않는다.
             if not (context and context.get("value") is True and context.get("on_route") is True
-                    and isinstance(context.get("intersection_id"), str) and context["intersection_id"]
+                    and _valid_id(context.get("intersection_id"))
                     and tbt and tbt.get("value") == "left"
                     and tbt.get("intersection_id") == context["intersection_id"]):
                 return None
@@ -147,12 +181,13 @@ class GuidanceEngine:
     def _blocked(self, rule: dict, day_key: str, now: int, zone_id: str | None) -> bool:
         # 검증: 일일 횟수(교육성 설명만, 과속 경고는 null로 제한 없음)·재생 간격·구역당 1회. 생성 시와 큐에서 꺼낼 때 모두 검사
         rid, limit = rule["rule_id"], rule["daily_explanation_limit"]
+        cooldown_key = (rid, zone_id if rule["kind"] == "warning" else None)
         zone_repeat = (day_key, rid, zone_id) in self.announced_zones
         if rid == "school_zone_entry":
             zone_repeat = any(day == day_key and z == zone_id and r.startswith("school_zone_")
                               for day, r, z in self.announced_zones)
         return ((limit is not None and self.played.get((day_key, rid), 0) >= limit)
-                or now - self.last_played.get(rid, -10**12) < rule["cooldown_seconds"] * 1000
+                or now - self.last_played.get(cooldown_key, -10**12) < rule["cooldown_seconds"] * 1000
                 or bool(zone_id and (rid.startswith("school_zone_approach") or rid == "school_zone_entry")
                         and zone_repeat))
 
@@ -160,6 +195,8 @@ class GuidanceEngine:
     def evaluate(self, snap: dict, day_key: str) -> list[Utterance]:
         # 프론트 연동: 차량·내비 값이 바뀔 때마다 호출 → SpeechQueue.push
         now, out = snap["now_ms"], []
+        _check_day_key(day_key)
+        self._observe_time(now)
         for rule in self.rules:
             rid = rule["rule_id"]
             hit = self._cond(rule, snap)
@@ -172,19 +209,22 @@ class GuidanceEngine:
                 prev = self.over_since.get(rid)
                 observed_ms = int(snap["speed"]["ts_ms"])
                 since = (prev[0] if prev and prev[2] == zone_id
-                         and 0 <= observed_ms - prev[1] <= self.fresh["speed"] else now)
+                         and 0 <= observed_ms - prev[1] <= self.fresh["speed"]
+                         else max(observed_ms, snap["school_zone"]["ts_ms"], snap["current_speed_limit"]["ts_ms"]))
                 self.over_since[rid] = (since, observed_ms, zone_id)
-                if now - since < sustain:
+                if observed_ms - since < sustain:
                     continue
             if self._blocked(rule, day_key, now, zone_id):
                 continue
             out.append(Utterance(rid, rule["priority"], self._render(rule, slots), slots, now, rule["ttl_ms"], zone_id,
-                                 day_key))
+                                 day_key, self.clock_epoch))
         return out
 
     def revalidate(self, utt: Utterance, snap: dict) -> Utterance | None:
         # 프론트 연동: TTS 재생 직전에 조건·횟수·간격을 다시 확인(재생 중 들어온 같은 안내 폐기), 지난 구역 안내는 폐기
-        if not utt.created_ms <= snap["now_ms"] <= utt.created_ms + utt.ttl_ms:
+        self._observe_time(snap["now_ms"])
+        if (utt.clock_epoch != self.clock_epoch
+                or not utt.created_ms <= snap["now_ms"] <= utt.created_ms + utt.ttl_ms):
             return None
         rule = next(r for r in self.rules if r["rule_id"] == utt.rule_id)
         hit = self._cond(rule, snap)
@@ -197,19 +237,27 @@ class GuidanceEngine:
         sustain = rule.get("trigger", {}).get("sustain_seconds", 0) * 1000
         if sustain:
             prev = self.over_since.get(utt.rule_id)
-            if not (prev and prev[2] == zone_id and 0 <= snap["now_ms"] - prev[1] <= self.fresh["speed"]
-                    and snap["now_ms"] - prev[0] >= sustain):
+            observed_ms = int(snap["speed"]["ts_ms"])
+            if not (prev and prev[2] == zone_id and 0 <= observed_ms - prev[1] <= self.fresh["speed"]
+                    and prev[1] - prev[0] >= sustain):
                 return None
         if self._blocked(rule, utt.day_key, snap["now_ms"], zone_id):
             return None
         return Utterance(utt.rule_id, utt.priority, self._render(rule, slots), slots, utt.created_ms, utt.ttl_ms, zone_id,
-                         utt.day_key)
+                         utt.day_key, utt.clock_epoch)
 
     def mark_played(self, utt: Utterance, day_key: str, now_ms: int):
         # 프론트 연동: TTS 재생 완료 콜백에서만 호출(대기 후 취소된 안내는 세지 않음)
+        _check_day_key(day_key)
+        if utt.clock_epoch != self.clock_epoch:
+            return
+        self._observe_time(now_ms)
+        if utt.clock_epoch != self.clock_epoch or now_ms < utt.created_ms:
+            return
         key = (day_key, utt.rule_id)
         self.played[key] = self.played.get(key, 0) + 1
-        self.last_played[utt.rule_id] = now_ms
+        rule = next(r for r in self.rules if r["rule_id"] == utt.rule_id)
+        self.last_played[(utt.rule_id, utt.zone_id if rule["kind"] == "warning" else None)] = now_ms
         if utt.zone_id:
             self.announced_zones.add((day_key, utt.rule_id, utt.zone_id))
 
@@ -258,22 +306,30 @@ class StopLock:
 
     def __init__(self, pack: dict):
         self.cfg, self.fresh, self.since, self.last_ms = pack["stop_lock"], pack["freshness_ms"], None, None
+        self.last_now: int | None = None
 
     def update(self, snap: dict) -> bool:
         # 프론트 연동: 기어·속도 값이 들어올 때마다 호출하고, 통역 버튼 활성화·STT 시작·전송·TTS 직전에도 호출
         now = snap["now_ms"]
-        gear = _fresh(snap.get("gear"), now, None)
+        if type(now) is not int or now < 0:
+            self.since = self.last_ms = self.last_now = None
+            return False
+        gear = _fresh(snap.get("gear"), now, self.fresh["gear"])
         speed = _fresh(snap.get("speed"), now, self.fresh["speed"])
-        stopped = bool(gear and gear["value"] == "P" and speed and abs(float(speed["value"])) <= self.cfg["max_speed_mps"])
+        mps = _speed_mps(speed) if speed else None
+        stopped = bool(gear and gear.get("value") == "P" and mps is not None and mps <= self.cfg["max_speed_mps"])
+        observed_ms = speed["ts_ms"] if speed else None
         # 검증: 관측 공백(속도 신선도 초과)이나 시각 역행이 있으면 정차 유지 시간을 처음부터 다시 잰다
-        gap = self.last_ms is None or not 0 <= now - self.last_ms <= self.fresh["speed"]
-        self.last_ms = now
+        gap = (self.last_ms is None or observed_ms is None
+               or not 0 <= observed_ms - self.last_ms <= self.fresh["speed"]
+               or self.last_now is not None and now < self.last_now)
+        self.last_ms, self.last_now = observed_ms, now
         if not stopped:
             self.since = None
             return False
         if self.since is None or gap:
-            self.since = now
-        return now - self.since >= self.cfg["sustain_ms"]
+            self.since = max(observed_ms, gear["ts_ms"])
+        return observed_ms - self.since >= self.cfg["sustain_ms"]
 
 
 def run_scenarios(path: Path, pack: dict | None = None) -> list[dict]:

@@ -24,7 +24,7 @@
 1. `python scripts/verify_mvp.py --local`: API 계약·취소·타임아웃, 언어·숫자·연료·좌우 검증, 전체 온보딩 조합과 페르소나, 학습 데이터 경계 검사. 결과는 `run/verify-*/report.json`에 저장한다. 이 성공은 실제 모델 품질 완료가 아니다.
 2. 실제 Qwen 서버를 띄워 `dev.jsonl`, `general.jsonl`, `general_es.jsonl`, `naturalness.dev.jsonl`을 각각 평가한다. `POLISH_KO=0/1` 비교는 개발 자료에서만 한다. 프롬프트·문구·코드가 바뀌면 서버를 다시 시작하고 결과를 새로 기록한다.
 3. `review.csv`의 `human_meaning_ok`, `human_naturalness_ok`(통역), `critical_error`에 독립 검토자가 `yes/no`를 입력한다. 번역체 여부, 발화 주체, 부탁·질문의 의도, 정보의 추가·삭제, 존댓말과 지역 표현을 본다. 검수자 행세를 하거나 자동 결과로 이 칸을 채우지 않는다.
-4. 설정을 확정한 뒤 `test.locked.jsonl`을 `--final`로 실행한다. 이 시험을 보면서 튜닝하지 않는다. 실패를 숨기거나 다른 seed로 유리한 결과를 고르지 않는다.
+4. 설정을 확정한 뒤 `test.locked.v2.jsonl`을 `--final`로 실행한다. 이 시험을 보면서 튜닝하지 않는다. 실패를 숨기거나 다른 seed로 유리한 결과를 고르지 않는다.
 5. `python eval/release_gate.py <결과폴더 5개>`: 각 자료에서 자동 통과율 ≥95%, 의미 보존 ≥95%, 자연스러움 ≥90%, 치명 오류 0건, 성공 응답 HTTP p95 ≤8초. 모델·자료·출력 해시, 전건 결과·검토, 같은 다듬기 설정이 필요하다. mock·미검토·불완전·이전 코드 결과는 실패한다.
 6. `python scripts/verify_mvp.py --runs <결과폴더 5개>`로 코드와 모델 품질을 함께 확인한다. Pleos STT/TTS·실제 차량 신호·30분 동시 실행은 별도의 기기 검증이며 이 명령의 성공으로 대신하지 않는다.
 
@@ -38,7 +38,7 @@ bash scripts/run.sh start
 .venv/bin/python eval/evaluate.py --file eval/general_es.jsonl --label base-v6
 .venv/bin/python eval/evaluate.py --file eval/naturalness.dev.jsonl --label base-v6
 # 개발 평가와 설정 선택이 끝난 뒤에만:
-.venv/bin/python eval/evaluate.py --file eval/test.locked.jsonl --label final-v6 --final
+.venv/bin/python eval/evaluate.py --file eval/test.locked.v2.jsonl --label final-v6 --final
 ```
 
 평가 결과의 `run.json`에는 사용 자료·결과 SHA256과 서버가 시작할 때의 코드·문구 해시, 모델·버전·다듬기 설정을 기록한다. `/health/ready`의 `artifact_hashes`와 실행 중 checkout이 같아야 평가를 시작한다. 토큰·원문 실사용 로그는 이 메타데이터에 포함하지 않는다.
