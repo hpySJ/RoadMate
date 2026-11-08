@@ -19,7 +19,7 @@ from sessions import ModelSlot, TurnRegistry, payload_hash
 from validation import HANGUL
 
 log = logging.getLogger("roadmate.ai")
-API_VERSION = "1.3.0"  # 백엔드 연동: 계약이 바뀌면 올리고 docs/openapi.json 재생성
+API_VERSION = "1.3.1"  # 백엔드 연동: 계약이 바뀌면 올리고 docs/openapi.json 재생성
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -37,6 +37,7 @@ def _error(status, code, message="", request_id=None, headers=None):
 
 
 ERROR_RESPONSES = {c: {"model": ErrorBody} for c in (401, 409, 410, 422, 429, 502, 503, 504)}
+ERROR_RESPONSES[422]["description"] = "Invalid input"  # Python 버전별 HTTPStatus 설명 차이를 계약에서 제거
 
 
 def create_app(settings: Settings | None = None, client=None) -> FastAPI:
