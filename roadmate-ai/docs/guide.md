@@ -123,7 +123,7 @@ POST /internal/v1/translate
 {"request_id":"req-001","session_id":"sess-001","session_epoch":3,"turn_id":1,
  "status":"ok","translated_text":"휘발유로 가득 넣어 주세요.","clarification_question":null,
  "engine_bundle":"roadmate-ko-en-q4-8b-v1","model_id":"roadmate-qwen8b-q4",
- "prompt_version":"translate-v9","glossary_version":"rental-ko-en-es-v11","latency_ms":850}
+ "prompt_version":"translate-v11","glossary_version":"rental-ko-en-es-v11","latency_ms":850}
 ```
 - `source_locale`/`target_locale`: `ko-KR`, `en-US`, `es-US`, `es-MX` 중 한쪽은 반드시 `ko-KR`(한↔영, 한↔스). Pleos STT·TTS locale 값을 그대로 쓴다 / `scenario`: `gas_station`, `parking`, `rental_counter`, `accident`, `general`
 - 스페인어는 `es-US`와 `es-MX`를 같은 말로 처리한다. 번역문은 중남미식 존댓말(usted), 원화는 `30,000 wones`, 시각은 `3 p. m.`.
@@ -219,7 +219,7 @@ done
 
 소문자·문장부호 없는 입력에 대한 견고성을 비교한다. `general`, `general_es`, `naturalness.dev` 세 파일의 `text`만 바꾼 사본을 만들고 원본·정답·기대값·ID·행 순서는 유지한다. locked 파일은 읽거나 바꾸지 않는다. 아래 도구는 프롬프트·검사기·서버를 수정하거나 시작하지 않는다.
 
-`translate-v12`는 문장부호 없는 질문·부탁·평서를 화자 역할과 상황으로 구분하도록 지시하고, 대비 예시 4개를 사용한다. 스페인어(`es-US`·`es-MX`)에서 지정한 질문 시작 구문은 모델 입력만 `¿…?`로 감싼다. 물음표·마침표·느낌표·말줄임표·쉼표 등 문장부호가 하나라도 있으면 원문을 유지한다. 숫자 내부 문장부호도 유지하고 복원 대상에서 제외한다. 안전 검사에는 원문을 그대로 사용한다. 내부 응답의 `spanish_question_restored`와 `translation_input` 로그에 적용 여부를 남기고, `LOG_REJECTED=1`이면 시도별 로그에도 남긴다. 앱 `/translate` 응답 형식은 그대로다.
+`translate-v11` 프롬프트·예시는 git 기록에서 복원했으며 기존 345개 요청 해시 불변 테스트로 확인한다. 사용자 제공 DLPC 재평가에서 v12의 상황상 질문 5건 개선이 없고 깨끗한 입력의 502가 2건 늘어 복원했으며, 이 PC에서 실측한 결과는 아니다. 스페인어(`es-US`·`es-MX`)에서 지정한 질문 시작 구문은 모델 입력만 `¿…?`로 감싼다. 시작어에는 `cuándo`, `quién`, `quiénes`도 포함한다. 물음표·마침표·느낌표·말줄임표·쉼표 등 문장부호가 하나라도 있으면 원문을 유지한다. 숫자 내부 문장부호도 유지하고 복원 대상에서 제외한다. 안전 검사에는 원문을 그대로 사용한다. 내부 응답의 `spanish_question_restored`와 `translation_input` 로그에 적용 여부를 남기고, `LOG_REJECTED=1`이면 시도별 로그에도 남긴다. 앱 `/translate` 응답 형식은 그대로다.
 
 이 시작 구문 규칙은 문장부호 없는 `hay`·`ya` 평서도 질문으로 바꾸는 오탐이 있다. 합성 회귀 테스트에 이 한계를 고정했으며, 기존 문장부호 입력을 포함한 실제 의미·지연 변화는 DLPC 비교가 필요하다. Hi-Pass 조회는 `Hi-Pass`·`hi-pass`·`hipass`를 잡지만 `hi pass`처럼 띄어 쓴 표기는 현재 잡지 못한다. 이번 변경에서는 용어집·검사기·숫자 규칙을 수정하지 않았다.
 
@@ -305,7 +305,7 @@ MODEL_PROFILE=8b-q4 .venv/bin/python eval/evaluate.py --file eval/general.jsonl 
 
 다른 서버가 실행 중이면 먼저 그 작업을 마친다. 4B Q4/Q8 대안은 MODEL_PROFILE만 바꾸며, 원본 결과와 로그를 보존한다. 잠근 시험은 튜닝에 사용하지 않는다.
 
-## 8. 8B LoRA 증류 준비
+## 8. 8B LoRA 증류·자기 학습
 
 학습 정답은 고정 Qwen 선생 모델의 **수정하지 않은 출력**만 사용한다. 사람·Claude·Codex 번역이나 사람이 고친 정답은 본학습에 넣지 않는다. AI 검토는 참고 판정이며 사람 검수로 표시하지 않는다.
 
@@ -339,7 +339,7 @@ MODEL_PROFILE=8b-q4 .venv/bin/python eval/evaluate.py --file eval/general.jsonl 
 | generate | 생성 발화 수·실제 토큰 수에 따라 실측 필요 |
 | train-eval | 학습 토큰 수·처리량에 따라 실측 필요 |
 
-`--teacher`는 `14b-q4` 또는 `32b-q4`이며 기본값은 `14b-q4`다. 기본 선생의 단계별 명령:
+`--teacher`는 `8b-q4`(자기 선생), `14b-q4`, `32b-q4`이며 기본값은 `14b-q4`다. 기본 선생의 단계별 명령:
 
     MODEL_TIMEOUT_S=60 bash scripts/lora.sh teacher-check --out train/runs/teacher-01
     MODEL_TIMEOUT_S=60 bash scripts/lora.sh generate --out train/runs/distill-01
@@ -354,7 +354,18 @@ MODEL_PROFILE=8b-q4 .venv/bin/python eval/evaluate.py --file eval/general.jsonl 
     MODEL_TIMEOUT_S=60 bash scripts/lora.sh generate --teacher 32b-q4 --out train/runs/distill-02
     bash scripts/lora.sh train-eval --teacher 32b-q4 --data train/runs/distill-02 --out train/runs/lora-02
 
-선택한 선생은 단계 기록·생성 기록·준비한 자료·학습 설정에 남는다. `prepare_data.py`와 `train_qlora.py`는 선택한 선생 manifest의 모델·revision·해시와 자료 출처를 대조한다. 14B와 32B 자료를 섞거나 다른 선생을 지정하면 중단한다. 학습 대상 본체는 두 경우 모두 8B다.
+선택한 정답 선생은 단계 기록·생성 기록·준비한 자료·학습 설정에 남는다. `prepare_data.py`와 `train_qlora.py`는 선택한 선생 manifest의 모델·revision·해시와 자료 출처를 대조한다. 정답 선생이 다른 자료를 섞거나 다른 선생을 지정하면 중단한다. 학습 대상 본체는 모두 8B다.
+
+이번 음성 입력 견고성 실험은 기존 `distill-02`의 채택 원문을 재사용하고 8B로 정답만 새로 생성한다. 아래 명령은 코드 확인 후 DLPC에서 단계별로 실행한다. 새 출력 폴더가 이미 있으면 덮어쓰지 않는다.
+
+```bash
+MODEL_TIMEOUT_S=60 bash scripts/lora.sh generate --teacher 8b-q4 --reuse-sources train/runs/distill-02 --out train/runs/self-8b-01
+# sample.review.csv의 150행 검토 완료 후 실행한다. 정답은 수정하지 않는다.
+.venv/bin/python train/distill.py review --draft train/runs/self-8b-01/distill.draft.jsonl --review train/runs/self-8b-01/sample.review.csv --key train/runs/self-8b-01/sample.key.json --out train/runs/self-8b-01/sample.evidence.json --reviewer '<실제로 검토한 AI 모델>'
+bash scripts/lora.sh train-eval --teacher 8b-q4 --data train/runs/self-8b-01 --out train/runs/self-8b-lora-01 --stt-copies-ratio 1.0
+```
+
+생성은 약 20~30분, 학습과 깨끗한 문장·STT 비교는 약 2~4시간의 계획값이며 이 코드에서 실측한 시간이 아니다. 표본 검토와 최종 블라인드 리뷰는 별도다. 자기 선생도 기존 `teacher-check --teacher 8b-q4`로 고정 8B의 모델·manifest·실행 증거를 확인할 수 있지만, 같은 모델끼리의 비교가 품질 우위 증거가 되지는 않는다.
 
 이전에 GPU_LAYERS를 export했다면 실행 전에 unset GPU_LAYERS로 해제한다. 실제 토큰 수와 필터 통과율에 따라 시간·자료 수가 달라진다. 각 단계는 설정·로그·산출물·stage_summary.md를 한 폴더에 남기고 요약과 경과 시간을 출력한다. 홈의 roadmate-review-*.tgz에는 리뷰 CSV/MD만 포함하고 key·설정·평가 원본은 넣지 않는다. 비교 리뷰는 Claude용·Codex용을 분리한다. 기존 PID·사용 중인 포트를 발견하면 시작하지 않고 자신이 시작한 프로세스만 종료한다.
 
@@ -378,13 +389,15 @@ teacher-check는 **8B 기준 모델과 선택한 선생**으로 general·general
 
 group_id는 상황 전체가 아니라 독립 생성 배치별로 부여한다. 같은 원문의 여러 목표 언어는 같은 그룹을 유지한다. source_generation.jsonl에 생성 프롬프트·seed·원본 응답·모델 해시·채택/거절 이유를 기록하고 source_summary.json에 고유 원문·그룹 수 및 `accepted_by_topic[locale][scenario][topic]`를 남긴다. 주제별 수는 목표 언어로 확장하기 전 채택한 원문 수다. 생성 원문의 원본 응답도 준비 단계에서 대조하므로 출처 이름만 바꿔 선생 발화로 셀 수 없다.
 
+`generate --reuse-sources 폴더`는 이전 `pool.jsonl`의 채택 원문(기본 고유 원문 1,600개와 보조 자료)을 읽고 원문 생성을 건너뛴다. 당시 `teacher.manifest.json`·`summary.json`과 원본 응답을 함께 검증한다. 원문 출처는 당시 32B manifest·프롬프트 해시, 새 번역 정답은 현재 8B manifest·v11 프롬프트 해시로 나누어 확인한다. 문장부호 있는 원문을 그대로 번역하며 원래 group_id와 원문 생성 증거를 보존한다. 서버와 같은 안전 검사·번역투 필터를 통과한 수정 없는 정답만 채택한다.
+
 선생 요청은 고정 llama.cpp의 [입력 토큰 계산 API](https://github.com/ggml-org/llama.cpp/blob/b12076/tools/server/README.md#post-v1chatcompletionsinput_tokens-token-counting)로 실제 템플릿·토크나이저를 적용한 수를 확인한다. 원문 생성의 출력 예약 1,024토큰까지 합쳐 ctx 4,096을 넘으면 추론 전에 중단하고 이력을 자르지 않는다. 토큰 계산 API 실패도 중단 사유다. 짧은 합성 원문 79개가 들어가는지는 아래 테스트로 재현하며, 긴 원문 79개까지 들어간다는 보장은 아니다. 테스트 문장은 학습 원문에 사용하지 않는다.
 
     SOURCE_TOKENIZER_DIR=/고정_14B_tokenizer_경로 python -m pytest tests/test_source_token_budget.py -q
 
 위 폴더에는 manifest의 base_revision에 해당하는 tokenizer.json과 실제 GGUF에서 추출한 gguf-chat-template.jinja가 필요하며 `tokenizers`·`Jinja2`를 설치한 Python으로 실행한다. 실제 모델 생성은 하지 않는다.
 
-원문과 출력 모두 평가셋·few-shot 정확/근사 중복을 제외한다. locked는 봉인된 중복 배제에만 쓰고 추론·점수·튜닝에 쓰지 않는다. 문자·슬롯 비교가 모든 의미상 중복을 보장하지는 않는다. 서버와 같은 프롬프트의 선생 원본 출력에 안전 검사·번역투 필터를 적용한다. 통과분을 단계 폴더의 distill.draft.jsonl과 최신 사본 train/data/distill.draft.jsonl에 저장한다. 이전 사본·원본 응답·해시·필터 결과도 보존한다.
+원문과 출력 모두 개발 평가셋·few-shot 정확/근사 중복을 제외한다. 이번 생성·준비·평가에서는 **locked를 열지 않는다**. 문자·슬롯 비교가 모든 의미상 중복을 보장하지는 않는다. 서버와 같은 프롬프트의 선생 원본 출력에 안전 검사·번역투 필터를 적용한다. 통과분을 단계 폴더의 distill.draft.jsonl과 최신 사본 train/data/distill.draft.jsonl에 저장한다. 이전 사본·원본 응답·해시·필터 결과도 보존한다.
 
 안전 필터를 거친 뒤에도 선생 생성 원문 비율은 **80% 이상**이어야 한다. 보조 자료가 과해지면 보조 행을 제한하며 그 기록도 보존한다. prepare_data와 본학습에서 전체 및 train/validation/test 각 비어 있지 않은 분할의 비율을 다시 검사한다. summary.json·dataset_manifest.json에 필터 전후 비율, 출처별 행 수, 고유 원문 구조·그룹 수가 남는다. 이 비율은 자료 구성 규칙이며 자연스러움 향상의 측정 결과가 아니다.
 
@@ -392,15 +405,15 @@ group_id는 상황 전체가 아니라 독립 생성 배치별로 부여한다. 
 
     .venv/bin/python train/distill.py review --draft train/runs/distill-01/distill.draft.jsonl --review train/runs/distill-01/sample.review.csv --key train/runs/distill-01/sample.key.json --out train/runs/distill-01/sample.evidence.json --reviewer '<실제로 검토한 AI 모델>'
 
-표본 누락·나쁨·해시 불일치는 학습을 막는다. 나쁜 정답을 사람이 고쳐 넣지 말고 선생·생성 단계부터 검토한다. 상태는 auto_filtered_ai_sample_reviewed, human_reviewed=false다. 본학습은 이 증거와 Qwen 원본 출력 해시를 재확인한다. 아직 실제 선생 정답·표본 검토를 만들지 않았다.
+14B/32B 선생은 기존처럼 표본의 나쁨 1건도 학습을 막는다. **8B 자기 선생은 정확히 150행을 검토하고 나쁨 6건(4%) 이하일 때만 통과**한다. 나쁨으로 판정한 표본 행 ID를 증거에 기록하고 학습 원본과 사본에서 제외한다. 7건 이상·표본 누락·해시 불일치는 차단한다. 정답 수정은 허용하지 않는다. 상태는 auto_filtered_ai_sample_reviewed, human_reviewed=false이며 본학습은 이 증거와 Qwen 원본 출력 해시를 재확인한다. 자기 선생도 잘못된 정답을 반복 학습할 수 있으므로 정확도 유지 여부는 후속 비교로 확인한다.
 
 ### 8.4 학습·채택
 
-`prepare_data.py`는 C단계에서 번역 입력의 STT 형식 사본을 기본 50% 비율로 선택해 추가한다. `eval/stt_format.py`의 관찰 규칙을 사용하며 기본 seed는 기존 분할과 같은 42다. split·source_origin별 번역 행을 seed 해시 순서로 정렬하고 각 묶음에서 `floor(행 수 × 비율)`개를 선택하므로 입력 파일 순서가 표본을 바꾸지 않는다. 소규모 묶음의 내림과 제외 조건 때문에 실제 추가 비율은 50%보다 낮을 수 있다. 목적지 행은 복사하지 않는다.
+`prepare_data.py`는 C단계에서 번역 입력의 STT 형식 사본을 추가한다. 자기 선생 `train-eval`의 기본 비율은 **1.0(번역 행 전부)**이며 14B/32B는 기존 0.5다. `prepare_data.py`만 직접 실행할 때는 `--stt-copies-ratio 1.0`을 명시한다. `eval/stt_format.py`의 관찰 규칙을 사용하며 기본 seed는 기존 분할과 같은 42다. split·source_origin별 번역 행을 seed 해시 순서로 정렬하고 각 묶음에서 `floor(행 수 × 비율)`개를 선택하므로 입력 파일 순서가 표본을 바꾸지 않는다. 목적지 행은 복사하지 않는다.
 
-원본의 선생 출력·AI 표본 검수 증거를 먼저 검증한 뒤 사본의 `text`만 바꾸어 서버와 같은 빌더로 prompt를 만든다. completion은 원본과 같고 group_id·source_origin·source_generation도 유지한다. `meta.stt_copy`에 부모 ID·원문·변환 버전을 기록하여 새 선생 응답과 구분한다. 사본은 원본과 같은 train/validation/test 분할에만 들어간다.
+원본의 선생 출력·AI 표본 검수 증거를 먼저 검증한 뒤 사본의 `text`만 바꾸어 서버와 같은 빌더로 prompt를 만든다. 빌더에서 스페인어 ¿? 복원을 추론과 동일하게 적용한다(`cuándo`, `quién`, `quiénes` 포함). completion은 원본과 같고 group_id·source_origin·source_generation도 유지한다. `meta.stt_copy`에 부모 ID·원문·변환 버전을 기록하여 새 선생 응답과 구분한다. 사본은 원본과 같은 train/validation/test 분할에만 들어간다.
 
-C단계의 원본·사본 경계 검사에서는 **test.locked*를 열지 않는다**. 나머지 평가셋·few-shot의 원문/출력과 그 STT 변형을 정확·근사 중복에서 제외한다. 변환 결과가 동일하거나 안전 검사·경계 검사에 실패한 사본, 다른 group의 틀과 충돌하는 사본은 추가하지 않는다. 원본 자료의 전체·분할별 선생 비율 80% 검사를 먼저 통과해야 하며, 사본 추가 후에도 같은 검사를 수행한다. 보조 자료 사본이 이 기준을 깨면 보조 사본 수를 제한한다. 원본 정답이나 검사기를 변경하지 않는다.
+C단계의 원본·사본 경계 검사에서는 **test.locked*를 열지 않는다**. 나머지 평가셋·few-shot의 원문/출력과 그 STT 변형을 정확·근사 중복에서 제외한다. 안전 검사·경계 검사에 실패한 사본, 다른 group의 틀과 충돌하는 사본은 추가하지 않는다. 1.0에서는 이미 STT 형식인 입력도 같은 정답의 사본을 유지한다. 자기 선생의 1.0 요청에서 안전한 사본을 전부 만들지 못하면 제외 사유를 보고하고 학습을 중단한다. 원본 자료의 전체·분할별 선생 비율 80% 검사를 먼저 통과해야 하며, 사본 추가 후에도 같은 검사를 수행한다. 보조 자료 사본이 이 기준을 깨면 보조 사본 수를 제한한다. 원본 정답이나 검사기를 변경하지 않는다.
 
 `dataset_manifest.json`의 `stt_copies`에 요청 비율·seed·변환 버전/파일 SHA256·원본 번역 행 수·선택/추가 건수·분할별 추가 건수·제외 사유를 남긴다. `realized_ratio`는 추가 사본/원본 번역 행, `copy_share`는 최종 전체 자료 중 사본 비율이다. 모든 번역 행이 변환되어 50% 사본을 추가하면 최종 번역 자료에서 사본은 약 33.3%다. 사본도 토큰 길이 검사에 포함한다.
 
@@ -411,9 +424,9 @@ C단계의 원본·사본 경계 검사에서는 **test.locked*를 열지 않는
 bash scripts/lora.sh train-eval --teacher 32b-q4 --data train/runs/distill-02 --out train/runs/lora-stt-01 --stt-copies-ratio 0.5
 ```
 
-고정 HF 8B에 NF4 double quantization, r16/alpha32, q/k/v/o/gate/up/down, 2 epoch를 적용한다. group_id 단위 80/10/10 분할과 max_length 4096을 사용하고 넘는 정답은 자르지 않고 중단한다. enable_thinking=False로 prompt/completion을 먼저 렌더링하며 정답 JSON에만 loss를 준다. 첫 배치 마스킹도 확인한다. [TRL 형식 문서](https://huggingface.co/docs/trl/sft_trainer#train-on-completion-only)를 따른다.
+고정 HF 8B에 NF4 double quantization, r16/alpha32, q/k/v/o/gate/up/down을 적용한다. **이번 자기 선생 train-eval은 1 epoch**, 14B/32B 경로는 기존 2 epoch다. 학습 시작 전에 `dataset_manifest.json`의 실제 토크나이저 기준 총/분할별 토큰 수, epoch를 반영한 train 토큰 노출량, 예상 시간을 `stage_summary.json/.md`와 콘솔에 출력한다. 자기 선생의 2~4시간은 학습·평가를 포함한 사용자 계획값이며 GPU 처리량에 따른 실측 예측은 아니다. group_id 단위 80/10/10 분할과 max_length 4096을 사용하고 넘는 정답은 자르지 않고 중단한다. enable_thinking=False로 prompt/completion을 먼저 렌더링하며 정답 JSON에만 loss를 준다. 첫 배치 마스킹도 확인한다. [TRL 형식 문서](https://huggingface.co/docs/trl/sft_trainer#train-on-completion-only)를 따른다.
 
-GGUF 어댑터와 .gguf.json 출처 파일을 만들며 기본 manifest를 수정하지 않는다. train-eval은 8B 기본·8B+LoRA를 같은 세 개발셋으로 비교한다. 독립 검토 뒤 다음을 general·general_es·naturalness.dev 각각에 적용한다.
+GGUF 어댑터와 .gguf.json 출처 파일을 만들며 기본 manifest를 수정하지 않는다. train-eval은 8B 기본·8B+LoRA 각각에서 general·general_es·naturalness.dev 원본과 `stt_format.py`로 만든 세 사본을 평가한다. `compare_stt/baseline`, `compare_stt/candidate`에 원본 출력의 물음표 유무를 기준으로 질문 소실·추가 건수와 행 ID·방향별 집계를 남긴다. 블라인드 리뷰 CSV/MD는 기존처럼 깨끗한 세 평가셋으로만 만든다. 독립 검토 뒤 다음을 general·general_es·naturalness.dev 각각에 적용한다.
 
     .venv/bin/python eval/export_review.py --merge train/runs/lora-01/reviews/claude/review_pair01-general.csv train/runs/lora-01/reviews/codex/review_pair01-general.csv --key train/runs/lora-01/private/review_pair01-general.key.json --out-dir train/runs/lora-01/merged --label pair01-general
 
@@ -421,7 +434,7 @@ GGUF 어댑터와 .gguf.json 출처 파일을 만들며 기본 manifest를 수�
 
     bash scripts/lora.sh train-eval --finish train/runs/lora-01 --reviews train/runs/lora-01/merged
 
-조건은 같은 행에서 **나쁨 비증가·어색함 감소**, 각 평가셋 FAIL·502·목적지 실패 비증가, HTTP p95 증가 300ms 이하다. decision.json/.md에 pending/passed/rejected를 기록한다. 실패한 어댑터는 rejected로 표시해 로드를 막고 증거만 보존한다. 통과도 자동 배포하지 않는다.
+자기 선생 채택 조건은 깨끗한 문장의 **같은 행에서 새 나쁨·FAIL·502·목적지 실패가 없고**, 각 평가셋 HTTP p95 증가가 300ms 이하인 것이다. STT는 스페인어→한국어 질문 소실이 이번 기본 8B보다 감소해야 하고 전체 소실은 늘지 않아야 하며 질문 추가는 0건이어야 한다. 과거 소실 7건은 참고 기준으로 기록하고 새 실행의 기본 8B와 직접 비교한다. 기존 성공 행이 502·확인 질문 등으로 바뀌어 집계에서 빠진 경우는 개선으로 통과시키지 않는다. 자기 선생에는 어색함 감소를 추가 통과 조건으로 요구하지 않는다. 14B/32B의 기존 나쁨 비증가·어색함 감소 및 자동 지표 조건은 유지한다. decision.json/.md에 조건과 pending/passed/rejected를 기록한다. 실패한 어댑터는 rejected로 표시해 로드를 막고 증거만 보존한다. 통과도 자동 배포하지 않는다.
 
     MODEL_PROFILE=8b-q4 bash scripts/run.sh start --lora /절대경로/adapter.gguf
 

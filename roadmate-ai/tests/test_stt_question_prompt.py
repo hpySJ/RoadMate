@@ -9,7 +9,8 @@ PREFIXES = [
     *(f"{pronoun} {verb}" for pronoun in ("me", "nos", "le")
       for verb in ("puede", "pueden", "podría", "podrían")),
     "puede", "pueden", "podría", "podrían", "puedo", "podemos", "se puede", "hay", "ya",
-    "dónde", "cuánto", "cuánta", "cuántos", "cuántas", "qué", "cómo", "a qué", "por qué", "cuál",
+    "dónde", "cuánto", "cuánta", "cuántos", "cuántas", "cuándo", "quién", "quiénes",
+    "qué", "cómo", "a qué", "por qué", "cuál",
 ]
 
 

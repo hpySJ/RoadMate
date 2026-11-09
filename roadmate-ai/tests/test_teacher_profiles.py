@@ -5,7 +5,7 @@ import pytest
 from config import ROOT, load_manifest
 
 
-@pytest.mark.parametrize("size, file_size", [(14, 9001752960), (32, 19762149024)])
+@pytest.mark.parametrize("size, file_size", [(8, 5027783488), (14, 9001752960), (32, 19762149024)])
 def test_official_teacher_profiles_are_pinned_and_non_thinking(size, file_size):
     manifest = load_manifest(ROOT / "models" / f"manifest.qwen3-{size}b.json")
     model = manifest["model"]

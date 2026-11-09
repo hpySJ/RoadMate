@@ -1,5 +1,6 @@
 """Local orchestration checks use temporary artifacts, never model or training processes."""
 import hashlib
+from contextlib import contextmanager
 import json
 from pathlib import Path
 import socket
@@ -140,11 +141,11 @@ def test_finish_only_calls_review_gate(tmp_path, monkeypatch):
     assert "--reviews" in calls[0]
 
 
-@pytest.mark.parametrize("teacher", ["14b-q4", "32b-q4"])
+@pytest.mark.parametrize("teacher", ["8b-q4", "14b-q4", "32b-q4"])
 @pytest.mark.parametrize("ratio", [0, .5, .75])
 def test_train_commands_keep_adapter_identity_for_comparison(tmp_path, monkeypatch, teacher, ratio):
     (tmp_path / "train").mkdir()
-    cfg = {"base_model": "Qwen/Qwen3-8B", "base_revision": "pinned", "max_length": 4096}
+    cfg = {"base_model": "Qwen/Qwen3-8B", "base_revision": "pinned", "max_length": 4096, "num_train_epochs": 2}
     (tmp_path / "train" / "training_config.json").write_text(json.dumps(cfg))
     for name in (".venv-train", ".venv-convert"):
         folder = tmp_path / name / "bin"
@@ -157,7 +158,18 @@ def test_train_commands_keep_adapter_identity_for_comparison(tmp_path, monkeypat
         (data / name).write_text("{}")
     pipeline, calls = L.Pipeline(tmp_path, out, "train-eval", teacher), []
     pipeline.stt_copies_ratio = ratio
-    monkeypatch.setattr(pipeline, "run", lambda command, name, env=None: calls.append((name, command, env)))
+    def run(command, name, env=None):
+        calls.append((name, command, env))
+        if name == "prepare":
+            prepared = out / "prepared"
+            prepared.mkdir()
+            (prepared / "dataset_manifest.json").write_text(json.dumps({
+                "token_counts": {"total": 1000, "by_split": {"train": 800, "validation": 100, "test": 100}}}))
+        if name == "train":
+            summary = json.loads((out / "stage_summary.json").read_text())
+            assert summary["training_plan"]["token_counts"]["total"] == 1000
+            assert "training not started" in (out / "stage_summary.md").read_text(encoding="utf-8")
+    monkeypatch.setattr(pipeline, "run", run)
     monkeypatch.setattr(pipeline, "evaluate", lambda *args: calls.append(("evaluate", args)))
     monkeypatch.setattr(pipeline, "compare", lambda *args: calls.append(("compare", args)))
     pipeline.train_eval(data)
@@ -169,6 +181,8 @@ def test_train_commands_keep_adapter_identity_for_comparison(tmp_path, monkeypat
     train = next(c[1] for c in calls if c[0] == "train")
     assert train[train.index("--teacher") + 1] == teacher
     assert json.loads((out / "training_config.json").read_text())["teacher_profile"] == teacher
+    assert json.loads((out / "training_config.json").read_text())["num_train_epochs"] == (1 if teacher == "8b-q4" else 2)
+    assert next(c[1] for c in calls if c[0] == "stt-inputs")[-1] == out / "stt-inputs"
     assert ("evaluate", ("8b-q4", "baseline")) in calls
     assert ("evaluate", ("8b-q4", "candidate", out / "adapter.gguf")) in calls
     assert next(c[2] for c in calls if c[0] == "convert")["MODEL_PROFILE"] == "8b-q4"
@@ -220,6 +234,64 @@ def test_stt_ratio_is_only_a_preparation_option(args):
     assert error.value.code == 2
 
 
+def test_self_teacher_defaults_to_all_stt_copies(tmp_path):
+    assert L.Pipeline(tmp_path, tmp_path, "train-eval", "8b-q4").stt_copies_ratio == 1.0
+
+
+@pytest.mark.parametrize("stage", ["teacher-check", "train-eval"])
+def test_reuse_sources_only_for_generation(stage):
+    with pytest.raises(SystemExit) as error:
+        L.main([stage, "--reuse-sources", "old-run"])
+    assert error.value.code == 2
+
+
+def test_train_eval_evaluates_clean_and_stt_in_same_server(tmp_path, monkeypatch):
+    out = tmp_path / "stage"
+    out.mkdir()
+    pipeline, seen = L.Pipeline(tmp_path, out, "train-eval", "8b-q4"), []
+    @contextmanager
+    def server(*args):
+        seen.append(("server", args))
+        yield {"AI_PORT": "8000"}
+    def run(command, name, env):
+        source = tmp_path / "eval" / "results" / name
+        source.mkdir(parents=True)
+        (source / "run.json").write_text("{}")
+        log = out / f"{name}.log"
+        log.write_text(f"saved: {source}\n", encoding="utf-8")
+        seen.append(("file", command[command.index("--file") + 1]))
+        return log
+    monkeypatch.setattr(pipeline, "server", server)
+    monkeypatch.setattr(pipeline, "run", run)
+    pipeline.evaluate("8b-q4", "candidate", out / "adapter.gguf")
+    assert len([row for row in seen if row[0] == "server"]) == 1
+    assert [row[1] for row in seen if row[0] == "file"] == [
+        *(tmp_path / "eval" / f"{dataset}.jsonl" for dataset in L.DATASETS),
+        *(out / "stt-inputs" / f"{dataset}.jsonl" for dataset in L.DATASETS)]
+    assert set(pipeline.runs) == {("candidate", name) for dataset in L.DATASETS for name in (dataset, f"{dataset}.stt")}
+
+
+def test_generate_passes_reused_sources_without_touching_old_folder(tmp_path, monkeypatch):
+    out = tmp_path / "new"
+    out.mkdir()
+    pipeline = L.Pipeline(tmp_path, out, "generate", "8b-q4")
+    pipeline.reuse_sources = tmp_path / "distill-02"
+    calls = []
+    @contextmanager
+    def server(*args):
+        yield {}
+    def run(command, name, env):
+        calls.append(command)
+        (out / "distill.draft.jsonl").write_text("{}")
+    monkeypatch.setattr(pipeline, "server", server)
+    monkeypatch.setattr(pipeline, "run", run)
+    monkeypatch.setattr(pipeline, "archive_reviews", lambda files: None)
+    pipeline.generate()
+    command = calls[0]
+    assert command[command.index("--reuse-sources") + 1] == pipeline.reuse_sources
+    assert command[command.index("--teacher") + 1] == "8b-q4"
+
+
 def test_start_failure_still_cleans_only_owned_processes(tmp_path, monkeypatch):
     pipeline = L.Pipeline(tmp_path, tmp_path, "teacher-check")
     calls = []
@@ -268,3 +340,22 @@ def test_comparison_exports_real_blind_review_tools_and_key_free_archive(tmp_pat
     for dataset in L.DATASETS:
         score = json.loads((out / "scores" / dataset / "review_summary.json").read_text(encoding="utf-8"))
         assert score["paired_comparison"]["reviewers"]["codex"]["complete_rows"] == 0
+
+
+def test_self_teacher_comparison_records_stt_pairs_but_blinds_only_clean(tmp_path, monkeypatch):
+    pipeline, calls = L.Pipeline(L.ROOT, tmp_path, "train-eval", "8b-q4"), []
+    for arm in ("baseline", "candidate"):
+        for dataset in L.DATASETS:
+            for name in (dataset, f"{dataset}.stt"):
+                pipeline.runs[(arm, name)] = tmp_path / arm / name
+    monkeypatch.setattr(pipeline, "run", lambda command, name, env=None: calls.append((name, command)))
+    monkeypatch.setattr(pipeline, "archive_reviews", lambda files: None)
+    pipeline.compare(tmp_path / "adapter.gguf")
+    manifest = json.loads((tmp_path / "comparison_manifest.json").read_text())
+    assert manifest["teacher_profile"] == "8b-q4"
+    assert {p["dataset"] for p in manifest["stt_comparisons"]} == set(L.DATASETS)
+    for name, command in calls:
+        if name.startswith("compare-stt-"):
+            assert command.count("--pair") == 3
+        if name.startswith("export-"):
+            assert all(not str(value).endswith(".stt") for value in command)

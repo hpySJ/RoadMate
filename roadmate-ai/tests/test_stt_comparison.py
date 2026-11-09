@@ -92,6 +92,9 @@ def test_paired_counts_recovery_blocking_and_all_changed_outputs(pair):
     assert stats["recovered"] == ["general.jsonl:synthetic-2"]
     assert stats["502_transitions"] == {"False->False": 4, "True->False": 1, "False->True": 1}
     assert stats["signals"]["eligible_pairs"] == 3
+    assert stats["signals"]["question_loss"] == 1
+    assert stats["signals"]["question_addition"] == 0
+    assert stats["signals"]["question_loss_rows"] == ["general.jsonl:synthetic-0"]
     assert rows[0]["original_signal"] == "both" and rows[0]["stt_signal"] == "request"
     assert rows[5]["output_changed"] and not rows[5]["signal_changed"]
     assert all(not rows[i]["signals_eligible"] and rows[i]["stt_signal"] == "unavailable" for i in (2, 3, 4))
@@ -284,3 +287,16 @@ def test_question_mark_alone_is_not_a_speech_act_change():
     a, b = (C.speech_act_cues(text, "en-US") for text in ("That one?", "That one."))
     assert a["label"] == b["label"] == "unmarked"
     assert a["question_punctuation"] != b["question_punctuation"]
+
+
+def test_question_addition_and_direction_use_clean_output_marks(pair, tmp_path):
+    original, stt = pair()
+    change_rows(stt, lambda rows: rows[5]["body"].update(translated_text="그 표인가요?"))
+    rows, _ = C.compare_pair(original, stt)
+    stats = C.cohort_measures(rows)
+    assert stats["signals"]["question_addition"] == 1
+    assert stats["signals"]["question_addition_rows"] == ["general.jsonl:synthetic-5"]
+    assert stats["directions"]["en-US->ko-KR"]["signals"]["question_loss"] == 1
+    out = tmp_path / "questions"
+    assert C.main(["--pair", str(original), str(stt), "--out-dir", str(out)]) == 0
+    assert "| en-US->ko-KR | 3 | 1 | 1 |" in (out / "summary.md").read_text(encoding="utf-8")

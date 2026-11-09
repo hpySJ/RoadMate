@@ -1,5 +1,6 @@
+import hashlib
 import json
-import unicodedata
+from pathlib import Path
 
 import pytest
 
@@ -390,20 +391,17 @@ def test_punctuation_and_stt_inputs_keep_original_payload_on_first_attempt_and_r
         assert json.loads(messages[-1]["content"]) == payload
 
 
-def test_stt_examples_contrast_questions_with_statements_and_keep_language_pair_selection():
-    shots = [ex for ex in P.examples("translate")
-             if not any(unicodedata.category(c).startswith("P") for c in ex["input"]["utterance"])]
-    assert 2 <= len(shots) <= 4
-    assert all(ex["input"]["utterance"] == ex["input"]["utterance"].lower() for ex in shots)
-    assert sum(ex["output"]["translated_text"].endswith("?") for ex in shots) >= 2
-    assert any(ex["output"]["translated_text"].endswith(".") and "?" not in ex["output"]["translated_text"]
-               for ex in shots)
-    assert any(ex["input"]["source_locale"] == "ko-KR" for ex in shots)
-    for source in ("en-US", "es-US", "es-MX"):
-        messages = P.translate_messages(source, "ko-KR", "general", "x")
-        pairs = [(json.loads(user["content"]), json.loads(assistant["content"]))
-                 for user, assistant in zip(messages[1:-1:2], messages[2:-1:2])]
-        for ex in shots:
-            i = ex["input"]
-            same_pair = P.foreign_lang(i["source_locale"], i["target_locale"]) == P.LANG_KEY[source]
-            assert ((i, ex["output"]) in pairs) == same_pair
+def test_baseline_translation_messages_are_unchanged_after_v11_restoration():
+    root = Path(__file__).resolve().parents[1]
+    baseline = json.loads((root / "tests/fixtures/translation_prompt_baseline.json").read_text(encoding="utf-8"))
+    datasets = {"dev.jsonl", "general.jsonl", "general_es.jsonl", "naturalness.dev.jsonl"}
+    cases = {(name, row["id"]): row for name in datasets
+             for line in (root / "eval" / name).read_text(encoding="utf-8").splitlines()
+             if line.strip() for row in [json.loads(line)] if row["task"] == "translate"}
+    expected = {(row["dataset"], row["id"]): row["sha256"] for row in baseline["records"]}
+    assert P.prompt("translate")[0] == "translate-v11"
+    assert set(cases) == set(expected)
+    for key, row in cases.items():
+        messages = P.translate_messages(row["source_locale"], row["target_locale"], row["scenario"], row["text"])
+        serialized = json.dumps(messages, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        assert hashlib.sha256(serialized.encode("utf-8")).hexdigest() == expected[key], key

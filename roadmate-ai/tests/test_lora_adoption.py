@@ -1,11 +1,14 @@
 import copy
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 
 from eval import export_review as export
 from train import check_adoption as gate
+from eval import compare_stt
+from eval.stt_format import normalize_source, variant_bytes
 
 
 def digest(data):
@@ -186,3 +189,164 @@ def test_safety_regression_rejects_even_before_quality_review(stage, task):
     if task == "destination":
         assert any(":destination_FAIL:" in reason for reason in result["failures"])
     assert json.loads(sidecar.read_text(encoding="utf-8"))["adoption_status"] == "rejected"
+
+
+def write_records(folder, records):
+    for row in records:
+        row["pass"], row["flags"] = gate.judge(row["case"], row["http"], row["body"])
+    raw = "".join(json.dumps(row) + "\n" for row in records).encode()
+    (folder / "results.jsonl").write_bytes(raw)
+    meta = json.loads((folder / "run.json").read_text(encoding="utf-8"))
+    meta["results_sha256"] = digest(raw)
+    (folder / "run.json").write_text(json.dumps(meta), encoding="utf-8")
+
+
+def refresh_review(pair, out):
+    rows, key = export.export_runs([pair["baseline"], pair["candidate"]])
+    for row in rows:
+        for reviewer in export.REVIEWERS:
+            row[f"{reviewer}_verdict"] = json.dumps({side: "좋음" for side, state in key["rows"][row["id"]]["sides"].items()
+                                                   if state["status"] == "ok"}, ensure_ascii=False)
+    paths = export.write_review(rows, key, out, pair["label"])
+    pair.update(key=str(paths["key"]), review=str(paths["csv"]))
+
+
+@pytest.fixture
+def self_stage(stage, monkeypatch):
+    out, manifest, sidecar = stage
+    monkeypatch.setattr(compare_stt, "ROOT", gate.ROOT)
+    monkeypatch.setattr(gate, "load_manifest", lambda path: {"model": {"gguf_sha256": "b" * 64}})
+    manifest.update(teacher_profile="8b-q4", stt_comparisons=[])
+    for pair in manifest["comparisons"]:
+        canonical = gate.ROOT / "eval" / f"{pair['dataset']}.jsonl"
+        cases = [json.loads(line) for line in canonical.read_text().splitlines()]
+        cases[0].update(source_locale="es-MX", text="¿Puede mostrarme la entrada?")
+        cases.append({"id": "synthetic-statement", "task": "translate", "source_locale": "en-US",
+                      "target_locale": "ko-KR", "text": "This is a synthetic statement."})
+        raw = "".join(json.dumps(case) + "\n" for case in cases).encode()
+        canonical.write_bytes(raw)
+        stt_pair = {"dataset": pair["dataset"]}
+        for side in ("baseline", "candidate"):
+            folder = Path(pair[side])
+            meta = json.loads((folder / "run.json").read_text())
+            ready = meta["ready"]
+            ready.update(engine_bundle="synthetic-bundle", versions={"translate_prompt": "translate-v11"},
+                         artifact_hashes={"engine.py": "a" * 64})
+            ready["runtime_config"].update(model_id=ready["model_id"], model_timeout_s=8, max_text_chars=400)
+            ready["model_runtime"].update(model_sha256="b" * 64, context=4096, slots=1,
+                                          chat_template_sha256="d" * 64, chat_template_kwargs={"enable_thinking": False})
+            meta.update(dataset_sha256=digest(raw), ready_end=copy.deepcopy(ready))
+            (folder / "run.json").write_text(json.dumps(meta))
+            records = [{"case": case, "http": 200, "wall_ms": 100, "body": {
+                "status": "ok", "translated_text": "입구를 보여 주시겠어요?" if index == 0 else "합성 문장입니다.",
+                "model_id": ready["model_id"]}} for index, case in enumerate(cases)]
+            write_records(folder, records)
+            stt_folder = folder.parent / (side + "-stt")
+            stt_folder.mkdir()
+            meta.update(dataset_sha256=digest(variant_bytes(cases)))
+            (stt_folder / "run.json").write_text(json.dumps(meta))
+            stt_records = copy.deepcopy(records)
+            for row in stt_records:
+                row["case"]["text"] = normalize_source(row["case"]["text"], row["case"]["source_locale"])
+            if side == "baseline":
+                stt_records[0]["body"]["translated_text"] = "입구를 보여 주세요."
+            write_records(stt_folder, stt_records)
+            stt_pair[side] = str(stt_folder)
+        refresh_review(pair, out / "self-review")
+        manifest["stt_comparisons"].append(stt_pair)
+    (out / "comparison_manifest.json").write_text(json.dumps(manifest))
+    return out, manifest, sidecar
+
+
+def edit_run(folder, edit):
+    folder = Path(folder)
+    rows = [json.loads(line) for line in (folder / "results.jsonl").read_text(encoding="utf-8").splitlines()]
+    edit(rows)
+    write_records(folder, rows)
+
+
+def test_self_teacher_equal_clean_quality_and_reduced_stt_loss_pass(self_stage):
+    out, _, sidecar = self_stage
+    before = sidecar.read_bytes()
+    result = gate.decide(out)
+    assert result["status"] == "passed"
+    assert result["stt"]["es_to_ko"]["baseline"]["signals"]["question_loss"] == 3
+    assert result["stt"]["es_to_ko"]["candidate"]["signals"]["question_loss"] == 0
+    assert result["criteria"]["historical_es_to_ko_question_loss"] == 7
+    assert sidecar.read_bytes() == before
+
+
+def test_self_teacher_requires_all_stt_datasets(self_stage):
+    out, manifest, _ = self_stage
+    manifest["stt_comparisons"].pop()
+    (out / "comparison_manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="three development datasets"):
+        gate.decide(out)
+
+
+def test_self_teacher_profile_cannot_be_relabelled_to_skip_stt_gate(self_stage):
+    out, manifest, sidecar = self_stage
+    record = json.loads(sidecar.read_text())
+    record["teacher_profile"] = "8b-q4"
+    sidecar.write_text(json.dumps(record))
+    manifest["teacher_profile"] = "32b-q4"
+    (out / "comparison_manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="differs from adapter training"):
+        gate.decide(out)
+
+
+@pytest.mark.parametrize("failure", ["loss", "addition", "blocked", "clarification"])
+def test_self_teacher_stt_failures_cannot_pass(self_stage, failure):
+    out, manifest, _ = self_stage
+    for pair in manifest["stt_comparisons"]:
+        def change(rows):
+            if failure == "loss":
+                rows[0]["body"]["translated_text"] = "입구를 보여 주세요."
+            elif failure == "addition":
+                rows[2]["body"]["translated_text"] = "합성 문장인가요?"
+            elif failure == "blocked":
+                rows[0].update(http=502, body={"error_code": "synthetic"})
+            else:
+                rows[0]["body"].update(status="clarification_required", clarification_question="어느 입구인가요?")
+        edit_run(pair["candidate"], change)
+    result = gate.decide(out)
+    assert result["status"] == "rejected"
+    expected = {"loss": "question_loss_not_reduced", "addition": "question_addition_must_be_zero",
+                "blocked": "STT_eligible_pair_lost", "clarification": "STT_eligible_pair_lost"}[failure]
+    assert any(expected in reason for reason in result["failures"])
+
+
+def test_self_teacher_cannot_balance_new_bad_with_recovery(self_stage):
+    out, manifest, _ = self_stage
+    def swap(rows, key):
+        for index, row in enumerate(rows):
+            for reviewer in export.REVIEWERS:
+                row[f"{reviewer}_verdict"] = json.dumps({side: "나쁨" if state["run"] == ("run1" if index == 0 else "run2") else "좋음"
+                    for side, state in key["rows"][row["id"]]["sides"].items()}, ensure_ascii=False)
+    rewrite_review(manifest["comparisons"][0], swap)
+    result = gate.decide(out)
+    assert result["quality"]["baseline"]["나쁨"] == result["quality"]["candidate"]["나쁨"] == 1
+    assert result["status"] == "rejected" and any(":new_bad:" in reason for reason in result["failures"])
+
+
+def test_self_teacher_rejects_changed_stt_cases(self_stage):
+    out, manifest, _ = self_stage
+    edit_run(manifest["stt_comparisons"][0]["candidate"], lambda rows: rows[0]["case"].update(text="edited input"))
+    with pytest.raises(ValueError, match="case source/expectations"):
+        gate.decide(out)
+
+
+def test_self_teacher_cannot_balance_new_failure_with_recovery(self_stage):
+    out, manifest, _ = self_stage
+    pair = manifest["comparisons"][0]
+    edit_run(pair["baseline"], lambda rows: rows[0].update(http=502, body={"error_code": "synthetic"}))
+    edit_run(pair["candidate"], lambda rows: rows[2].update(http=502, body={"error_code": "synthetic"}))
+    refresh_review(pair, out / "failure-review")
+    (out / "comparison_manifest.json").write_text(json.dumps(manifest))
+    result = gate.decide(out)
+    first = result["automatic"][0]
+    assert first["baseline"]["FAIL"] == first["candidate"]["FAIL"] == 1
+    assert first["baseline"]["502"] == first["candidate"]["502"] == 1
+    assert result["status"] == "rejected"
+    assert any(":FAIL:new_row:synthetic-statement" in reason for reason in result["failures"])
+    assert any(":502:new_row:synthetic-statement" in reason for reason in result["failures"])

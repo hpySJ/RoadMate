@@ -159,6 +159,10 @@ def measures(rows):
         "status_transitions": dict(Counter(f"{r['original_status']}->{r['stt_status']}" for r in rows)),
         "signals": {"eligible_pairs": len(eligible), "label_changed": sum(r["signal_changed"] for r in eligible),
             "question_punctuation_changed": sum(r["original_question_punctuation"] != r["stt_question_punctuation"] for r in eligible),
+            "question_loss": sum(r["original_question_punctuation"] and not r["stt_question_punctuation"] for r in eligible),
+            "question_addition": sum(not r["original_question_punctuation"] and r["stt_question_punctuation"] for r in eligible),
+            "question_loss_rows": [key(r) for r in eligible if r["original_question_punctuation"] and not r["stt_question_punctuation"]],
+            "question_addition_rows": [key(r) for r in eligible if not r["original_question_punctuation"] and r["stt_question_punctuation"]],
             "label_transitions": dict(Counter(f"{r['original_signal']}->{r['stt_signal']}" for r in eligible)),
             "changed_outputs": sum(r["output_changed"] for r in eligible),
             "advisory_rows": [key(r) for r in eligible if r["signal_changed"] or
@@ -166,7 +170,9 @@ def measures(rows):
 
 
 def cohort_measures(rows):
-    return {**measures(rows), "numeric": measures([row for row in rows if row["numeric_source"]])}
+    return {**measures(rows), "numeric": measures([row for row in rows if row["numeric_source"]]),
+            "directions": {direction: measures([row for row in rows if row["direction"] == direction])
+                           for direction in sorted({row["direction"] for row in rows})}}
 
 
 def markdown(report):
@@ -200,6 +206,12 @@ def markdown(report):
     lines += ["", "## 질문·부탁 표현 표지 (참고)", "",
               "question/request/both/unmarked는 아래 표현 검색 결과입니다. could you처럼 두 표지가 함께 나타날 수 있습니다.",
               "물음표는 별도 집계이며 question 표지를 만드는 조건이 아닙니다. 이 집계에는 의미 변화 건수가 없습니다."]
+    lines += ["", "원본 출력의 물음표 유무를 기준으로 질문 소실(있음→없음)·추가(없음→있음)를 셉니다.",
+              "502·확인 질문은 성공 번역 쌍에서 제외되며, 제외된 행을 개선으로 계산하지 않습니다.", "",
+              "| 방향 | 성공 번역 쌍 | 질문 소실 | 질문 추가 |", "|---|---:|---:|---:|"]
+    for direction, stats in [*report["aggregate"]["directions"].items(), ("TOTAL", report["aggregate"])]:
+        sig = stats["signals"]
+        lines.append(f"| {direction} | {sig['eligible_pairs']} | {sig['question_loss']} | {sig['question_addition']} |")
     for name, stats in [*report["datasets"].items(), ("TOTAL", report["aggregate"])]:
         sig = stats["signals"]
         lines += [f"\n- {name}: 성공 번역 쌍 {sig['eligible_pairs']}, 출력 변경 {sig['changed_outputs']}, "

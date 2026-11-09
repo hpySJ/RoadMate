@@ -47,7 +47,7 @@ def test_translate_ok_and_ready(client):
     assert r.status_code == 200, r.text
     d = r.json()
     assert d["status"] == "ok" and d["model_id"] == "mock" and d["translated_text"].startswith("[모의 번역]")
-    assert d["prompt_version"] == "translate-v12" and r.headers["content-type"].endswith("charset=utf-8")
+    assert d["prompt_version"] == "translate-v11" and r.headers["content-type"].endswith("charset=utf-8")
     assert client.get("/health/live").json() == {"status": "ok"}
     ready = client.get("/health/ready")
     assert ready.status_code == 200 and ready.json()["ready"] is True

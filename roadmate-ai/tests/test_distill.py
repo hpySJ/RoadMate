@@ -233,7 +233,7 @@ def test_prepare_rejects_legacy_human_approval_as_training_target(tmp_path):
     assert not (tmp_path / "prepared").exists()
 
 
-@pytest.mark.parametrize("teacher_profile", D.TEACHER_PROFILES)
+@pytest.mark.parametrize("teacher_profile", ("14b-q4", "32b-q4"))
 @pytest.mark.parametrize("change", [None, "different_teacher", "mixed_teacher", "revision", "target_profile", "source_profile"])
 def test_prepare_verified_teacher_draft_records_ai_review_and_group_split(monkeypatch, tmp_path, teacher_profile, change):
     pinned = manifest(teacher_profile)
@@ -344,7 +344,7 @@ def test_generation_uses_selected_teacher_and_refuses_other_ready_server(monkeyp
     async def stop_at_source(*args):
         raise RuntimeError("source generation reached")
     monkeypatch.setattr(D, "source_augmentation", stop_at_source)
-    monkeypatch.setattr(D, "protected_templates", lambda root: set())
+    monkeypatch.setattr(D, "protected_templates", lambda root, **kwargs: set())
     args = SimpleNamespace(teacher=teacher_profile, out=tmp_path, model_url=None,
                            url="http://127.0.0.1:8000", source_count=80, seed=42)
     with pytest.raises(RuntimeError if health_matches else ValueError,

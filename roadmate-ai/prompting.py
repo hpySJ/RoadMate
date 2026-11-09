@@ -211,7 +211,7 @@ def _few_shot(name: str, lang: str | None = None) -> list[dict]:
 
 _ES_STT_QUESTION_START = re.compile(
     r"^(?:(?:(?:me|nos|le)\s+)?(?:puede|pueden|podria|podrian)|puedo|podemos|se\s+puede|"
-    r"hay|ya|donde|cuanto|cuanta|cuantos|cuantas|que|como|a\s+que|por\s+que|cual)\b"
+    r"hay|ya|donde|cuanto|cuanta|cuantos|cuantas|cuando|quien|quienes|que|como|a\s+que|por\s+que|cual)\b"
 )
 
 
