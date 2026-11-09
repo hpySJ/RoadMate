@@ -1,0 +1,38 @@
+[
+  {
+    "provenance": "independently authored inference example; not an evaluation or review rewrite",
+    "training_allowed": false,
+    "input": {"source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "glossary": {}, "utterance": "Could I pay for the car wash when I collect the keys?"},
+    "output": {"status": "ok", "translated_text": "열쇠 받을 때 세차 값을 내도 될까요?", "clarification_question": null}
+  },
+  {
+    "provenance": "independently authored inference example; not an evaluation or review rewrite",
+    "training_allowed": false,
+    "input": {"source_locale": "en-US", "target_locale": "ko-KR", "scenario": "general", "glossary": {}, "utterance": "I have been waiting by the blue sign for over seventeen minutes."},
+    "output": {"status": "ok", "translated_text": "파란 안내판 옆에서 17분 넘게 기다리고 있어요.", "clarification_question": null}
+  },
+  {
+    "provenance": "independently authored inference example; not an evaluation or review rewrite",
+    "training_allowed": false,
+    "input": {"source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "glossary": {}, "utterance": "I'd like to pick up the car after the briefing."},
+    "output": {"status": "ok", "translated_text": "설명이 끝나면 차를 받고 싶어요.", "clarification_question": null}
+  },
+  {
+    "provenance": "independently authored inference example; not an evaluation or review rewrite",
+    "training_allowed": false,
+    "input": {"source_locale": "es-US", "target_locale": "ko-KR", "scenario": "rental_counter", "glossary": {}, "utterance": "Dejé mi bufanda junto a la puerta del acompañante."},
+    "output": {"status": "ok", "translated_text": "조수석 문 옆에 목도리를 두고 왔어요.", "clarification_question": null}
+  },
+  {
+    "provenance": "independently authored inference example; not an evaluation or review rewrite",
+    "training_allowed": false,
+    "input": {"source_locale": "es-US", "target_locale": "ko-KR", "scenario": "rental_counter", "glossary": {}, "utterance": "¿Puede guardar esta bolsa mientras revisan el asiento?"},
+    "output": {"status": "ok", "translated_text": "좌석을 살펴보는 동안 이 가방 좀 맡아 주실 수 있나요?", "clarification_question": null}
+  },
+  {
+    "provenance": "independently authored inference example; not an evaluation or review rewrite",
+    "training_allowed": false,
+    "input": {"source_locale": "es-MX", "target_locale": "ko-KR", "scenario": "rental_counter", "glossary": {}, "utterance": "Quisiera sacar el paraguas antes de devolver el vehículo."},
+    "output": {"status": "ok", "translated_text": "차를 반납하기 전에 우산을 꺼내고 싶어요.", "clarification_question": null}
+  }
+]

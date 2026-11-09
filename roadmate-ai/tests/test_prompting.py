@@ -376,3 +376,90 @@ def test_midnight_hints_and_ambiguous_spanish_words():
     assert P.select_glossary("El depósito está vacío.", "es-US", "ko-KR") == {}
     assert "cobertura amplia" not in P.select_glossary("Quiero cobertura amplia.", "es-US", "ko-KR")
     assert P.select_glossary("보증금은 30만 원이에요.", "ko-KR", "es-US")["보증금"] == "depósito de garantía"
+
+
+@pytest.mark.parametrize("source,target", [("en-US", "ko-KR"), ("es-MX", "ko-KR"), ("ko-KR", "en-US"), ("ko-KR", "es-US")])
+def test_two_step_schema_and_examples_follow_target_language(source, target):
+    korean = target == "ko-KR"
+    schema = P.translation_schema(target, True)
+    assert list(schema["properties"]) == (["status", "literal", "translated_text", "clarification_question"] if korean else
+                                          ["status", "translated_text", "clarification_question"])
+    assert schema["required"] == list(schema["properties"])
+    assert P.translation_max_tokens(target, True) == (512 if korean else 256)
+    assert P.translation_max_tokens(target) == 256
+    baseline = P.translate_messages(source, target, "general", "x")
+    enabled = P.translate_messages(source, target, "general", "x", two_step_ko=True)
+    if not korean:
+        assert baseline == enabled
+        return
+    assert '"literal"' in enabled[0]["content"]
+    for index in range(1, len(enabled) - 1, 2):
+        inp = json.loads(enabled[index]["content"])
+        output = json.loads(enabled[index + 1]["content"])
+        expected = inp["target_locale"] == "ko-KR"
+        assert ("literal" in output) == expected
+        if expected:
+            assert list(output) == ["status", "literal", "translated_text", "clarification_question"]
+            assert output["literal"] == output["translated_text"]
+            assert (output["literal"] is None) == (output["status"] == "clarification_required")
+
+
+def test_optional_flags_are_explicit_and_independent(monkeypatch):
+    args = ("en-US", "ko-KR", "rental_counter", "Please collect the car after lunch.")
+    baseline = P.translate_messages(*args)
+    for key in ("TWO_STEP_KO", "NATURAL_STYLE_KO", "FIELD_GLOSSARY"):
+        monkeypatch.setenv(key, "1")
+    assert P.translate_messages(*args) == baseline
+    field = P.translate_messages(*args, field_glossary=True)
+    assert field[:-1] == baseline[:-1]
+    assert json.loads(field[-1]["content"])["glossary"] == {"collect the car": "차를 받다"}
+    natural = P.translate_messages(*args, natural_style_ko=True)
+    assert len(natural) == len(baseline) + 6
+    assert P.NATURAL_KO_RULE in natural[0]["content"]
+    assert natural[-1] == baseline[-1]
+    assert all("literal" not in json.loads(m["content"]) for m in natural if m["role"] == "assistant")
+
+
+def test_natural_examples_are_only_for_korean_and_same_source_language():
+    from validation import validate_translation
+    samples = P.examples("translate.natural")
+    assert 4 <= len(samples) <= 6
+    for ex in samples:
+        i = ex["input"]
+        assert ex["training_allowed"] is False and "inference" in ex["provenance"]
+        assert i["target_locale"] == "ko-KR"
+        assert validate_translation(ex["output"], i["utterance"], i["source_locale"], "ko-KR") == []
+        assert i["glossary"] == P.select_glossary(i["utterance"], i["source_locale"], "ko-KR")
+    for target in ("en-US", "es-US", "es-MX"):
+        assert P.translate_messages("ko-KR", target, "general", "x", natural_style_ko=True) == P.translate_messages(
+            "ko-KR", target, "general", "x")
+    es = P.translate_messages("es-MX", "ko-KR", "general", "x", natural_style_ko=True)
+    assert all(json.loads(m["content"])["source_locale"] != "en-US" for m in es[1:] if m["role"] == "user")
+
+
+@pytest.mark.parametrize("source,text,surface,expected", [
+    ("en-US", "The passenger door handle is sticky.", "passenger door", "조수석 문"),
+    ("es-US", "El lado del conductor está mojado.", "lado del conductor", "운전석 쪽"),
+    ("en-US", "It has half a tank remaining.", "half a tank", "연료통의 절반"),
+    ("es-MX", "Queda medio tanque.", "medio tanque", "연료통의 절반"),
+    ("en-US", "The tire pressure warning light flashes.", "tire pressure warning light", "타이어 공기압 경고등"),
+    ("en-US", "Keep the parking entry ticket.", "parking entry ticket", "주차권"),
+    ("es-US", "Hay una multa de estacionamiento.", "multa de estacionamiento", "주차 위반 과태료"),
+    ("en-US", "The toll charge is listed separately.", "toll charge", "통행료"),
+])
+def test_field_hints_preserve_specific_meanings(source, text, surface, expected):
+    hints = P.select_glossary(text, source, "ko-KR", field_glossary=True)
+    assert hints == {surface: expected}
+    assert surface not in P.select_glossary(text, source, "ko-KR")
+
+
+@pytest.mark.parametrize("source,text", [("en-US", "parking ticket"), ("es-US", "peaje"), ("en-US", "passenger")])
+def test_field_hints_do_not_resolve_ambiguous_bare_words(source, text):
+    assert P.select_glossary(text, source, "ko-KR", field_glossary=True) == {}
+
+
+def test_field_hints_do_not_change_safety_concepts_or_fuel_hints():
+    text = "Collect the car with gasoline, not diesel."
+    assert P.select_glossary(text, "en-US", "ko-KR", field_glossary=True) == {
+        "Collect the car": "차를 받다", "gasoline": "휘발유", "diesel": "경유"}
+    assert P.match_concepts(text, "en-US", {"fuel"}) == {"fuel_gasoline": "gasoline", "fuel_diesel": "diesel"}

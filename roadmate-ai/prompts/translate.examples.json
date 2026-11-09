@@ -1,15 +1,15 @@
 [
   {
-    "input": {"source_locale": "en-US", "target_locale": "ko-KR", "scenario": "gas_station", "glossary": {"gasoline": "휘발유", "diesel": "경유", "30,000 won": "30,000 원"}, "utterance": "Please put in 30,000 won worth of gasoline, not diesel."},
-    "output": {"status": "ok", "translated_text": "경유 말고 휘발유로 3만 원어치 넣어 주세요.", "clarification_question": null}
+    "input": {"source_locale": "en-US", "target_locale": "ko-KR", "scenario": "gas_station", "glossary": {"gasoline": "휘발유", "diesel": "경유", "27,000 won": "27,000 원"}, "utterance": "Use gasoline for this vehicle, never diesel, and charge me 27,000 won."},
+    "output": {"status": "ok", "translated_text": "이 차에는 경유는 절대 넣지 말고 휘발유를 넣어 주세요. 금액은 2만 7천 원으로 해 주세요.", "clarification_question": null}
   },
   {
     "input": {"source_locale": "ko-KR", "target_locale": "en-US", "scenario": "accident", "glossary": {"범퍼": "bumper"}, "utterance": "다친 사람은 없고 앞 범퍼만 조금 찌그러졌어요."},
     "output": {"status": "ok", "translated_text": "No one is hurt. Only the front bumper is slightly dented.", "clarification_question": null}
   },
   {
-    "input": {"source_locale": "en-US", "target_locale": "ko-KR", "scenario": "gas_station", "glossary": {"Fill it up": "가득"}, "utterance": "Fill it up with gas, please."},
-    "output": {"status": "ok", "translated_text": "기름 가득 넣어 주세요.", "clarification_question": null}
+    "input": {"source_locale": "en-US", "target_locale": "ko-KR", "scenario": "gas_station", "glossary": {}, "utterance": "We need some fuel before crossing the bridge."},
+    "output": {"status": "ok", "translated_text": "다리를 건너기 전에 기름을 좀 넣어야 해요.", "clarification_question": null}
   },
   {
     "input": {"source_locale": "ko-KR", "target_locale": "en-US", "scenario": "parking", "glossary": {"오후 3시": "3 p.m."}, "utterance": "오후 3시까지 여기 세워도 돼요? 왼쪽 자리 말고요."},
@@ -24,20 +24,20 @@
     "output": {"status": "ok", "translated_text": "제가 이미 결제했다고 그분께 말씀해 주세요.", "clarification_question": null}
   },
   {
-    "input": {"source_locale": "en-US", "target_locale": "ko-KR", "scenario": "gas_station", "glossary": {}, "utterance": "Can you fill it with, um, the..."},
-    "output": {"status": "clarification_required", "translated_text": null, "clarification_question": "Sorry, I didn't catch what to fill it with. Could you say the whole sentence again?"}
+    "input": {"source_locale": "en-US", "target_locale": "ko-KR", "scenario": "gas_station", "glossary": {}, "utterance": "The fuel this car needs is, er..."},
+    "output": {"status": "clarification_required", "translated_text": null, "clarification_question": "Could you say which fuel the car needs?"}
   },
   {
-    "input": {"source_locale": "es-US", "target_locale": "ko-KR", "scenario": "gas_station", "glossary": {"gasolina": "휘발유", "diésel": "경유", "30,000 wones": "30,000 원"}, "utterance": "Póngale 30,000 wones de gasolina, no de diésel, por favor."},
-    "output": {"status": "ok", "translated_text": "경유 말고 휘발유로 3만 원어치 넣어 주세요.", "clarification_question": null}
+    "input": {"source_locale": "es-US", "target_locale": "ko-KR", "scenario": "gas_station", "glossary": {"gasolina": "휘발유", "diésel": "경유", "27,000 wones": "27,000 원"}, "utterance": "Para este vehículo necesito 27,000 wones de gasolina; no le ponga diésel."},
+    "output": {"status": "ok", "translated_text": "이 차에는 휘발유가 2만 7천 원어치 필요해요. 경유는 넣지 마세요.", "clarification_question": null}
   },
   {
     "input": {"source_locale": "ko-KR", "target_locale": "es-US", "scenario": "accident", "glossary": {"범퍼": "defensa"}, "utterance": "다친 사람은 없고 앞 범퍼만 조금 찌그러졌어요."},
     "output": {"status": "ok", "translated_text": "No hay heridos. Solo la defensa delantera está un poco abollada.", "clarification_question": null}
   },
   {
-    "input": {"source_locale": "es-MX", "target_locale": "ko-KR", "scenario": "gas_station", "glossary": {"Llénelo": "가득"}, "utterance": "Llénelo de combustible, por favor."},
-    "output": {"status": "ok", "translated_text": "기름 가득 넣어 주세요.", "clarification_question": null}
+    "input": {"source_locale": "es-MX", "target_locale": "ko-KR", "scenario": "gas_station", "glossary": {}, "utterance": "Necesito combustible para llegar al muelle."},
+    "output": {"status": "ok", "translated_text": "선착장까지 가려면 기름이 필요해요.", "clarification_question": null}
   },
   {
     "input": {"source_locale": "ko-KR", "target_locale": "es-US", "scenario": "parking", "glossary": {"오후 3시": "3 p. m."}, "utterance": "오후 3시까지 여기 세워도 돼요? 왼쪽 자리 말고요."},
@@ -56,16 +56,16 @@
     "output": {"status": "ok", "translated_text": "제가 이미 결제했다고 그분께 말씀해 주세요.", "clarification_question": null}
   },
   {
-    "input": {"source_locale": "es-US", "target_locale": "ko-KR", "scenario": "gas_station", "glossary": {}, "utterance": "¿Me lo puede llenar con, eh, el...?"},
-    "output": {"status": "clarification_required", "translated_text": null, "clarification_question": "Perdón, no entendí con qué quiere llenarlo. ¿Puede repetir toda la frase?"}
+    "input": {"source_locale": "es-US", "target_locale": "ko-KR", "scenario": "gas_station", "glossary": {}, "utterance": "Este motor necesita el combustible llamado..."},
+    "output": {"status": "clarification_required", "translated_text": null, "clarification_question": "¿Puede repetir el nombre del combustible y la frase completa?"}
   },
   {
     "input": {"source_locale": "en-US", "target_locale": "ko-KR", "scenario": "rental_counter", "glossary": {}, "utterance": "Could you give me a hand loading this suitcase?"},
     "output": {"status": "ok", "translated_text": "이 여행 가방 싣는 것 좀 도와주시겠어요?", "clarification_question": null}
   },
   {
-    "input": {"source_locale": "ko-KR", "target_locale": "en-US", "scenario": "rental_counter", "glossary": {}, "utterance": "말씀 좀 천천히 해 주시겠어요?"},
-    "output": {"status": "ok", "translated_text": "Could you speak a little more slowly, please?", "clarification_question": null}
+    "input": {"source_locale": "ko-KR", "target_locale": "en-US", "scenario": "rental_counter", "glossary": {}, "utterance": "메모하고 있으니 설명은 한 문장씩 천천히 부탁드려요."},
+    "output": {"status": "ok", "translated_text": "I'm taking notes, so please explain slowly, one sentence at a time.", "clarification_question": null}
   },
   {
     "input": {"source_locale": "es-MX", "target_locale": "ko-KR", "scenario": "rental_counter", "glossary": {}, "utterance": "Se me quedó la llave adentro del carro."},

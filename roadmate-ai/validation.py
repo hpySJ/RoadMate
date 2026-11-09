@@ -769,7 +769,8 @@ FUEL_NEG_AFTER = {
     "en": re.compile(r"^\s+(?:(?:is|was)\s+not|isn't|wasn't|is\s+(?:wrong|prohibited|forbidden)|not\s+allowed)\b", re.I),
     "es": re.compile(rf"^\s+(?:no\s+(?:(?:se|le|les|me|lo|la|nos|te)\s+)*(?:es|esta|va|puede|permite|debe|{_ES_FUEL_VERB})\b"
                      r"|(?:esta|es|queda)\s+(?:prohibid[oa]|mal|incorrect[oa])\b)", re.I),
-    "ko": re.compile(r"^(?:차)?(?:은|는|이|가|을|를|으로|로|도|만)?\s*(?:다시\s*)?(?:말고|아니(?!면)|아닙|아냐|아녜|대신|빼|제외|금지|절대|안\s?(?:돼|되|됩|넣|쓰)"
+    # "아닌지/아닌가 확인"은 연료 종류를 묻는 말이므로 확정된 연료 부정으로 보지 않는다.
+    "ko": re.compile(r"^(?:차)?(?:은|는|이|가|을|를|으로|로|도|만)?\s*(?:다시\s*)?(?:말고|아니(?!면)|아닌(?!지|가)|아닙|아냐|아녜|대신|빼|제외|금지|절대|안\s?(?:돼|되|됩|넣|쓰)"
                      r"|(?:넣을|쓸|주유할|사용할|채울)\s*필요(?:가)?\s*없"
                      r"|(?:넣|주유하|주유|쓰|사용하|채우)(?:지\s?(?:마|말|않)|으?시?면\s?안))"),
 }

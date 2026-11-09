@@ -43,6 +43,12 @@ def load_manifest(path: Path | None = None) -> dict:
     return json.loads((path or manifest_path()).read_text(encoding="utf-8"))
 
 
+def experiment_flags() -> dict[str, bool]:
+    load_dotenv()
+    return {name: os.environ.get(name.upper(), "0") == "1"
+            for name in ("two_step_ko", "natural_style_ko", "field_glossary")}
+
+
 @dataclass(frozen=True)
 class Settings:
     model_backend: str  # llama | mock
@@ -59,6 +65,9 @@ class Settings:
     log_rejected: bool = False
     polish_ko: bool = False
     model_profile: str = "4b-q4"
+    two_step_ko: bool = False
+    natural_style_ko: bool = False
+    field_glossary: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -85,4 +94,5 @@ class Settings:
             log_rejected=env("LOG_REJECTED", "0") == "1",
             # 다듬기 비교에서 의미 변경과 지연이 확인돼 꺼 둔다. 1은 개발 비교용이다.
             polish_ko=env("POLISH_KO", "0") == "1",
+            **experiment_flags(),
         )

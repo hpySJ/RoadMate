@@ -34,6 +34,11 @@ def glossary() -> dict:
 
 
 @lru_cache(maxsize=None)
+def optional_field_terms() -> dict:
+    return json.loads((ROOT / "packs" / "field_glossary.json").read_text(encoding="utf-8"))
+
+
+@lru_cache(maxsize=None)
 def places() -> tuple:
     return tuple(json.loads((ROOT / "packs" / "poi.demo.json").read_text(encoding="utf-8"))["places"])
 
@@ -164,7 +169,7 @@ def _time_hints(text: str, src: str, tgt: str) -> dict[str, str]:
     return out
 
 
-def select_glossary(text: str, source_locale: str, target_locale: str) -> dict[str, str]:
+def select_glossary(text: str, source_locale: str, target_locale: str, *, field_glossary: bool = False) -> dict[str, str]:
     # QWEN 구현: 발화에 나온 용어·데모 장소 이름만 넣어 프롬프트를 짧게 유지(성산일출봉 = Seongsan Ilchulbong)
     by_id = {e["id"]: e for e in glossary()["entries"]}
     src, tgt = LANG_KEY[source_locale], LANG_KEY[target_locale]
@@ -173,6 +178,13 @@ def select_glossary(text: str, source_locale: str, target_locale: str) -> dict[s
     for term, targets in glossary().get(f"{src}_only_hints", {}).items():
         for start, end, _ in _find_terms(text, [term], src):
             out[text[start:end]] = targets[tgt]
+    if field_glossary:
+        # 실험용 현장 표현은 기존 안전 개념과 분리한다. 긴 표현에 포함된 짧은 힌트는 중복하지 않는다.
+        for entry in optional_field_terms()["entries"]:
+            for start, end, _ in _find_terms(text, entry[src], src):
+                surface = text[start:end]
+                out = {k: v for k, v in out.items() if fold(k).lower() not in fold(surface).lower()}
+                out[surface] = entry.get("preferred", {}).get(tgt, entry[tgt][0])
     found = {}
     for p in places():
         # 스페인어 화자도 영어 표기(Jeju Airport)를 말할 수 있어 외국어 쪽은 로마자 이름을 모두 본다
@@ -196,7 +208,7 @@ def foreign_lang(source_locale: str, target_locale: str) -> str:
     return LANG_KEY[target_locale if source_locale == "ko-KR" else source_locale]
 
 
-def _few_shot(name: str, lang: str | None = None) -> list[dict]:
+def _few_shot(name: str, lang: str | None = None, *, two_step_ko: bool = False) -> list[dict]:
     # QWEN 구현: 번역 예시는 같은 외국어 쌍(한↔영, 한↔스)만 넣는다. 다른 언어 예시가 섞이면 출력 언어가 흔들린다
     msgs = []
     for ex in examples(name):
@@ -204,23 +216,51 @@ def _few_shot(name: str, lang: str | None = None) -> list[dict]:
         if lang and "source_locale" in i and foreign_lang(i["source_locale"], i["target_locale"]) != lang:
             continue
         msgs.append({"role": "user", "content": _dump(i)})
-        msgs.append({"role": "assistant", "content": _dump(ex["output"])})
+        output = ex["output"]
+        if two_step_ko and i.get("target_locale") == "ko-KR":
+            output = {"status": output["status"], "literal": output["translated_text"], **output}
+        msgs.append({"role": "assistant", "content": _dump(output)})
     return msgs
 
 
-def translate_messages(source_locale: str, target_locale: str, scenario: str, text: str) -> list[dict]:
+NATURAL_KO_RULE = (
+    "Korean style: use polite -요 endings consistently. Omit redundant pronouns only when the referent remains clear. "
+    "Avoid English-like pronouns and stiff ~는 것이, ~하기 위해, 여부 when a simple spoken expression keeps the meaning. "
+    "Use ordinary on-site verbs such as 넣다, 빼다, 내다, 반납하다 where they fit; never alter facts or roles."
+)
+TWO_STEP_KO_RULE = (
+    '10. For a Korean target, output JSON keys in this order: '
+    '{"status":"ok","literal":"faithful Korean translation","translated_text":"natural spoken Korean with the same facts",'
+    '"clarification_question":null}. Write literal first, then express exactly those facts as Korean staff or a driver would say them. '
+    'Keep roles, numbers, negation and uncertainty unchanged. For clarification output '
+    '{"status":"clarification_required","literal":null,"translated_text":null,"clarification_question":"..."}. '
+    'For other targets keep the ordinary format without literal. Output JSON only.'
+)
+
+
+def translate_messages(source_locale: str, target_locale: str, scenario: str, text: str, *,
+                       two_step_ko: bool = False, natural_style_ko: bool = False,
+                       field_glossary: bool = False) -> list[dict]:
     # QWEN 구현: system + few-shot + 실제 발화(JSON으로 감싸 지시문 주입을 분리)
     _, system = prompt("translate")
+    korean = target_locale == "ko-KR"
+    if two_step_ko and korean:
+        system = system.rsplit("\n10. ", 1)[0] + "\n" + TWO_STEP_KO_RULE
+    if natural_style_ko and korean:
+        system += "\n" + NATURAL_KO_RULE
     payload = {
         "source_locale": source_locale,
         "target_locale": target_locale,
         "target_language": LANG_NAME[target_locale],
         "scenario": scenario,
-        "glossary": select_glossary(text, source_locale, target_locale),
+        "glossary": select_glossary(text, source_locale, target_locale, field_glossary=field_glossary),
         "utterance": text,
     }
     lang = foreign_lang(source_locale, target_locale)
-    return [{"role": "system", "content": system}, *_few_shot("translate", lang), {"role": "user", "content": _dump(payload)}]
+    shots = _few_shot("translate", lang, two_step_ko=two_step_ko and korean)
+    if natural_style_ko and korean:
+        shots += _few_shot("translate.natural", lang, two_step_ko=two_step_ko)
+    return [{"role": "system", "content": system}, *shots, {"role": "user", "content": _dump(payload)}]
 
 
 def polish_messages(source_locale: str, source: str, korean: str, glossary_: dict) -> list[dict]:
@@ -256,6 +296,22 @@ TRANSLATE_SCHEMA = {
     "required": ["status", "translated_text", "clarification_question"],
     "additionalProperties": False,
 }
+
+
+def translation_schema(target_locale: str, two_step_ko: bool = False) -> dict:
+    if not two_step_ko or target_locale != "ko-KR":
+        return TRANSLATE_SCHEMA
+    props = TRANSLATE_SCHEMA["properties"]
+    # dict 순서는 llama.cpp JSON 문법의 생성 순서이기도 하다.
+    return {**TRANSLATE_SCHEMA,
+            "properties": {"status": props["status"], "literal": _TEXT_OR_NULL,
+                           "translated_text": props["translated_text"],
+                           "clarification_question": props["clarification_question"]},
+            "required": ["status", "literal", "translated_text", "clarification_question"]}
+
+
+def translation_max_tokens(target_locale: str, two_step_ko: bool = False) -> int:
+    return 512 if two_step_ko and target_locale == "ko-KR" else TRANSLATE_MAX_TOKENS
 
 POLISH_SCHEMA = {
     "type": "object",

@@ -20,7 +20,7 @@ import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from config import artifact_hashes, load_dotenv, load_manifest, model_profile  # noqa: E402
+from config import artifact_hashes, experiment_flags, load_dotenv, load_manifest, model_profile  # noqa: E402
 from validation import latin_words  # noqa: E402
 
 load_dotenv()
@@ -233,6 +233,7 @@ def main():
         ap.error("잠근 시험은 튜닝 종료 후 --final로 한 번만 실행하세요")
 
     selected_profile = model_profile()
+    selected_flags = experiment_flags()
     bundle = load_manifest()["engine_bundle"]
     headers = {"X-Internal-Token": os.environ["AI_INTERNAL_TOKEN"]} if os.environ.get("AI_INTERNAL_TOKEN") else {}
     cases = [json.loads(x) for x in Path(a.file).read_text(encoding="utf-8").splitlines() if x.strip()]
@@ -252,6 +253,8 @@ def main():
     if (ready.get("model_profile") != selected_profile
             or ready.get("runtime_config", {}).get("model_profile") != selected_profile):
         raise SystemExit("server model profile is missing or differs from MODEL_PROFILE; evaluation not started")
+    if any(ready.get("runtime_config", {}).get(k) != v for k, v in selected_flags.items()):
+        raise SystemExit("server experiment flags differ from evaluation environment; restart with matching flags")
     try:
         final_attempt = reserve_final(Path(a.file), ready) if locked else None
     except FileExistsError:
@@ -287,6 +290,7 @@ def main():
     style_stats = translationese_stats(rows)
     profile_consistent = (ready_end.get("model_profile") == selected_profile
                           and ready_end.get("runtime_config", {}).get("model_profile") == selected_profile)
+    flags_consistent = all(ready_end.get("runtime_config", {}).get(k) == v for k, v in selected_flags.items())
 
     with (out_dir / "results.jsonl").open("w", encoding="utf-8") as f:
         for row in rows:
@@ -308,6 +312,7 @@ def main():
             "ready": ready, "ready_end": ready_end, "label": a.label, "timestamp": stamp, "final_attempt": final_attempt,
             "retry_stats": retry_stats, "translationese_stats": style_stats,
             "model_profile": ready["model_profile"], "model_profile_consistent": profile_consistent,
+            **selected_flags, "experiment_flags_consistent": flags_consistent,
             "results_sha256": hashlib.sha256((out_dir / "results.jsonl").read_bytes()).hexdigest()}
     (out_dir / "run.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     client.close()
@@ -315,6 +320,8 @@ def main():
     lines = [f"# 평가 결과 {a.label} ({Path(a.file).name}, {stamp})", "",
              f"- engine_bundle: {bundle}", f"- model_profile: {ready['model_profile']}",
              f"- model profile consistent through run: {profile_consistent}",
+             *(f"- {k.upper()}: {int(v)}" for k, v in selected_flags.items()),
+             f"- experiment flags consistent through run: {flags_consistent}",
              f"- ready: {json.dumps(ready, ensure_ascii=False)}", ""]
     lines += ["| task | n | auto pass | pass rate |", "|---|---:|---:|---:|"]
     for task in sorted({r["case"]["task"] for r in rows}):
@@ -350,6 +357,8 @@ def main():
     print(f"\nsaved: {out_dir}")
     if not profile_consistent:
         raise SystemExit("model profile changed or is missing at end; saved results are not a consistent profile evaluation")
+    if not flags_consistent:
+        raise SystemExit("experiment flags changed during evaluation; results saved but comparison is invalid")
 
 
 if __name__ == "__main__":

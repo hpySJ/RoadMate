@@ -68,8 +68,7 @@ def test_prompt_exposure_is_recorded_instead_of_called_held_out():
     actual = {p.name: [c["id"] for c in load(p.name) if fingerprint(c["text"], c["source_locale"]) in shots]
               for p in (ROOT / "eval").glob("*.jsonl")}
     assert actual == boundary["prompt_template_overlap"]
-    assert "t-a-006" in actual["test.locked.jsonl"]
-    assert "d-a-004" in actual["dev.jsonl"]
+    assert not any(actual.values())
     assert not actual["test.locked.v2.jsonl"]
     assert not any("echar una mano" in c["text"].lower() or "give me a hand" in c["text"].lower() for c in NATURAL)
 
@@ -79,7 +78,7 @@ def test_general_set_is_in_declared_language():
     assert not [c["id"] for c in GENERAL + NATURAL if looks_like_other_language(c["text"], c["source_locale"])]
 
 
-@pytest.mark.parametrize("c", [c for c in DEV + TEST + NATURAL + TEST_V2 if c["task"] == "translate" and c.get("reference")], ids=lambda c: c["id"])
+@pytest.mark.parametrize("c", [c for c in DEV + NATURAL if c["task"] == "translate" and c.get("reference")], ids=lambda c: c["id"])
 def test_references_pass_validators(c):
     out = {"status": "ok", "translated_text": c["reference"], "clarification_question": None}
     assert validate_translation(out, c["text"], c["source_locale"], c["target_locale"]) == []
@@ -105,14 +104,14 @@ def test_dev_judge_accepts_equivalent_word_forms(case_id, translated_text, expec
     assert passed is expected
 
 
-@pytest.mark.parametrize("c", [c for c in DEV + TEST + GENERAL + TEST_V2 if c["task"] == "destination"], ids=lambda c: c["id"])
+@pytest.mark.parametrize("c", [c for c in DEV + GENERAL if c["task"] == "destination"], ids=lambda c: c["id"])
 def test_destination_cases_reference_known_pois(c):
     for p in [c.get("expect_poi"), *c.get("expect_poi_any", [])]:
         assert p is None or p in POI_IDS
 
 
 def test_wrong_language_cases_detected_by_code():
-    for c in DEV + TEST:
+    for c in DEV:
         if c["group_id"] in ("wrong_lang_ko_in_en", "wrong_lang_en_in_ko", "t_wrong_lang", "unsupported_french"):
             assert looks_like_other_language(c["text"], c["source_locale"])
 

@@ -96,6 +96,34 @@ def test_spanish_tomar_fuel_polarity(locale, verb):
         korean, "ko-KR", f"Este carro no {verb} gasolina, sino diésel.", locale)
 
 
+@pytest.mark.parametrize("phrase", ["경유가 아닌 휘발유", "경유 아닌 휘발유"])
+def test_korean_attributive_fuel_negation(phrase):
+    source = "Please put in 50,000 won of gasoline, not diesel."
+    assert v(source, "en-US", f"{phrase}로 5만 원어치 넣어 주세요.", "ko-KR") == []
+
+
+def test_korean_attributive_fuel_negation_still_rejects_reversed_fuels():
+    issues = v("Please put in 50,000 won of gasoline, not diesel.", "en-US",
+               "휘발유가 아닌 경유로 5만 원어치 넣어 주세요.", "ko-KR")
+    assert "fuel_polarity_mismatch:fuel_diesel" in issues
+    assert "fuel_polarity_mismatch:fuel_gasoline" in issues
+
+
+@pytest.mark.parametrize("ending", ["아닌지 확인해 주세요", "아닌가요"])
+def test_indirect_fuel_question_is_not_a_confirmed_fuel_prohibition(ending):
+    from validation import check_fuel_polarity, fuel_polarity
+    target = f"경유가 {ending}."
+    # True here means the mention was not classified as an explicit prohibition.
+    assert fuel_polarity(target, "ko-KR") == {"fuel_diesel": {True}}
+    assert "fuel_polarity_mismatch:fuel_diesel" in check_fuel_polarity(
+        "Gasoline, not diesel, please.", "en-US", target, "ko-KR")
+
+
+def test_translated_indirect_fuel_question_remains_valid():
+    assert v("Please check whether this is not diesel.", "en-US",
+             "경유가 아닌지 확인해 주세요.", "ko-KR") == []
+
+
 @pytest.mark.parametrize("source", [
     "Check them one by one.", "Check them ONE BY ONE, please.", "Check them one  by\none tomorrow.",
 ])

@@ -72,8 +72,9 @@ def test_translationese_multiple_groups_still_count_one_output():
     assert stats["marker_outputs"]["first_person_pronoun"] == stats["marker_outputs"]["latin_word"] == 1
 
 
-@pytest.mark.parametrize("profile_state", ["consistent", "start_missing", "start_mismatch", "end_missing", "end_mismatch"])
-def test_evaluation_records_actual_profile_and_preserves_raw_output(tmp_path, monkeypatch, profile_state):
+@pytest.mark.parametrize("profile_state", ["consistent", "start_missing", "start_mismatch", "end_missing", "end_mismatch", "start_flags", "end_flags"])
+@pytest.mark.parametrize("two_step", [False, True])
+def test_evaluation_records_actual_profile_and_preserves_raw_output(tmp_path, monkeypatch, profile_state, two_step):
     from types import SimpleNamespace
     import eval.evaluate as evaluate
 
@@ -83,11 +84,17 @@ def test_evaluation_records_actual_profile_and_preserves_raw_output(tmp_path, mo
     corpus = tmp_path / "dev.jsonl"
     corpus.write_text(json.dumps(case), encoding="utf-8")
     ready = {"ready": True, "backend": "mock", "model_id": "mock", "artifact_hashes": {},
-             "model_profile": selected, "runtime_config": {"model_profile": selected}}
+             "model_profile": selected, "runtime_config": {"model_profile": selected, "two_step_ko": False, "natural_style_ko": False, "field_glossary": False}}
+    flags = {"two_step_ko": two_step, "natural_style_ko": False, "field_glossary": False}
+    ready["runtime_config"].update(flags)
+    monkeypatch.setattr(evaluate, "experiment_flags", lambda: flags.copy())
     start, end = copy.deepcopy(ready), copy.deepcopy(ready)
     if profile_state != "consistent":
         target = start if profile_state.startswith("start") else end
-        target["model_profile"] = None if profile_state.endswith("missing") else "8b-q4"
+        if profile_state.endswith("flags"):
+            target["runtime_config"]["two_step_ko"] = not two_step
+        else:
+            target["model_profile"] = None if profile_state.endswith("missing") else "8b-q4"
     snapshots = [start, end]
     output = {"status": "ok", "translated_text": "나는 이미 확인했어요.", "latency_ms": 10, "model_id": "mock"}
     calls = []
@@ -118,7 +125,7 @@ def test_evaluation_records_actual_profile_and_preserves_raw_output(tmp_path, mo
     if profile_state == "consistent":
         evaluate.main()
     else:
-        with pytest.raises(SystemExit, match="profile"):
+        with pytest.raises(SystemExit, match="profile|experiment flags"):
             evaluate.main()
     runs = list((tmp_path / "eval" / "results").glob("*"))
     if profile_state.startswith("start"):
@@ -127,13 +134,16 @@ def test_evaluation_records_actual_profile_and_preserves_raw_output(tmp_path, mo
     assert len(calls) == len(runs) == 1
     meta = json.loads((runs[0] / "run.json").read_text(encoding="utf-8"))
     assert meta["model_profile"] == selected
-    assert meta["model_profile_consistent"] is (profile_state == "consistent")
+    assert meta["model_profile_consistent"] is (profile_state in ("consistent", "end_flags"))
+    assert meta["two_step_ko"] is two_step
+    assert meta["experiment_flags_consistent"] is (profile_state != "end_flags")
     assert meta["translationese_stats"]["marker_outputs"]["first_person_pronoun"] == 1
     raw = json.loads((runs[0] / "results.jsonl").read_text(encoding="utf-8"))
     assert raw["body"] == output and raw["pass"] is True and raw["flags"] == []
     assert "translationese_stats" not in raw
     summary = (runs[0] / "summary.md").read_text(encoding="utf-8")
     assert "- model_profile: 4b-q8" in summary and "Korean translationese signals (advisory): 1/1" in summary
+    assert f"- TWO_STEP_KO: {int(two_step)}" in summary
 
 
 def test_retry_measurement_counts_only_traced_attempts(tmp_path):
@@ -225,10 +235,11 @@ def test_quality_gate_rejects_mock_unreviewed_and_changed_evidence(tmp_path, mon
     meta = {"dataset": "general_es.jsonl", "dataset_sha256": hashlib.sha256(local_eval.read_bytes()).hexdigest(),
             "results_sha256": hashlib.sha256(results).hexdigest(),
             "model_profile": settings.model_profile, "model_profile_consistent": True,
+            "two_step_ko": False, "natural_style_ko": False, "field_glossary": False, "experiment_flags_consistent": True,
             "ready": {"ready": True, "backend": "mock", "model_id": "mock", "artifact_hashes": artifact_hashes(),
                       "model_profile": settings.model_profile,
                       "runtime_config": {"model_id": settings.model_id, "model_profile": settings.model_profile,
-                                         "polish_ko": settings.polish_ko,
+                                         "polish_ko": settings.polish_ko, "two_step_ko": False, "natural_style_ko": False, "field_glossary": False,
                                          "model_timeout_s": settings.model_timeout_s, "max_text_chars": settings.max_text_chars}}}
     (tmp_path / "run.json").write_text(json.dumps(meta), encoding="utf-8")
     fields = ["id", "text", "output", "human_meaning_ok", "human_naturalness_ok", "critical_error"]

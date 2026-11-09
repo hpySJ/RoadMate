@@ -349,13 +349,17 @@ class Engine:
         if looks_like_other_language(req.text, req.source_locale):
             return {"status": "clarification_required", "translated_text": None,
                     "clarification_question": WRONG_LANG[req.source_locale]}
-        messages = P.translate_messages(req.source_locale, req.target_locale, req.scenario, req.text)
+        flags = {name: getattr(self.s, name, False) for name in ("two_step_ko", "natural_style_ko", "field_glossary")}
+        messages = P.translate_messages(req.source_locale, req.target_locale, req.scenario, req.text, **flags)
+        schema = P.translation_schema(req.target_locale, flags["two_step_ko"])
+        max_tokens = P.translation_max_tokens(req.target_locale, flags["two_step_ko"])
         structural = self.client.is_mock
         issues: list[str] = []
         out: dict | None = None
         try:
-            out = _with_meridiem(await self.client.chat_json(messages, P.TRANSLATE_SCHEMA, P.TRANSLATE_MAX_TOKENS,
-                                                             P.TRANSLATE_SAMPLING, deadline - time.monotonic()), req)
+            out = await self.client.chat_json(messages, schema, max_tokens, P.TRANSLATE_SAMPLING, deadline - time.monotonic())
+            out = self._final_translation(req, out, 1)
+            out = _with_meridiem(out, req)
             out = _normalize_korean_pronouns(out, req)
             issues = validate_translation(out, req.text, req.source_locale, req.target_locale, structural)
         except (ModelBadOutput, ModelTruncated) as e:
@@ -372,8 +376,9 @@ class Engine:
             raise ValidationFailed(issues)
         repair = translation_repair(messages, issues)
         try:
-            out = _with_meridiem(await self.client.chat_json(repair, P.TRANSLATE_SCHEMA, P.TRANSLATE_MAX_TOKENS,
-                                                             P.RETRY_SAMPLING, deadline - time.monotonic()), req)
+            out = await self.client.chat_json(repair, schema, max_tokens, P.RETRY_SAMPLING, deadline - time.monotonic())
+            out = self._final_translation(req, out, 2)
+            out = _with_meridiem(out, req)
             out = _normalize_korean_pronouns(out, req)
         except (ModelBadOutput, ModelTruncated) as e:
             self._log_attempt(req, 2, [e.code], None)
@@ -386,6 +391,21 @@ class Engine:
         if issues:
             raise ValidationFailed(issues)
         return await self._polish(req, out, deadline)
+
+    def _final_translation(self, req, out, attempt):
+        if (getattr(self.s, "two_step_ko", False) and req.target_locale == "ko-KR" and not self.client.is_mock
+                and isinstance(out, dict)):
+            literal = out.get("literal")
+            if ("literal" not in out or out.get("status") == "ok" and not isinstance(literal, str)
+                    or out.get("status") == "clarification_required" and literal is not None):
+                raise ModelBadOutput("two-step literal has invalid format")
+        if isinstance(out, dict) and "literal" in out:
+            literal = out["literal"]
+            out = {key: value for key, value in out.items() if key != "literal"}
+            if self.s.log_rejected:
+                log.warning("translation_literal %s", json.dumps({"request_id": req.request_id,
+                            "attempt": attempt, "literal": literal}, ensure_ascii=False))
+        return out
 
     async def _polish(self, req, out: dict, deadline: float) -> dict:
         # QWEN 구현: 영·스→한 번역을 한 번 더 자연스러운 한국어로 다듬는다. 다듬은 문장도 같은 검사를 통과해야만 바꾼다
@@ -430,6 +450,12 @@ class Engine:
                         P.completion_text(out) if out else None)
 
     async def parse_destination(self, req, deadline: float) -> dict:
+        from destination_intents import nearby_category_request
+        category = nearby_category_request(req.text, req.source_locale)
+        if category:
+            # A generic category cannot identify a branch in the named-place catalog.
+            return {**category, "status": "clarification_required", "candidates": [],
+                    "clarification_question": WHICH_PLACE[req.source_locale]}
         messages = P.destination_messages(req.source_locale, req.text)
         try:
             out = await self.client.chat_json(messages, P.DESTINATION_SCHEMA, P.DESTINATION_MAX_TOKENS,

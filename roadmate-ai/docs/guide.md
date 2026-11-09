@@ -268,7 +268,7 @@ Q5_K_M 비교:
 
 ```bash
 set -euo pipefail
-export POLISH_KO=0 LOG_REJECTED=1
+export POLISH_KO=0 LOG_REJECTED=1 TWO_STEP_KO=0 NATURAL_STYLE_KO=0 FIELD_GLOSSARY=0
 unset MODEL_ID  # 이전 모델 alias 환경 변수가 프로필 선택을 덮어쓰지 않게 한다
 export COMPARISON_LABEL="naturalness-stage1-$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "run/$COMPARISON_LABEL"
@@ -330,6 +330,44 @@ trap - EXIT
 .venv/bin/python eval/compare.py eval/results/<4b-q4-general-실행> eval/results/<8b-q4-general-실행>
 # dev, general_es, naturalness.dev도 같은 방식으로 전체 행을 검수한다.
 ```
+
+### 7.4 자연스러움 블라인드 비교
+
+**현재 DLPC 비교가 끝난 뒤** 같은 작업 브랜치의 새 코드를 받아 실행한다. 이번 개발 작업에서는 DLPC 명령을 실행하지 않았다. 아래 파일은 기존 서버가 실행 중이면 중단하며, 자기 실행의 서버만 종료하고 로그를 보존한다.
+
+```bash
+# roadmate-ai 디렉터리에서 실행한다. 긴 명령을 터미널에 붙일 필요가 없다.
+bash scripts/naturalness_ab.sh
+```
+
+4B Q4 기준 → 같은 모델 TWO_STEP_KO=1 → 8B Q4 기준 순서로 general/general_es/naturalness.dev를 실행한다. POLISH_KO=0, NATURAL_STYLE_KO=0, FIELD_GLOSSARY=0은 고정한다. 시작 시 기존 smoke와 8B의 실제 non-thinking 응답 검사를 거친다. 실패하면 시작 로그를 출력하고 멈춘다. 실행 폴더에는 로그, FAIL·502·첫 시도 오언어·재시도·번역투·p50/p95 요약과 두 비교 쌍의 데이터셋별 리뷰 파일 총 6개가 생긴다. `test.locked*`는 실행하지 않는다.
+
+리뷰 CSV/MD는 **AI 검토(참고)**다. `.key.json`은 설정 복원용으로 관리자만 보관하고 검토자에게 전달하지 않는다. [독립 검토·병합·불일치/나쁨 필터·집계 명령](naturalness_rubric.md)을 따라 Codex와 Claude에 자기 검토 파일만 전달한다. 현재 비교 출력을 아직 받지 않았으므로 실제 판정 칸은 비어 있다.
+
+문체와 용어의 효과는 각각 따로 시험한다. 모델과 데이터셋을 고정하고 `NATURAL_STYLE_KO=1` 또는 `FIELD_GLOSSARY=1` 하나만 바꿔 재시작한 후 같은 evaluate 명령을 사용한다. 두 단계의 짧은 비교만 필요할 때도 아래처럼 **기존 비교가 끝난 후** 실행한다.
+
+```bash
+export MODEL_PROFILE=4b-q4 POLISH_KO=0 LOG_REJECTED=1 NATURAL_STYLE_KO=0 FIELD_GLOSSARY=0
+# 각 설정 사이에는 scripts/run.sh stop 후 기존 PID 종료를 확인한다.
+export TWO_STEP_KO=0  # 두 번째 실행에서는 1로 바꾸고 재시작
+bash scripts/run.sh start
+.venv/bin/python eval/evaluate.py --file eval/general.jsonl --label short-step-$TWO_STEP_KO --attempt-log logs/ai.err.log
+.venv/bin/python eval/evaluate.py --file eval/naturalness.dev.jsonl --label short-step-$TWO_STEP_KO --attempt-log logs/ai.err.log
+# 로그를 별도 폴더에 복사한 뒤 stop한다. start는 서버 로그를 덮어쓴다.
+```
+
+출력의 `saved:` 경로 두 개를 `export_review.py`에 전달한다. 행별 A/B를 섞은 읽기용 MD에서 전체 출력을 나란히 검토할 수 있다. 번역투 표지는 참고 지표이며, 최종 채택은 같은 행의 나쁨 감소·FAIL/502/뜻 오류 악화 없음·HTTP p95 증가 300ms 이하를 함께 확인한다. [개선 방법·자료 경계·LoRA 문서 계획](naturalness_plan.md)을 참고한다.
+
+새 예시·용어를 바꾸면 세 프로필의 모든 실험 조합 예산을 다시 검사한다. 모델별 pinned tokenizer와 **GGUF 실제 chat template**을 사용한다. 예를 들어 4B Q4는 다음과 같다(4B Q8은 같은 tokenizer, 8B는 별도 tokenizer/template).
+
+```bash
+MODEL_PROFILE=4b-q4 .venv/bin/python scripts/check_prompt_budget.py \
+  --tokenizer-dir run/tokenizers/qwen3-4b \
+  --chat-template run/tokenizers/qwen3-4b/gguf-chat-template.jinja --all-flags \
+  --output run/prompt_budget_4b-q4_flags.json
+```
+
+두 단계 요청의 `max_tokens=512`는 b12076에서 서버 기본 `-n 256`보다 우선한다([고정 버전 구현](https://github.com/ggml-org/llama.cpp/blob/b12076/tools/server/server-context.cpp#L1926)). 일반 번역은 계속 256이다. 실제 출력 완결성과 지연은 DLPC에서 별도로 확인해야 한다.
 
 ## 8. 학습(QLoRA)과 배포
 

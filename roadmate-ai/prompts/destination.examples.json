@@ -1,6 +1,6 @@
 [
   {
-    "input": {"source_locale": "en-US", "utterance": "Take me to Seongsan Sunrise Peak."},
+    "input": {"source_locale": "en-US", "utterance": "The destination I have in mind is Seongsan Sunrise Peak; please navigate there."},
     "output": {"intent": "set_destination", "query_original": "Seongsan Sunrise Peak", "query_ko_candidate": "성산일출봉", "region_hint": "성산", "category_hint": "attraction", "needs_confirmation": false}
   },
   {
@@ -12,7 +12,7 @@
     "output": {"intent": "other", "query_original": null, "query_ko_candidate": null, "region_hint": null, "category_hint": null, "needs_confirmation": false}
   },
   {
-    "input": {"source_locale": "es-MX", "utterance": "Llévenos a la playa de Hamdeok, por favor."},
+    "input": {"source_locale": "es-MX", "utterance": "Seleccione la playa de Hamdeok como destino de la ruta."},
     "output": {"intent": "set_destination", "query_original": "playa de Hamdeok", "query_ko_candidate": "함덕해수욕장", "region_hint": null, "category_hint": "beach", "needs_confirmation": false}
   },
   {
@@ -22,5 +22,9 @@
   {
     "input": {"source_locale": "es-MX", "utterance": "Me gustaría visitar el mercado Dongmun."},
     "output": {"intent": "set_destination", "query_original": "mercado Dongmun", "query_ko_candidate": "동문재래시장", "region_hint": null, "category_hint": "market", "needs_confirmation": false}
+  },
+  {
+    "input": {"source_locale": "es-MX", "utterance": "Busque una lavandería cerca, por favor."},
+    "output": {"intent": "set_destination", "query_original": "lavandería", "query_ko_candidate": "세탁소", "region_hint": null, "category_hint": "other", "needs_confirmation": true}
   }
 ]

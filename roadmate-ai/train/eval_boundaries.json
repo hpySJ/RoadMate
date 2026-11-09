@@ -12,18 +12,11 @@
     "eval/test.locked.v2.jsonl": "a728db2d562a58ddfa0cf3d10812836e5cc57b07b0f6eaaeec965568a27920f5"
   },
   "prompt_template_overlap": {
-    "dev.jsonl": [
-      "d-t-001",
-      "d-a-004",
-      "d-d-001"
-    ],
+    "dev.jsonl": [],
     "general.jsonl": [],
     "general_es.jsonl": [],
     "naturalness.dev.jsonl": [],
-    "test.locked.jsonl": [
-      "t-a-006",
-      "t-d-001"
-    ],
+    "test.locked.jsonl": [],
     "test.locked.v2.jsonl": []
   },
   "removed_training_sources": [
@@ -38,5 +31,21 @@
     "주차비는 30분에 500원이에요.",
     "주차비는 30분에 2천 원이에요."
   ],
-  "replaced_naturalness_case": "nat-esko-001: replaced the luggage-help idiom shared with give-me-a-hand prompt examples with a late-exit-search utterance."
+  "replaced_naturalness_case": "nat-esko-001: replaced the luggage-help idiom shared with give-me-a-hand prompt examples with a late-exit-search utterance.",
+  "historical_prompt_template_overlap": {
+    "dev.jsonl": [
+      "d-t-001",
+      "d-a-004",
+      "d-d-001"
+    ],
+    "general.jsonl": [],
+    "general_es.jsonl": [],
+    "naturalness.dev.jsonl": [],
+    "test.locked.jsonl": [
+      "t-a-006",
+      "t-d-001"
+    ],
+    "test.locked.v2.jsonl": []
+  },
+  "inference_audit": "Sentence-level exact/near audit including sealed files, diagnostics limited to case IDs and artifact paths; does not restore prior exposed sets to held-out status."
 }
