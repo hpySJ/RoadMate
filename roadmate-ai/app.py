@@ -9,17 +9,19 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 from config import Settings, artifact_hashes
 from engine import Engine
 from inference import LlamaClient, MockClient, ModelError, ModelTimeout
-from schemas import (CancelRequest, CancelResponse, DestinationRequest, DestinationResponse, ErrorBody,
+from schemas import (AppTranslateClarification, AppTranslateRequest, AppTranslateResponse,
+                     CancelRequest, CancelResponse, DestinationRequest, DestinationResponse, ErrorBody,
                      TranslateRequest, TranslateResponse)
 from sessions import ModelSlot, TurnRegistry, payload_hash
 from validation import HANGUL
 
 log = logging.getLogger("roadmate.ai")
-API_VERSION = "1.3.1"  # 백엔드 연동: 계약이 바뀌면 올리고 docs/openapi.json 재생성
+API_VERSION = "1.4.0"  # 백엔드 연동: 계약이 바뀌면 올리고 docs/openapi.json 재생성
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -191,6 +193,28 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
             prompt_version=st["engine"].destination_version, poi_version=st["engine"].poi.version,
             latency_ms=latency,
         ).model_dump()
+
+    # 로컬 시연: Android의 간단한 계약을 같은 검사·슬롯·timeout 경로로 연결한다.
+    @app.post("/translate", response_model=AppTranslateResponse | AppTranslateClarification,
+              responses=ERROR_RESPONSES)
+    async def app_translate(req: AppTranslateRequest, request: Request):
+        try:
+            turn = TranslateRequest(
+                request_id=uuid.uuid4().hex, session_id=uuid.uuid4().hex, session_epoch=0, turn_id=0,
+                source_locale=req.source_locale, target_locale=req.target_locale,
+                scenario="rental_counter" if req.scenario == "rental" else req.scenario,
+                text=req.text, engine_bundle=s.engine_bundle,
+            )
+        except ValidationError as e:
+            raise RequestValidationError(
+                [{**err, "loc": ("body", *err["loc"])} for err in e.errors()],
+                body=req.model_dump(by_alias=True),
+            ) from e
+        result = await run_turn(request, turn, "translate", build_translate)
+        if result["status"] == "ok":
+            return {"text": result["translated_text"]}
+        return {"text": None, "clarification": result["clarification_question"],
+                "clarification_locale": req.source_locale}
 
     # 백엔드 연동: 백엔드 → POST /internal/v1/translate (최종 STT 문장 1개)
     @app.post("/internal/v1/translate", response_model=TranslateResponse, responses=ERROR_RESPONSES,

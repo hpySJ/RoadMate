@@ -129,13 +129,29 @@ NaviHelper 3.0.5 릴리스 노트는 `RouteInfo` 등의 생성자 좌표 순서�
 - [ ] Kotlin named arguments로 목적지 좌표 전달 후 `onDestinationInfo`·지도 위치·경로 결과 확인
 - [ ] 모델 서버와 에뮬레이터를 같이 30분 돌렸을 때 메모리와 지연
 
-## 6. 통역 연결 전에 정할 배치와 순서
+## 6. 백엔드 없이 앱 → `/translate`로 연결
 
-1. 시연할 GPU PC와 백엔드 사용 여부·담당을 먼저 정합니다. 현재 문서의 `APK → 백엔드(8080) → AI(8000) → 모델(8081)`은 연동 계약이며 팀 백엔드 구현이 확인됐다는 뜻이 아닙니다. 저장소를 찾지 못했다는 사실만으로 백엔드가 없다고 확정하지 않습니다. 외부 접속 경로가 없는 DLPC 작업을 시연 서버로 전제하지 않습니다.
-2. 같은 PC의 에뮬레이터는 `10.0.2.2`로 호스트의 `127.0.0.1`에 접근할 수 있습니다. 백엔드가 있으면 앱은 `10.0.2.2:8080`, 로컬 시연에서 AI 직접 연결을 선택하면 `10.0.2.2:8000`입니다. 다른 PC의 서버에는 이 별칭이 적용되지 않습니다. 필요한 앱 변경은 `INTERNET` 권한·HTTP 클라이언트·debug 빌드 전용 cleartext 예외이며, STT 의존성·최종 결과 전달도 연결해야 합니다. [Android 에뮬레이터 네트워크](https://developer.android.com/studio/run/emulator-networking-address) · [네트워크 권한](https://developer.android.com/develop/connectivity/network-ops/connecting) · [HTTP 예외 설정](https://developer.android.com/privacy-and-security/security-config)
-3. AI 직접 연결을 선택하면 요청 ID·epoch·중복 방지·`/internal/v1/cancel`·오류 처리도 앱이 맡습니다. 내부 토큰을 APK에 배포용 비밀값으로 넣지 않습니다. 직접 연결의 인증·접근 범위는 로컬 시연용으로 정하고 release 구성과 분리합니다. 실제 배치는 아직 결정하지 않았습니다.
-4. 기어 재관측·속도 원본·신선도 계약을 결정해 정차 잠금을 완성한 뒤 STT → HTTP → 화면 → 기존 음성 큐를 연결합니다. 전송·응답·재생 직전 재확인과 취소를 포함합니다.
-5. 주행 안내 정책·완료 콜백 정리는 앱 담당이 위 작업과 병행할 수 있습니다. 공통 fixture가 일치한 뒤 정차 유지·신호 단절·큐 만료·취소·언어 변경과 30분 동시 실행을 에뮬레이터에서 확인합니다.
+로컬 시연은 `APK → AI(8000)/translate → 모델(8081)`로 연결합니다. AI는 계속 `127.0.0.1:8000`에 바인드하며 이 경로에는 토큰이 필요 없습니다. 같은 PC의 에뮬레이터에서 주소는 `http://10.0.2.2:8000/translate`입니다. 다른 PC에는 `10.0.2.2` 별칭이 적용되지 않습니다. 시연할 GPU PC에서 모델과 AI를 실행하며 외부 접속 경로가 없는 DLPC를 시연 서버로 전제하지 않습니다.
+
+팀 `HttpTranslationClient`의 요청 필드를 서버가 다음처럼 받습니다. 앱 코드는 바꾸지 않습니다.
+
+```json
+{"text":"최종 STT 문장","from":"ko-KR","to":"en-US","situation":"rental"}
+```
+
+- `from`·`to`는 `ko-KR`, `en-US`, `es-US`, `es-MX` 중 하나이며 한쪽이 한국어여야 합니다. `en` 같은 축약값이나 미지원 언어는 `422 invalid_input`입니다.
+- `situation`의 `rental`은 `rental_counter`로 변환합니다. `gas_station`, `parking`, `rental_counter`, `accident`, `general`도 그대로 받습니다.
+- 서버가 요청마다 새 `request_id`·`session_id`, epoch·turn 0, 현재 `engine_bundle`을 넣습니다. 내부 통역과 같은 입력 검사·안전 검사·재시도·모델 슬롯·시간 제한을 거칩니다.
+- 성공은 `200 {"text":"번역문"}`입니다. 재질문은 `200 {"text":null,"clarification":"질문","clarification_locale":"ko-KR"}`이며 locale은 요청의 `from`과 같습니다. 재질문은 번역문으로 읽지 않고 질문의 언어로 표시·재생해야 합니다.
+- 입력 오류 `422 invalid_input`·`text_too_long`, 검사 거절 `502 output_validation_failed`, 시간 초과 `504 model_timeout`, 혼잡 `429 busy` 등은 기존 오류 코드·본문을 유지합니다.
+
+`/internal/v1/*`의 요청·응답·토큰 검사는 그대로입니다. `/translate`는 앱이 ID를 보내지 않으므로 HTTP 재전송을 같은 턴으로 합치거나 앱의 epoch 취소를 전달하는 계약은 없습니다. 연결이 끊기면 기존 서버의 연결 종료 감지로 작업을 취소합니다. 정차 해제·화면 전환·언어 변경 뒤 늦게 온 응답을 앱이 표시·재생하지 않는지 별도로 확인합니다.
+
+시연 확인 순서는 다음과 같습니다.
+
+1. 앱의 `INTERNET` 권한·debug cleartext 설정과 기존 `HttpTranslationClient`가 위 URL·locale·재질문 응답을 처리하는지 확인합니다. 이 문서 갱신에서 Android 빌드·에뮬레이터 실행은 하지 않았습니다. [Android 에뮬레이터 네트워크](https://developer.android.com/studio/run/emulator-networking-address) · [네트워크 권한](https://developer.android.com/develop/connectivity/network-ops/connecting) · [HTTP 예외 설정](https://developer.android.com/privacy-and-security/security-config)
+2. 기어 재관측·속도 원본·신선도 계약과 정차 잠금을 확인한 뒤 STT → HTTP → 화면 → 기존 음성 큐를 검증합니다. 전송·응답·재생 직전 정차 상태를 다시 확인합니다.
+3. 공통 fixture가 일치한 뒤 정차 유지·신호 단절·큐 만료·취소·언어 변경과 30분 동시 실행을 에뮬레이터에서 확인합니다.
 
 1차는 기획서가 필수이고 영상·저장소·APK는 선택 가산점 자료입니다. 2차 PT 전에는 실제 동작 가능한 앱이 필요하므로 이 문서와 fixture 통과만으로 SDK 연동 완료라고 제출하지 않습니다. [공식 제출 안내](https://appdevchallenge.auto-hmg.io/guide/submission)
 

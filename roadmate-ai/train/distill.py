@@ -30,8 +30,9 @@ from validation import looks_like_other_language, validate_destination, validate
 
 PENDING = "auto_filtered_pending_ai_sample_review"
 REVIEWED = "auto_filtered_ai_sample_reviewed"
-SOURCE_VERSION = "distill-source-v2"
+SOURCE_VERSION = "distill-source-v3"
 SOURCE_BATCH_SIZE = 10
+SOURCE_MAX_TOKENS = 1024
 SOURCE_LOCALES = ("en-US", "es-US", "es-MX", "ko-KR")
 SOURCE_TOPICS = {
     "gas_station": ["pump controls", "payment", "fuel choice", "receipts", "staff assistance", "small spills"],
@@ -116,11 +117,26 @@ class Teacher:
 
     async def call(self, messages, schema, max_tokens, sampling):
         self.raw = None
+        # Count with the serving template/tokenizer; never truncate accepted-source history to fit.
+        response = await self.client.http.post(f"{self.client.base_url}/chat/completions/input_tokens", json={
+            "model": self.manifest["model"]["alias"], "messages": messages,
+            "chat_template_kwargs": self.manifest["runtime"]["chat_template_kwargs"],
+            "response_format": {"type": "json_schema", "json_schema": {"name": "output", "schema": schema,
+                                                                       "strict": True}}}, timeout=30)
+        response.raise_for_status()
+        prompt_tokens = response.json()["input_tokens"]
+        context = self.manifest["runtime"]["ctx"]
+        if type(prompt_tokens) is not int or prompt_tokens < 0:
+            raise ValueError("teacher returned an invalid prompt token count")
+        if prompt_tokens + max_tokens > context:
+            raise ValueError(f"teacher context budget exceeded: {prompt_tokens} + {max_tokens} > {context}; "
+                             "history was not truncated; inspect source_generation.jsonl")
         output = await self.client.chat_json(messages, schema, max_tokens, sampling, 120)
         if not self.raw or raw_output(self.raw, self.manifest["model"]["alias"]) != output:
             raise ValueError("teacher raw response does not match parsed output")
         identity = await self.client.runtime_identity()
         return output, {"model": self.manifest["model"], "manifest_sha256": digest(self.manifest),
+                        "token_budget": {"prompt": prompt_tokens, "generation_reserved": max_tokens, "context": context},
                         "runtime": identity, "prompt_hashes": self.prompt_hashes,
                         "messages_sha256": digest(messages), "raw_response_sha256": digest(self.raw.encode()),
                         "raw_response": self.raw}
@@ -246,41 +262,48 @@ def verify_ai_review(draft: Path, rows: list[dict], evidence: dict):
         raise ValueError("AI sample evidence does not match the complete random sample")
 
 
-def source_messages(locale, scenario, count, batch):
+def source_messages(locale, scenario, count, batch, already_used=()):
     return [{"role": "system", "content":
         "Create independent, everyday spoken turns for a rental-car assistant. Do not translate. "
         "Write what someone actually says, not a description of their intention or a written explanation. "
         "Prefer short, plain speech, contractions where natural, varied openings and sentence lengths. "
         "Occasional hesitation or fragments are fine when the object and meaning remain clear without hidden context. "
         "Each item must involve a different concrete situation and wording; never make number/name/word swaps "
-        "of one sentence or paraphrase the same request repeatedly. Use no examples, quotations or benchmark material. "
+        "of one sentence or paraphrase the same request repeatedly. Stay within the requested topic. "
+        "already_used contains accepted turns from earlier batches in this locale and scenario: do not restate "
+        "any of those requests or meanings with different wording. Use no examples, quotations or benchmark material. "
         "Use only the requested locale: polite -요 speech in Korean, everyday usted in Latin American Spanish, "
         "plain conversational English. Do not force every item to contain a number or a negation. Return JSON only."},
         {"role": "user", "content": P._dump({"locale": locale, "scenario": scenario, "count": count,
             "speaker": "local employee" if locale == "ko-KR" else "visiting driver",
-            "topics": SOURCE_TOPICS[scenario], "turn_form": SOURCE_FORMS[batch % len(SOURCE_FORMS)],
+            "topic": SOURCE_TOPICS[scenario][batch % len(SOURCE_TOPICS[scenario])],
+            "already_used": list(already_used), "turn_form": SOURCE_FORMS[batch % len(SOURCE_FORMS)],
             "focus": SOURCE_FOCUS[(batch + SCENARIOS.index(scenario)) % len(SOURCE_FOCUS)],
             "independent_batch": batch})}]
 
 
 async def source_augmentation(teacher: Teacher, out: Path, protected: set[str], count: int, seed=42) -> list[dict]:
     rows, seen, rejected = [], set(), Counter()
+    accepted_by_topic = {locale: {scenario: dict.fromkeys(SOURCE_TOPICS[scenario], 0)
+                                 for scenario in SCENARIOS} for locale in SOURCE_LOCALES}
     # Dedup before target expansion: regional aliases and numeric swaps do not buy diversity.
     # shortcut: fingerprints/lexical similarity miss semantic paraphrases; inspect the blinded source sample too.
     with (out / "source_generation.jsonl").open("x", encoding="utf-8") as log:
         for locale_index, locale in enumerate(SOURCE_LOCALES):
             for scenario in SCENARIOS:
                 accepted = 0
+                already_used = []
                 # Fixed two-times proposal budget; exhaustion stops instead of padding with templates.
                 max_batches = 2 * ((count + SOURCE_BATCH_SIZE - 1) // SOURCE_BATCH_SIZE)
                 for batch in range(max_batches):
                     size = min(SOURCE_BATCH_SIZE, count - accepted)
-                    messages = source_messages(locale, scenario, size, batch)
+                    topic = SOURCE_TOPICS[scenario][batch % len(SOURCE_TOPICS[scenario])]
+                    messages = source_messages(locale, scenario, size, batch, already_used)
                     schema = {"type": "object", "properties": {"utterances": {"type": "array", "items": {"type": "string"},
                               "minItems": size, "maxItems": size}}, "required": ["utterances"], "additionalProperties": False}
                     sampling = {"temperature": .7, "top_p": .8, "top_k": 20, "min_p": 0,
                                 "seed": seed + locale_index * 10000 + SCENARIOS.index(scenario) * 1000 + batch}
-                    output, provenance = await teacher.call(messages, schema, 1024, sampling)
+                    output, provenance = await teacher.call(messages, schema, SOURCE_MAX_TOKENS, sampling)
                     utterances = output.get("utterances")
                     if not isinstance(utterances, list) or len(utterances) != size:
                         raise ValueError("teacher source generation returned the wrong count")
@@ -299,6 +322,8 @@ async def source_augmentation(teacher: Teacher, out: Path, protected: set[str], 
                             continue
                         seen.add(fingerprint(text, locale))
                         accepted += 1
+                        already_used.append(text)
+                        accepted_by_topic[locale][scenario][topic] += 1
                         for source, target in DIRECTIONS:
                             if source == locale:
                                 rows.append({"id": "teacher-source-" + digest([locale, target, text])[:16],
@@ -318,7 +343,7 @@ async def source_augmentation(teacher: Teacher, out: Path, protected: set[str], 
                                      "inspect source_generation.jsonl; templates were not substituted")
     write_json(out / "source_summary.json", {"version": SOURCE_VERSION, "requested_per_locale_scenario": count,
                "unique_sources": len(seen), "translation_rows": len(rows), "rejections": dict(rejected),
-               "groups": len({r["group_id"] for r in rows})})
+               "groups": len({r["group_id"] for r in rows}), "accepted_by_topic": accepted_by_topic})
     return rows
 
 

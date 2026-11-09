@@ -12,6 +12,20 @@ from train import distill as D
 from train import prepare_data
 
 
+def test_source_prompt_rotates_one_topic_and_preserves_full_history():
+    history = [f"Synthetic accepted utterance {index}." for index in range(79)]
+    for scenario in D.SCENARIOS:
+        for batch in range(2 * len(D.SOURCE_TOPICS[scenario])):
+            messages = D.source_messages("ko-KR", scenario, 1, batch, history)
+            spec = json.loads(messages[-1]["content"])
+            assert "topics" not in spec
+            assert spec["topic"] == D.SOURCE_TOPICS[scenario][batch % len(D.SOURCE_TOPICS[scenario])]
+            assert spec["turn_form"] == D.SOURCE_FORMS[batch % len(D.SOURCE_FORMS)]
+            assert spec["focus"] == D.SOURCE_FOCUS[(batch + D.SCENARIOS.index(scenario)) % len(D.SOURCE_FOCUS)]
+            assert spec["already_used"] == history
+    assert json.loads(D.source_messages("en-US", "general", 1, 0)[-1]["content"])["already_used"] == []
+
+
 def test_batches_cover_directions_without_replicating_templates(monkeypatch, tmp_path):
     calls = []
     class Teacher:
@@ -42,6 +56,19 @@ def test_batches_cover_directions_without_replicating_templates(monkeypatch, tmp
     assert len(logs) == len(calls) and all(log["sampling"]["seed"] for log in logs)
     summary = json.loads((tmp_path / "source_summary.json").read_text(encoding="utf-8"))
     assert summary["unique_sources"] == 220 and summary["translation_rows"] == 330
+    for spec, *_ in calls:
+        originals = list(dict.fromkeys(r["text"] for r in rows
+            if r["source_locale"] == spec["locale"] and r["scenario"] == spec["scenario"]))
+        # History is the original utterance once, scoped to this cell; it excludes the current batch.
+        assert spec["already_used"] == originals[:10 * spec["independent_batch"]]
+        topics = D.SOURCE_TOPICS[spec["scenario"]]
+        assert summary["accepted_by_topic"][spec["locale"]][spec["scenario"]] == {
+            topic: (10 if index == 0 else 1 if index == 1 else 0) for index, topic in enumerate(topics)}
+    # The frozen messages in provenance/logs retain the exact history seen by each teacher call.
+    assert [json.loads(log["messages"][-1]["content"]) for log in logs] == [spec for spec, *_ in calls]
+    for record in rows:
+        messages = record["source_generation"]["messages"]
+        assert record["text"] not in json.loads(messages[-1]["content"])["already_used"]
 
 
 def test_numeric_and_locale_variants_are_removed_before_expansion(monkeypatch, tmp_path):
@@ -52,14 +79,40 @@ def test_numeric_and_locale_variants_are_removed_before_expansion(monkeypatch, t
         ["La puerta del despacho está cerrada."],
         ["El recibo muestra 42 pesos.", "¿Puede revisar el mapa del barrio?"],
         ["No encuentro mi chaqueta azul."]])
+    calls = []
     class Teacher:
-        async def call(self, *args):
+        async def call(self, messages, *args):
+            calls.append(json.loads(messages[-1]["content"]))
             return {"utterances": next(replies)}, {"synthetic": True}
     rows = asyncio.run(D.source_augmentation(Teacher(), tmp_path, set(), 2))
     assert len(rows) == 4
     assert sum("recibo" in r["text"] for r in rows) == 1
     summary = json.loads((tmp_path / "source_summary.json").read_text(encoding="utf-8"))
     assert summary["rejections"]["duplicate_generated_source"] == 2
+    assert [spec["already_used"] for spec in calls] == [[], ["El recibo muestra 17 pesos."],
+                                                       [], ["¿Puede revisar el mapa del barrio?"]]
+    assert sum(sum(topics.values()) for scenarios in summary["accepted_by_topic"].values()
+               for topics in scenarios.values()) == 4
+
+
+def test_invalid_and_boundary_rejections_never_enter_history(monkeypatch, tmp_path):
+    monkeypatch.setattr(D, "SOURCE_LOCALES", ("en-US",))
+    monkeypatch.setattr(D, "SCENARIOS", ("general",))
+    protected = {D.fingerprint("Synthetic protected wording.", "en-US")}
+    calls = []
+    class Teacher:
+        async def call(self, messages, *args):
+            calls.append(json.loads(messages[-1]["content"]))
+            reply = (["", "Synthetic protected wording.", "The gate control is stuck."] if len(calls) == 1
+                     else ["Could someone carry my bag?", "An orange umbrella is beside the desk."])
+            return {"utterances": reply}, {"synthetic": True}
+    rows = asyncio.run(D.source_augmentation(Teacher(), tmp_path, protected, 3))
+    assert len(rows) == 3
+    assert calls[1]["already_used"] == ["The gate control is stuck."]
+    summary = json.loads((tmp_path / "source_summary.json").read_text(encoding="utf-8"))
+    assert summary["rejections"] == {"invalid_source": 1, "boundary_source": 1}
+    assert summary["accepted_by_topic"]["en-US"]["general"]["road signs"] == 1
+    assert summary["accepted_by_topic"]["en-US"]["general"]["junctions"] == 2
 
 
 def test_quota_exhaustion_does_not_fill_with_templates(monkeypatch, tmp_path):

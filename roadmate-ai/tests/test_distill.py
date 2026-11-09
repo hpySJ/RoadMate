@@ -22,7 +22,7 @@ from sources.source_templates import DIRECTIONS, SCENARIOS
 def manifest():
     return {"model": {"base_repo": "Qwen/Qwen3-14B", "base_revision": "b" * 40,
                       "alias": "synthetic-teacher", "gguf_sha256": "a" * 64, "license": "apache-2.0"},
-            "adapter": None, "runtime": {"chat_template_kwargs": {"enable_thinking": False}}}
+            "adapter": None, "runtime": {"ctx": 4096, "chat_template_kwargs": {"enable_thinking": False}}}
 
 
 def record(index=0):
@@ -162,7 +162,8 @@ def test_teacher_captures_raw_response_and_rejects_wrong_response_model(monkeypa
         await client.http.aclose()
         response = json.loads(record()["teacher"]["raw_response"])
         response["model"] = alias
-        client.http = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=response)))
+        client.http = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=(
+            {"input_tokens": 123} if request.url.path.endswith("/input_tokens") else response))))
         teacher = D.Teacher(client, manifest(), {"fixture": "synthetic"})
         try:
             output, provenance = await teacher.call(D.messages_for(record()), D.P.TRANSLATE_SCHEMA, 256, {})
@@ -173,6 +174,49 @@ def test_teacher_captures_raw_response_and_rejects_wrong_response_model(monkeypa
     asyncio.run(run("synthetic-teacher"))
     with pytest.raises(ValueError, match="alias mismatch"):
         asyncio.run(run("different-model"))
+
+
+@pytest.mark.parametrize("count,status,allowed", [(3072, 200, True), (3073, 200, False),
+                                                (-1, 200, False), (True, 200, False), (0, 503, False)])
+def test_teacher_counts_complete_history_before_inference(monkeypatch, count, status, allowed):
+    async def identity(self):
+        return record()["teacher"]["runtime"]
+    monkeypatch.setattr(LlamaClient, "runtime_identity", identity)
+    history = [f"Synthetic accepted source {index}." for index in range(79)]
+    messages = D.source_messages("en-US", "general", 1, 8, history)
+    schema = {"type": "object", "properties": {"utterances": {"type": "array", "items": {"type": "string"}}}}
+    output = {"utterances": ["Synthetic new source."]}
+    paths = []
+
+    def respond(request):
+        paths.append(request.url.path)
+        body = json.loads(request.content)
+        assert body["messages"] == messages
+        assert body["chat_template_kwargs"] == {"enable_thinking": False}
+        assert body["response_format"]["json_schema"]["schema"] == schema
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(status, json={"input_tokens": count})
+        return httpx.Response(200, json={"model": "synthetic-teacher", "choices": [{"finish_reason": "stop",
+            "message": {"content": json.dumps(output)}}]})
+
+    async def run():
+        client = LlamaClient("http://127.0.0.1:8081/v1", "synthetic-teacher", manifest())
+        await client.http.aclose()
+        client.http = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+        try:
+            teacher = D.Teacher(client, manifest(), {})
+            if allowed:
+                actual, evidence = await teacher.call(messages, schema, D.SOURCE_MAX_TOKENS, {})
+                assert actual == output
+                assert evidence["token_budget"] == {"prompt": count, "generation_reserved": 1024, "context": 4096}
+            else:
+                with pytest.raises((ValueError, httpx.HTTPStatusError)):
+                    await teacher.call(messages, schema, D.SOURCE_MAX_TOKENS, {})
+        finally:
+            await client.aclose()
+    asyncio.run(run())
+    assert paths == ["/v1/chat/completions/input_tokens"] + (["/v1/chat/completions"] if allowed else [])
+    assert json.loads(messages[-1]["content"])["already_used"] == history
 
 
 def test_prepare_rejects_legacy_human_approval_as_training_target(tmp_path):

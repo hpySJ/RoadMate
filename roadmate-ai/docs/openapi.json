@@ -2,9 +2,125 @@
   "openapi": "3.1.0",
   "info": {
     "title": "RoadMate Korea AI",
-    "version": "1.3.1"
+    "version": "1.4.0"
   },
   "paths": {
+    "/translate": {
+      "post": {
+        "summary": "App Translate",
+        "operationId": "app_translate_translate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppTranslateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json; charset=utf-8": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/AppTranslateResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AppTranslateClarification"
+                    }
+                  ],
+                  "title": "Response App Translate Translate Post"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json; charset=utf-8": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json; charset=utf-8": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Gone",
+            "content": {
+              "application/json; charset=utf-8": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input",
+            "content": {
+              "application/json; charset=utf-8": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json; charset=utf-8": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway",
+            "content": {
+              "application/json; charset=utf-8": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json; charset=utf-8": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Gateway Timeout",
+            "content": {
+              "application/json; charset=utf-8": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/v1/translate": {
       "post": {
         "summary": "Translate",
@@ -418,6 +534,106 @@
   },
   "components": {
     "schemas": {
+      "AppTranslateClarification": {
+        "properties": {
+          "text": {
+            "type": "null",
+            "title": "Text"
+          },
+          "clarification": {
+            "type": "string",
+            "title": "Clarification"
+          },
+          "clarification_locale": {
+            "type": "string",
+            "enum": [
+              "ko-KR",
+              "en-US",
+              "es-US",
+              "es-MX"
+            ],
+            "title": "Clarification Locale"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text",
+          "clarification",
+          "clarification_locale"
+        ],
+        "title": "AppTranslateClarification"
+      },
+      "AppTranslateRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Text"
+          },
+          "from": {
+            "type": "string",
+            "enum": [
+              "ko-KR",
+              "en-US",
+              "es-US",
+              "es-MX"
+            ],
+            "title": "From"
+          },
+          "to": {
+            "type": "string",
+            "enum": [
+              "ko-KR",
+              "en-US",
+              "es-US",
+              "es-MX"
+            ],
+            "title": "To"
+          },
+          "situation": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "gas_station",
+                  "parking",
+                  "rental_counter",
+                  "accident",
+                  "general"
+                ]
+              },
+              {
+                "type": "string",
+                "const": "rental"
+              }
+            ],
+            "title": "Situation"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text",
+          "from",
+          "to",
+          "situation"
+        ],
+        "title": "AppTranslateRequest"
+      },
+      "AppTranslateResponse": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "AppTranslateResponse"
+      },
       "CancelRequest": {
         "properties": {
           "session_id": {

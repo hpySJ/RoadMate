@@ -60,6 +60,23 @@ class TranslateResponse(BaseModel):
     latency_ms: int
 
 
+class AppTranslateRequest(_Strict):
+    text: str = Field(min_length=1, max_length=2000)
+    source_locale: Locale = Field(alias="from")
+    target_locale: Locale = Field(alias="to")
+    scenario: Scenario | Literal["rental"] = Field(alias="situation")
+
+
+class AppTranslateResponse(BaseModel):
+    text: str
+
+
+class AppTranslateClarification(BaseModel):
+    text: None
+    clarification: str
+    clarification_locale: Locale
+
+
 # 백엔드 연동: POST /internal/v1/parse-destination 요청
 class DestinationRequest(_Strict):
     request_id: str = Ident
