@@ -72,7 +72,6 @@ class AppTranslateResponse(BaseModel):
 
 
 class AppTranslateClarification(BaseModel):
-    text: None
     clarification: str
     clarification_locale: Locale
 

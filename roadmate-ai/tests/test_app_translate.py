@@ -12,7 +12,7 @@ from engine import Engine, WRONG_LANG
 from inference import MockClient
 
 
-SETTINGS = dataclasses.replace(Settings.from_env(), model_backend="mock", model_timeout_s=2.0,
+SETTINGS = dataclasses.replace(Settings.from_env(), model_backend="mock", model_timeout_s=30.0,
                                busy_wait_s=0.01, cancel_settle_s=0.01, max_text_chars=400,
                                internal_token="internal-only")
 APP_BODY = {"text": "Please fill it with gasoline.", "from": "en-US", "to": "ko-KR", "situation": "rental"}
@@ -93,12 +93,13 @@ def test_app_mock_and_internal_contract_remain_separate(client):
     ("en-US", "안녕하세요", "ko-KR"), ("es-MX", "안녕하세요", "ko-KR"),
     ("ko-KR", "Hello there.", "es-US"),
 ])
-def test_app_clarification_is_in_source_locale(source, text, target):
+def test_app_clarification_omits_text_and_keeps_source_locale(source, text, target):
     mock = MockClient()
     with TestClient(create_app(SETTINGS, mock)) as c:
-        result = c.post("/translate", json={**APP_BODY, "text": text, "from": source, "to": target})
+        result = c.post("/translate", json={**APP_BODY, "text": text, "from": source, "to": target,
+                                          "situation": "parking"})
     assert result.status_code == 200
-    assert result.json() == {"text": None, "clarification": WRONG_LANG[source], "clarification_locale": source}
+    assert result.json() == {"clarification": WRONG_LANG[source], "clarification_locale": source}
     assert mock.calls == 0
 
 

@@ -142,14 +142,14 @@ NaviHelper 3.0.5 릴리스 노트는 `RouteInfo` 등의 생성자 좌표 순서�
 - `from`·`to`는 `ko-KR`, `en-US`, `es-US`, `es-MX` 중 하나이며 한쪽이 한국어여야 합니다. `en` 같은 축약값이나 미지원 언어는 `422 invalid_input`입니다.
 - `situation`의 `rental`은 `rental_counter`로 변환합니다. `gas_station`, `parking`, `rental_counter`, `accident`, `general`도 그대로 받습니다.
 - 서버가 요청마다 새 `request_id`·`session_id`, epoch·turn 0, 현재 `engine_bundle`을 넣습니다. 내부 통역과 같은 입력 검사·안전 검사·재시도·모델 슬롯·시간 제한을 거칩니다.
-- 성공은 `200 {"text":"번역문"}`입니다. 재질문은 `200 {"text":null,"clarification":"질문","clarification_locale":"ko-KR"}`이며 locale은 요청의 `from`과 같습니다. 재질문은 번역문으로 읽지 않고 질문의 언어로 표시·재생해야 합니다.
+- 성공은 `200 {"text":"번역문"}`입니다. 재질문은 `200 {"clarification":"질문","clarification_locale":"ko-KR"}`이며 locale은 요청의 `from`과 같습니다. 재질문에서는 `text` 키를 생략합니다. 현재 앱은 이를 실패로 보고 문장 카드로 대체하며, 재질문 표시는 앱 후속 작업입니다.
 - 입력 오류 `422 invalid_input`·`text_too_long`, 검사 거절 `502 output_validation_failed`, 시간 초과 `504 model_timeout`, 혼잡 `429 busy` 등은 기존 오류 코드·본문을 유지합니다.
 
 `/internal/v1/*`의 요청·응답·토큰 검사는 그대로입니다. `/translate`는 앱이 ID를 보내지 않으므로 HTTP 재전송을 같은 턴으로 합치거나 앱의 epoch 취소를 전달하는 계약은 없습니다. 연결이 끊기면 기존 서버의 연결 종료 감지로 작업을 취소합니다. 정차 해제·화면 전환·언어 변경 뒤 늦게 온 응답을 앱이 표시·재생하지 않는지 별도로 확인합니다.
 
 시연 확인 순서는 다음과 같습니다.
 
-1. 앱의 `INTERNET` 권한·debug cleartext 설정과 기존 `HttpTranslationClient`가 위 URL·locale·재질문 응답을 처리하는지 확인합니다. 이 문서 갱신에서 Android 빌드·에뮬레이터 실행은 하지 않았습니다. [Android 에뮬레이터 네트워크](https://developer.android.com/studio/run/emulator-networking-address) · [네트워크 권한](https://developer.android.com/develop/connectivity/network-ops/connecting) · [HTTP 예외 설정](https://developer.android.com/privacy-and-security/security-config)
+1. 앱의 `INTERNET` 권한·debug cleartext 설정, 위 URL·locale·성공 응답 처리와 재질문 시 문장 카드 대체를 확인합니다. 이 문서 갱신에서 Android 빌드·에뮬레이터 실행은 하지 않았습니다. [Android 에뮬레이터 네트워크](https://developer.android.com/studio/run/emulator-networking-address) · [네트워크 권한](https://developer.android.com/develop/connectivity/network-ops/connecting) · [HTTP 예외 설정](https://developer.android.com/privacy-and-security/security-config)
 2. 기어 재관측·속도 원본·신선도 계약과 정차 잠금을 확인한 뒤 STT → HTTP → 화면 → 기존 음성 큐를 검증합니다. 전송·응답·재생 직전 정차 상태를 다시 확인합니다.
 3. 공통 fixture가 일치한 뒤 정차 유지·신호 단절·큐 만료·취소·언어 변경과 30분 동시 실행을 에뮬레이터에서 확인합니다.
 

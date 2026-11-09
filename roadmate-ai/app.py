@@ -21,7 +21,7 @@ from sessions import ModelSlot, TurnRegistry, payload_hash
 from validation import HANGUL
 
 log = logging.getLogger("roadmate.ai")
-API_VERSION = "1.4.0"  # 백엔드 연동: 계약이 바뀌면 올리고 docs/openapi.json 재생성
+API_VERSION = "1.4.1"  # 백엔드 연동: 계약이 바뀌면 올리고 docs/openapi.json 재생성
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -213,7 +213,8 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
         result = await run_turn(request, turn, "translate", build_translate)
         if result["status"] == "ok":
             return {"text": result["translated_text"]}
-        return {"text": None, "clarification": result["clarification_question"],
+        # Android optString("text")가 JSON null을 문자열로 읽으므로 키를 생략한다.
+        return {"clarification": result["clarification_question"],
                 "clarification_locale": req.source_locale}
 
     # 백엔드 연동: 백엔드 → POST /internal/v1/translate (최종 STT 문장 1개)
