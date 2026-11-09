@@ -1,4 +1,5 @@
 """연기 시험: 준비 확인 → 한↔영·한↔스 번역 → 목적지 → 취소. 품질 평가는 eval에서 별도 실행."""
+import asyncio
 import json
 import os
 import sys
@@ -10,12 +11,25 @@ import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from config import load_dotenv  # noqa: E402
+from config import load_dotenv, load_manifest, Settings  # noqa: E402
+from inference import LlamaClient, ModelError  # noqa: E402
+import prompting as P  # noqa: E402
 
 load_dotenv()
-M = json.loads((ROOT / "models" / "manifest.json").read_text(encoding="utf-8"))
+M = load_manifest()
 AI = os.environ.get("AI_URL", "http://127.0.0.1:8000")
 HEADERS = {"X-Internal-Token": os.environ["AI_INTERNAL_TOKEN"]} if os.environ.get("AI_INTERNAL_TOKEN") else {}
+
+
+async def non_thinking_chat():
+    settings = Settings.from_env()
+    client = LlamaClient(settings.model_base_url, settings.model_id, settings.manifest)
+    try:
+        return await client.chat_json(P.translate_messages("en-US", "ko-KR", "general", "Hello, thank you."),
+                                      P.TRANSLATE_SCHEMA, P.TRANSLATE_MAX_TOKENS, P.TRANSLATE_SAMPLING,
+                                      max(settings.model_timeout_s, 20))
+    finally:
+        await client.aclose()
 
 
 def main() -> int:
@@ -25,6 +39,18 @@ def main() -> int:
     print("ready:", ready.status_code, ready.json())
     if ready.status_code != 200:
         return 1
+    if ready.json().get("model_profile") != Settings.from_env().model_profile:
+        print("SMOKE FAIL: server MODEL_PROFILE differs from local selection")
+        return 1
+    if M["runtime"].get("chat_template_kwargs", {}).get("enable_thinking") is False and ready.json().get("backend") != "mock":
+        try:
+            output = asyncio.run(non_thinking_chat())
+            if output.get("status") != "ok" or not output.get("translated_text"):
+                raise ModelError("non-thinking chat did not return a translation")
+        except ModelError as e:
+            print("SMOKE FAIL: non-thinking chat", e.code, str(e))
+            return 1
+        print("non-thinking chat: OK (no think tags or reasoning content)")
     sid, bad = f"smoke-{uuid.uuid4().hex[:8]}", 0
     base = {"session_id": sid, "session_epoch": 1, "engine_bundle": M["engine_bundle"]}
     cases = [

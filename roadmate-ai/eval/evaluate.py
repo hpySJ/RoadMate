@@ -20,7 +20,8 @@ import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from config import artifact_hashes, load_dotenv  # noqa: E402
+from config import artifact_hashes, load_dotenv, load_manifest, model_profile  # noqa: E402
+from validation import latin_words  # noqa: E402
 
 load_dotenv()
 
@@ -58,6 +59,53 @@ def pct(xs, q):
         return None
     xs = sorted(xs)
     return xs[min(len(xs) - 1, int(round(q * (len(xs) - 1))))]
+
+
+TRANSLATIONESE_PATTERNS = {
+    "first_person_pronoun": r"(?<![가-힣])(?:나는|나의|내가|나를|우리는|우리가|우리를)(?![가-힣])",
+    "second_third_person_pronoun": r"(?<![가-힣])(?:당신|그들|그녀)",
+    "nominalized_neun_geosi": r"는\s+것이",
+    "formal_connector": r"(?<![가-힣])여부|하기\s+위해|이므로",
+    "plain_question_ending": r"(?:하나|는가)(?=\s*(?:[,?？.!。！]|$))",
+}
+
+
+def translationese_stats(rows: list[dict]) -> dict:
+    """최종 한국어 출력의 검토 신호이며 오류·통과 판정에 사용하지 않는다."""
+    counts = dict.fromkeys([*TRANSLATIONESE_PATTERNS, "latin_word", "mixed_politeness_same_sentence"], 0)
+    eligible = flagged = 0
+    for row in rows:
+        case, body = row["case"], row["body"]
+        if (row["http"] != 200 or case["task"] != "translate" or case.get("target_locale") != "ko-KR"
+                or body.get("status") != "ok"):
+            continue
+        text = body.get("translated_text") or ""
+        eligible += 1
+        found = {name for name, pattern in TRANSLATIONESE_PATTERNS.items() if re.search(pattern, text)}
+        if any(not word.isupper() for word in latin_words(text)):
+            found.add("latin_word")
+        # 마침표·물음표·느낌표·줄바꿈을 문장 경계로 삼고, 쉼표로 이어진 절은 함께 본다.
+        for sentence in re.split(r"[.!?。！？\r\n]+", text):
+            # 합니다/됩니다/습니다는 '니다' 직전 음절의 받침이 ㅂ이다. '아니다'는 제외한다.
+            formal = any((ord(ending[0]) - 0xAC00) % 28 == 17
+                         for ending in re.findall(r"[가-힣]니다(?=\s|[,;:]|$)", sentence))
+            if formal and re.search(r"요(?=\s*(?:[,;:]|$))", sentence):
+                found.add("mixed_politeness_same_sentence")
+        for name in found:
+            counts[name] += 1
+        flagged += bool(found)
+    return {"eligible_outputs": eligible, "outputs_with_markers": flagged,
+            "outputs_with_markers_rate": flagged / eligible if eligible else None, "marker_outputs": counts}
+
+
+def translationese_summary(stats: dict) -> list[str]:
+    n = stats["eligible_outputs"]
+    rate = f"{stats['outputs_with_markers_rate']:.1%}" if n else "N/A"
+    return ["", f"- Korean translationese signals (advisory): {stats['outputs_with_markers']}/{n} ({rate})",
+            "HTTP 200·번역·목표 ko-KR·status ok인 최종 출력만 집계하며, 한 그룹은 출력당 한 번 센다.",
+            "대문자 약어는 Latin 신호에서 제외한다. 신호는 오류·의미 정확도 판정이 아니며 자동 통과율에 영향을 주지 않는다.",
+            "", "| marker group | outputs |", "|---|---:|",
+            *[f"| {name} | {count} |" for name, count in stats["marker_outputs"].items()]]
 
 
 def attach_attempts(rows: list[dict], path: Path) -> dict:
@@ -184,7 +232,8 @@ def main():
     if locked and not a.final:
         ap.error("잠근 시험은 튜닝 종료 후 --final로 한 번만 실행하세요")
 
-    bundle = json.loads((ROOT / "models" / "manifest.json").read_text(encoding="utf-8"))["engine_bundle"]
+    selected_profile = model_profile()
+    bundle = load_manifest()["engine_bundle"]
     headers = {"X-Internal-Token": os.environ["AI_INTERNAL_TOKEN"]} if os.environ.get("AI_INTERNAL_TOKEN") else {}
     cases = [json.loads(x) for x in Path(a.file).read_text(encoding="utf-8").splitlines() if x.strip()]
     if locked and any(c.get("review_status") != "approved" or not c.get("reviewer") or not c.get("reviewed_at") for c in cases):
@@ -200,6 +249,9 @@ def main():
         raise SystemExit("mock is not a translation quality evaluation; use --allow-mock only for contract checks")
     if ready.get("artifact_hashes") != artifact_hashes():
         raise SystemExit("server artifacts differ from this checkout; restart/deploy matching code before evaluation")
+    if (ready.get("model_profile") != selected_profile
+            or ready.get("runtime_config", {}).get("model_profile") != selected_profile):
+        raise SystemExit("server model profile is missing or differs from MODEL_PROFILE; evaluation not started")
     try:
         final_attempt = reserve_final(Path(a.file), ready) if locked else None
     except FileExistsError:
@@ -232,6 +284,9 @@ def main():
     ready_end_response = client.get(f"{a.url}/health/ready")
     ready_end = ready_end_response.json()
     retry_stats = attach_attempts(rows, a.attempt_log) if a.attempt_log else None
+    style_stats = translationese_stats(rows)
+    profile_consistent = (ready_end.get("model_profile") == selected_profile
+                          and ready_end.get("runtime_config", {}).get("model_profile") == selected_profile)
 
     with (out_dir / "results.jsonl").open("w", encoding="utf-8") as f:
         for row in rows:
@@ -251,13 +306,16 @@ def main():
 
     meta = {"dataset": Path(a.file).name, "dataset_sha256": hashlib.sha256(Path(a.file).read_bytes()).hexdigest(),
             "ready": ready, "ready_end": ready_end, "label": a.label, "timestamp": stamp, "final_attempt": final_attempt,
-            "retry_stats": retry_stats,
+            "retry_stats": retry_stats, "translationese_stats": style_stats,
+            "model_profile": ready["model_profile"], "model_profile_consistent": profile_consistent,
             "results_sha256": hashlib.sha256((out_dir / "results.jsonl").read_bytes()).hexdigest()}
     (out_dir / "run.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     client.close()
 
     lines = [f"# 평가 결과 {a.label} ({Path(a.file).name}, {stamp})", "",
-             f"- engine_bundle: {bundle}", f"- ready: {json.dumps(ready, ensure_ascii=False)}", ""]
+             f"- engine_bundle: {bundle}", f"- model_profile: {ready['model_profile']}",
+             f"- model profile consistent through run: {profile_consistent}",
+             f"- ready: {json.dumps(ready, ensure_ascii=False)}", ""]
     lines += ["| task | n | auto pass | pass rate |", "|---|---:|---:|---:|"]
     for task in sorted({r["case"]["task"] for r in rows}):
         rs = [r for r in rows if r["case"]["task"] == task]
@@ -285,10 +343,13 @@ def main():
         lines += retry_summary(retry_stats)
     else:
         lines.append("- retry recovery: not measured (use LOG_REJECTED=1 and --attempt-log)")
+    lines += translationese_summary(style_stats)
     lines += ["", "자동 통과·재시도 회복은 보조 지표다. review.csv에서 사람이 의미 보존·치명 오류를 판정한다."]
     (out_dir / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines))
     print(f"\nsaved: {out_dir}")
+    if not profile_consistent:
+        raise SystemExit("model profile changed or is missing at end; saved results are not a consistent profile evaluation")
 
 
 if __name__ == "__main__":

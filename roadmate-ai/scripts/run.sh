@@ -16,10 +16,11 @@ LLAMA="$ROOT/tools/llama"
 
 die() { echo "$*" >&2; exit 1; }
 
-mf() {  # models/manifest.json 값 읽기: mf runtime.port
+mf() {  # MODEL_PROFILE로 선택한 manifest 값 읽기: mf runtime.port
     "$BASE_PY" - "$1" <<'EOF'
-import json, sys
-v = json.load(open("models/manifest.json", encoding="utf-8"))
+import sys
+from config import load_manifest
+v = load_manifest()
 for k in sys.argv[1].split("."):
     v = v[k] if v is not None else None
 print("" if v is None else v)

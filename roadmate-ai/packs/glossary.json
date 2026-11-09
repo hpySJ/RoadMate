@@ -1,11 +1,20 @@
 {
-  "version": "rental-ko-en-es-v11",
+  "version": "rental-ko-en-es-v12",
   "review": {"status": "draft", "reviewer": null, "checked_at": "2026-11-09"},
   "ko_only_hints": {
     "완전자차": {
       "en": "full rental car damage coverage option",
       "es": "opción de cobertura completa por daños al auto rentado"
     }
+  },
+  "es_only_hints": {
+    "gasolina regular": {"ko": "일반 휘발유", "en": "regular gasoline"}
+  },
+  "en_only_hints": {
+    "fill the tank": {"ko": "연료를 채우다", "es": "llenar el tanque"},
+    "fills the tank": {"ko": "연료를 채우다", "es": "llenar el tanque"},
+    "filled the tank": {"ko": "연료를 채우다", "es": "llenar el tanque"},
+    "filling the tank": {"ko": "연료를 채우다", "es": "llenar el tanque"}
   },
   "entries": [
     {"id": "fuel_gasoline", "category": "fuel", "critical": true, "en": ["gasoline", "petrol", "unleaded"], "es": ["gasolina", "nafta", "bencina", "gasolina regular", "gasolina sin plomo", "magna"], "ko": ["휘발유"]},

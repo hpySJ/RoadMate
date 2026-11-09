@@ -7,7 +7,133 @@ from pathlib import Path
 
 from config import Settings, artifact_hashes
 from eval.release_gate import check_run
-from eval.evaluate import attach_attempts, reserve_final, retry_summary
+from eval.evaluate import attach_attempts, reserve_final, retry_summary, translationese_stats, translationese_summary
+
+
+@pytest.mark.parametrize("text,marker", [
+    ("나는 문서를 받았고, 나의 확인서는 내가 보관해요. 나를 기다려 주세요.", "first_person_pronoun"),
+    ("우리는 출발했고 우리가 먼저 도착했어요. 우리를 기다려 주세요.", "first_person_pronoun"),
+    ("당신에게 그들의 서류와 그녀의 열쇠를 전했어요.", "second_third_person_pronoun"),
+    ("창문을 닫는 것이 좋아요.", "nominalized_neun_geosi"),
+    ("이용 여부를 확인하기 위해 왔어요. 예약자이므로 입장해요.", "formal_connector"),
+    ("여기에서 접수하나, 저기에서 접수하나?", "plain_question_ending"),
+    ("서류가 준비되어 있는가?", "plain_question_ending"),
+    ("표시가 already 바뀌었고 aquí가 남았어요.", "latin_word"),
+    ("확인했습니다, 여기서 기다려 주세요.", "mixed_politeness_same_sentence"),
+    ("예약은 완료됩니다, 잠시 기다려요.", "mixed_politeness_same_sentence"),
+])
+def test_translationese_counts_each_marker_once_per_output(text, marker):
+    row = {"case": {"task": "translate", "target_locale": "ko-KR"}, "http": 200,
+           "body": {"status": "ok", "translated_text": text}}
+    stats = translationese_stats([row])
+    assert stats["eligible_outputs"] == stats["outputs_with_markers"] == 1
+    assert stats["outputs_with_markers_rate"] == 1.0
+    assert {name: n for name, n in stats["marker_outputs"].items() if n} == {marker: 1}
+
+
+@pytest.mark.parametrize("text", [
+    "신나는 여행이에요. 물 하나 주세요.",
+    "GPS와 USB를 확인해 주세요.",
+    "확인했습니다. 여기서 기다려 주세요.",
+    "확인했습니다! 여기서 기다려 주세요.",
+    "확인했습니다\n여기서 기다려 주세요.",
+    "예약이 필요 없습니다.",
+    "그것은 아니다, 아니에요.",
+])
+def test_translationese_does_not_mix_sentences_or_count_acronyms(text):
+    stats = translationese_stats([{"case": {"task": "translate", "target_locale": "ko-KR"}, "http": 200,
+                                  "body": {"status": "ok", "translated_text": text}}])
+    assert stats["outputs_with_markers"] == 0 and not any(stats["marker_outputs"].values())
+
+
+def test_translationese_denominator_excludes_non_korean_errors_and_clarifications():
+    row = {"case": {"task": "translate", "target_locale": "ko-KR"}, "http": 200,
+           "body": {"status": "ok", "translated_text": "나는 확인했어요."}, "pass": True, "flags": []}
+    rows = [row, {**row, "body": {"status": "ok", "translated_text": "확인했어요."}},
+            {**row, "http": 502}, {**row, "body": {**row["body"], "status": "clarification_required"}},
+            {**row, "case": {"task": "translate", "target_locale": "es-US"}},
+            {**row, "case": {"task": "destination", "target_locale": "ko-KR"}}]
+    before = copy.deepcopy(rows)
+    stats = translationese_stats(rows)
+    assert stats["eligible_outputs"] == 2 and stats["outputs_with_markers"] == 1
+    assert stats["outputs_with_markers_rate"] == 0.5
+    assert rows == before
+    assert "- Korean translationese signals (advisory): 1/2 (50.0%)" in translationese_summary(stats)
+    empty = translationese_stats(rows[2:])
+    assert empty["eligible_outputs"] == 0 and empty["outputs_with_markers_rate"] is None
+    assert "- Korean translationese signals (advisory): 0/0 (N/A)" in translationese_summary(empty)
+
+
+def test_translationese_multiple_groups_still_count_one_output():
+    row = {"case": {"task": "translate", "target_locale": "ko-KR"}, "http": 200,
+           "body": {"status": "ok", "translated_text": "나는 already 확인했고 내가 보관해요."}}
+    stats = translationese_stats([row])
+    assert stats["outputs_with_markers"] == 1 and stats["outputs_with_markers_rate"] == 1.0
+    assert stats["marker_outputs"]["first_person_pronoun"] == stats["marker_outputs"]["latin_word"] == 1
+
+
+@pytest.mark.parametrize("profile_state", ["consistent", "start_missing", "start_mismatch", "end_missing", "end_mismatch"])
+def test_evaluation_records_actual_profile_and_preserves_raw_output(tmp_path, monkeypatch, profile_state):
+    from types import SimpleNamespace
+    import eval.evaluate as evaluate
+
+    selected = "4b-q8"
+    case = {"id": "synthetic", "task": "translate", "source_locale": "en-US", "target_locale": "ko-KR",
+            "scenario": "general", "text": "synthetic source"}
+    corpus = tmp_path / "dev.jsonl"
+    corpus.write_text(json.dumps(case), encoding="utf-8")
+    ready = {"ready": True, "backend": "mock", "model_id": "mock", "artifact_hashes": {},
+             "model_profile": selected, "runtime_config": {"model_profile": selected}}
+    start, end = copy.deepcopy(ready), copy.deepcopy(ready)
+    if profile_state != "consistent":
+        target = start if profile_state.startswith("start") else end
+        target["model_profile"] = None if profile_state.endswith("missing") else "8b-q4"
+    snapshots = [start, end]
+    output = {"status": "ok", "translated_text": "나는 이미 확인했어요.", "latency_ms": 10, "model_id": "mock"}
+    calls = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def get(self, *args, **kwargs):
+            response = snapshots.pop(0)
+            return SimpleNamespace(status_code=200, json=lambda: response)
+
+        def post(self, url, *, json):
+            assert json["engine_bundle"] == "synthetic-selected-profile-bundle"
+            calls.append(json)
+            return SimpleNamespace(status_code=200, json=lambda: output)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(evaluate, "ROOT", tmp_path)
+    monkeypatch.setattr(evaluate, "model_profile", lambda: selected)
+    monkeypatch.setattr(evaluate, "load_manifest", lambda: {"engine_bundle": "synthetic-selected-profile-bundle"})
+    monkeypatch.setattr(evaluate, "artifact_hashes", lambda: {})
+    monkeypatch.setattr(evaluate.httpx, "Client", Client)
+    monkeypatch.setattr(evaluate.sys.stdout, "reconfigure", lambda **kwargs: None, raising=False)
+    monkeypatch.setattr(evaluate.sys, "argv", ["evaluate.py", "--file", str(corpus), "--allow-mock"])
+    if profile_state == "consistent":
+        evaluate.main()
+    else:
+        with pytest.raises(SystemExit, match="profile"):
+            evaluate.main()
+    runs = list((tmp_path / "eval" / "results").glob("*"))
+    if profile_state.startswith("start"):
+        assert not calls and not runs
+        return
+    assert len(calls) == len(runs) == 1
+    meta = json.loads((runs[0] / "run.json").read_text(encoding="utf-8"))
+    assert meta["model_profile"] == selected
+    assert meta["model_profile_consistent"] is (profile_state == "consistent")
+    assert meta["translationese_stats"]["marker_outputs"]["first_person_pronoun"] == 1
+    raw = json.loads((runs[0] / "results.jsonl").read_text(encoding="utf-8"))
+    assert raw["body"] == output and raw["pass"] is True and raw["flags"] == []
+    assert "translationese_stats" not in raw
+    summary = (runs[0] / "summary.md").read_text(encoding="utf-8")
+    assert "- model_profile: 4b-q8" in summary and "Korean translationese signals (advisory): 1/1" in summary
 
 
 def test_retry_measurement_counts_only_traced_attempts(tmp_path):
@@ -98,8 +224,11 @@ def test_quality_gate_rejects_mock_unreviewed_and_changed_evidence(tmp_path, mon
     (tmp_path / "results.jsonl").write_bytes(results)
     meta = {"dataset": "general_es.jsonl", "dataset_sha256": hashlib.sha256(local_eval.read_bytes()).hexdigest(),
             "results_sha256": hashlib.sha256(results).hexdigest(),
+            "model_profile": settings.model_profile, "model_profile_consistent": True,
             "ready": {"ready": True, "backend": "mock", "model_id": "mock", "artifact_hashes": artifact_hashes(),
-                      "runtime_config": {"model_id": settings.model_id, "polish_ko": settings.polish_ko,
+                      "model_profile": settings.model_profile,
+                      "runtime_config": {"model_id": settings.model_id, "model_profile": settings.model_profile,
+                                         "polish_ko": settings.polish_ko,
                                          "model_timeout_s": settings.model_timeout_s, "max_text_chars": settings.max_text_chars}}}
     (tmp_path / "run.json").write_text(json.dumps(meta), encoding="utf-8")
     fields = ["id", "text", "output", "human_meaning_ok", "human_naturalness_ok", "critical_error"]
@@ -126,6 +255,19 @@ def test_quality_gate_rejects_mock_unreviewed_and_changed_evidence(tmp_path, mon
     (tmp_path / "run.json").write_text(json.dumps(meta), encoding="utf-8")
     review(True)
     assert check_run(tmp_path)[1] == []
+    meta.pop("model_profile")
+    (tmp_path / "run.json").write_text(json.dumps(meta), encoding="utf-8")
+    report, issues = check_run(tmp_path)
+    assert "model_profile_missing_or_changed" in issues and report["model_profile"] is None
+    meta["model_profile"] = "different-profile"
+    (tmp_path / "run.json").write_text(json.dumps(meta), encoding="utf-8")
+    assert "model_profile_missing_or_changed" in check_run(tmp_path)[1]
+    meta["model_profile"] = settings.model_profile
+    meta["ready_end"]["model_profile"] = "different-profile"
+    (tmp_path / "run.json").write_text(json.dumps(meta), encoding="utf-8")
+    assert "server_changed_during_run_or_missing_provenance" in check_run(tmp_path)[1]
+    meta["ready_end"]["model_profile"] = settings.model_profile
+    (tmp_path / "run.json").write_text(json.dumps(meta), encoding="utf-8")
     unreviewed = [dict(c, review_status="draft") for c in cases]
     local_eval.write_text("".join(json.dumps(c, ensure_ascii=False) + "\n" for c in unreviewed), encoding="utf-8")
     assert "dataset_review_required" in check_run(tmp_path)[1]

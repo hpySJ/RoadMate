@@ -5,13 +5,14 @@ Q5 비교: ... --file Qwen3-4B-Instruct-2507-Q5_K_M.gguf --sha256 5bde5e9d883622
 """
 import argparse
 import hashlib
-import json
 import sys
 from pathlib import Path
 
 from huggingface_hub import hf_hub_download
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from config import load_manifest  # noqa: E402
 
 
 def sha256(path: Path) -> str:
@@ -23,7 +24,7 @@ def sha256(path: Path) -> str:
 
 
 def main():
-    m = json.loads((ROOT / "models" / "manifest.json").read_text(encoding="utf-8"))["model"]
+    m = load_manifest()["model"]
     ap = argparse.ArgumentParser()
     ap.add_argument("--file", default=m["gguf_file"])
     ap.add_argument("--sha256", default=None)

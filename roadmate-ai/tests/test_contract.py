@@ -119,6 +119,21 @@ def test_unsupported_french_clarifies_without_model(locale, text):
     assert fake.calls == 0
 
 
+def test_pronouns_are_normalized_after_time_and_before_validation():
+    fake = FakeLlama(outputs=[ok("나는 6 p.m.까지 돌아올게요.")])
+    with TestClient(create_app(SETTINGS, fake)) as c:
+        r = c.post("/internal/v1/translate", json=body(text="I'll be back by 6 p.m."))
+    assert r.status_code == 200 and r.json()["translated_text"] == "저는 오후 6시까지 돌아올게요."
+    assert fake.calls == 1
+
+
+def test_normalized_pronouns_do_not_bypass_validation_on_either_attempt():
+    fake = FakeLlama(outputs=[ok("나는 가방 세 개가 있어요.")] * 2)
+    with TestClient(create_app(SETTINGS, fake)) as c:
+        r = c.post("/internal/v1/translate", json=body(text="I have two bags."))
+    assert r.status_code == 502 and r.json()["error_code"] == "output_validation_failed" and fake.calls == 2
+
+
 def test_validation_retry_then_success():
     fake = FakeLlama(outputs=[ok("경유 가득 넣어 주세요."), ok("휘발유 가득 넣어 주세요.")])
     with TestClient(create_app(SETTINGS, fake)) as c:
@@ -231,6 +246,29 @@ def test_mixed_script_retry_matches_only_complete_source_tokens_and_deduplicates
     original = P.translate_messages("en-US", "ko-KR", "general", "peanuts, peanuts; walnuts.")
     repair = json.loads(translation_repair(original, ["mixed_script:ANUT", "mixed_script:anut", "mixed_script:alnu"])[-1]["content"])
     assert '["peanuts", "walnuts"]' in repair["repair"]
+
+
+@pytest.mark.parametrize("source,issue,word", [
+    ("¿Está aquí?", "mixed_script:QUÍ", "aquí"),
+    ("Choose option x.", "mixed_script:x", "x"),
+])
+def test_mixed_script_retry_accepts_latin_accents_and_single_letters(source, issue, word):
+    import prompting as P
+    from engine import translation_repair
+    original = P.translate_messages("es-US" if "¿" in source else "en-US", "ko-KR", "general", source)
+    repair = json.loads(translation_repair(original, [issue])[-1]["content"])
+    assert json.dumps([word], ensure_ascii=False) in repair["repair"]
+
+
+@pytest.mark.parametrize("source,bad,good", [
+    ("¿Ya llamó a la policía?", "경찰에 already 전화했나요?", "경찰에 이미 전화했나요?"),
+    ("Disculpe, ¿alguien aquí habla inglés?", "여기 Anyone aquí가 영어를 말합니까?", "실례지만 여기 영어를 하는 분이 있나요?"),
+])
+def test_unexpected_latin_words_retry_before_they_can_be_played(source, bad, good):
+    fake = FakeLlama(outputs=[ok(bad), ok(good)])
+    with TestClient(create_app(SETTINGS, fake)) as c:
+        r = c.post("/internal/v1/translate", json=body(source_locale="es-US", text=source, scenario="general"))
+    assert r.status_code == 200 and r.json()["translated_text"] == good and fake.calls == 2
 
 
 @pytest.mark.parametrize("issue", ["mixed_script", "mixed_script:zzzz", "mixed_script:a.*"])

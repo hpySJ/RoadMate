@@ -95,6 +95,66 @@ def test_gas_alone_not_mapped_to_fuel():
     assert P.select_glossary("Fill it with gas", "en-US", "ko-KR") == {}
 
 
+@pytest.mark.parametrize("source,surface", [
+    ("Please fill the tank with gasoline.", "fill the tank"),
+    ("He fills the tank with gasoline.", "fills the tank"),
+    ("I filled the tank with gasoline.", "filled the tank"),
+    ("I'm filling the tank with gasoline.", "filling the tank"),
+    ("FILL THE TANK with gasoline, please.", "FILL THE TANK"),
+])
+def test_fill_the_tank_hint_preserves_fuel_without_assuming_full_amount(source, surface):
+    assert P.select_glossary(source, "en-US", "ko-KR") == {surface: "연료를 채우다", "gasoline": "휘발유"}
+    assert P.match_concepts(source, "en-US", {"fuel"}) == {"fuel_gasoline": "gasoline"}
+
+
+@pytest.mark.parametrize("source", [
+    "Fill the tank halfway with gasoline.",
+    "Partially fill the tank with gasoline.",
+    "Fill the tank partway with gasoline.",
+    "Fill the tank to one third with gasoline.",
+    "Fill the tank with only 10 liters of gasoline.",
+    "Fill the tank with just 10,000 won worth of gasoline.",
+    "Don't fill the tank with gasoline.",
+])
+def test_fill_the_tank_does_not_override_partial_limited_or_negated_fill(source):
+    hints = P.select_glossary(source, "en-US", "ko-KR")
+    assert "연료를 채우다" in hints.values()
+    assert "가득" not in hints.values()
+
+
+@pytest.mark.parametrize("text", ["a full tank of gasoline", "fill it up with gasoline", "fill up with gasoline"])
+def test_explicit_full_tank_hints_still_mean_full(text):
+    assert "가득" in P.select_glossary(text, "en-US", "ko-KR").values()
+
+
+@pytest.mark.parametrize("locale", ["es-US", "es-MX"])
+@pytest.mark.parametrize("source,surface", [
+    ("Ponga gasolina regular, por favor.", "gasolina regular"),
+    ("Ponga GASOLINA REGULAR, por favor.", "GASOLINA REGULAR"),
+])
+def test_regular_gasoline_hint_preserves_grade_and_shared_fuel_identity(locale, source, surface):
+    from validation import check_critical_terms, validate_translation
+    assert P.select_glossary(source, locale, "ko-KR") == {surface: "일반 휘발유"}
+    assert P.match_concepts(source, locale, {"fuel"}) == {"fuel_gasoline": surface}
+    out = {"status": "ok", "translated_text": "일반 휘발유를 넣어 주세요.", "clarification_question": None}
+    assert validate_translation(out, source, locale, "ko-KR") == []
+    assert check_critical_terms(source, locale, "경유를 넣어 주세요.", "ko-KR") == [
+        "term_missing:fuel_gasoline", "term_added:fuel_diesel"]
+
+
+@pytest.mark.parametrize("locale", ["es-US", "es-MX"])
+def test_regular_gasoline_hint_does_not_drop_a_later_surface_or_change_negation(locale):
+    from validation import check_fuel_polarity
+    assert P.select_glossary("gasolina, gasolina regular", locale, "ko-KR") == {
+        "gasolina": "휘발유", "gasolina regular": "일반 휘발유"}
+    assert P.select_glossary("gasolina", locale, "ko-KR") == {"gasolina": "휘발유"}
+    assert P.select_glossary("gasolina premium", locale, "ko-KR") == {"gasolina premium": "고급 휘발유"}
+    source = "No ponga diésel, ponga gasolina regular."
+    assert check_fuel_polarity(source, locale, "경유 말고 일반 휘발유를 넣어 주세요.", "ko-KR") == []
+    assert check_fuel_polarity(source, locale, "일반 휘발유 말고 경유를 넣어 주세요.", "ko-KR") == [
+        "fuel_polarity_mismatch:fuel_diesel", "fuel_polarity_mismatch:fuel_gasoline"]
+
+
 @pytest.mark.parametrize("source,target,text,expected", [
     ("ko-KR", "en-US", "셀프 주유인가요, 직원 주유인가요?", {"셀프": "self-service", "직원 주유": "full-service"}),
     ("ko-KR", "es-US", "셀프 주유인가요, 직원 주유인가요?", {"셀프": "autoservicio", "직원 주유": "servicio completo"}),

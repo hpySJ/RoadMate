@@ -1,5 +1,6 @@
 """번역 출력 검증: 구조·언어·숫자·부정·연료·좌우. 실패하면 재생하지 않는다."""
 import re
+import unicodedata
 from dataclasses import dataclass
 
 from prompting import LANG_KEY, _find_terms, concept_spans, fold, glossary, match_concepts, places
@@ -19,6 +20,31 @@ FUNC_WORDS = {
 }
 
 
+def latin_tokens(text: str) -> list[str]:
+    """한글에 붙은 라틴 단어·영숫자 표지. NFC로 악센트를 맞추고 B2의 숫자는 유지한다."""
+    chars = []
+    for char in unicodedata.normalize("NFC", text):
+        if char.isdecimal() or char.isalpha() and "LATIN" in unicodedata.name(char, ""):
+            chars.append(char)
+        elif unicodedata.combining(char) and chars and chars[-1] != " ":
+            chars.append(char)
+        else:
+            chars.append(" ")
+    return [token for token in "".join(chars).split() if any(c.isalpha() for c in token)]
+
+
+def latin_words(text: str) -> list[str]:
+    """숫자를 제외한 라틴 문자 단어·조각. 재시도와 평가의 단어 경계를 유지한다."""
+    return latin_tokens(re.sub(r"\d", " ", text))
+
+
+def _proper_names() -> list[str]:
+    names = [name for p in places() for name in [p["name_en"], p["name_es"], *p.get("aliases", [])]
+             if not HANGUL.search(name)]
+    return names + [name for e in glossary()["entries"] if e.get("proper_name")
+                    for lang in ("en", "es") for name in e[lang]]
+
+
 def script_counts(text: str) -> tuple[int, int]:
     return len(HANGUL.findall(text)), len(LATIN.findall(text))
 
@@ -26,10 +52,7 @@ def script_counts(text: str) -> tuple[int, int]:
 def latin_lang(text: str) -> str | None:
     """en/es/fr 중 근거가 충분한 언어. 확실하지 않으면 None(짧은 문장, 고유명사)."""
     # 지명 안의 de/del 같은 기능어는 주변 문장의 언어를 나타내지 않는다.
-    names = [name for p in places() for name in [p["name_en"], p["name_es"], *p.get("aliases", [])]
-             if not HANGUL.search(name)]
-    names += [name for e in glossary()["entries"] if e.get("proper_name") for lang in ("en", "es") for name in e[lang]]
-    text = _mask(text, [(s, e) for s, e, _ in _find_terms(text, names, "en")])
+    text = _mask(text, [(s, e) for s, e, _ in _find_terms(text, _proper_names(), "en")])
     words = re.findall(r"[a-z]+", fold(text).lower())
     en, es = (sum(w in FUNC_WORDS[k] for w in words) for k in ("en", "es"))
     fr_only = set(words) & (FUNC_WORDS["fr"] - FUNC_WORDS["en"] - FUNC_WORDS["es"])
@@ -116,7 +139,7 @@ EN_SPAN_RE = re.compile(r"\b(?:(half)\s+(?:an\s+)?hour|(?:a\s+)?(quarter)\s+(?:o
                         r"|(?:an|one|a)\s+hour(\s+and\s+a\s+half)?|(?:a|one)\s+(?:full\s+)?(minutes?|mins?))\b", re.IGNORECASE)
 DUR_EN = re.compile(r"\s?(?:(minutes?|mins?)|(hours?|hrs?))\b", re.IGNORECASE)
 DUR_KO = re.compile(r"\s?(?:(분)|(시간)(\s?반)?)")
-UNIT_ABBR = {"km", "kg", "cc", "ml", "cm", "mm", "kw", "kwh", "mph", "kmh", "gb"}
+UNIT_ABBR = {"m", "l", "s", "h", "km", "kg", "cc", "ml", "cm", "mm", "kw", "kwh", "mph", "kmh", "gb"}
 PLATE_RE = re.compile(r"\d{2,3}\s?[가-힣]\s?\d{4}")
 CUR_EN = re.compile(r"\s?(?:k|thousand|million|mil)?\s?(won|krw|dollars?|usd|bucks)\b", re.IGNORECASE)
 CUR_KO = re.compile(r"\s?(원|달러|불)")
@@ -828,16 +851,32 @@ def validate_translation(out: dict, source: str, src_locale: str, tgt_locale: st
         issues.append("too_short")
     # 검증: 번호판(34하 5678)의 한글은 원문 그대로 옮겨도 된다
     script_tt = PLATE_RE.sub(" ", tt) if PLATE_RE.search(source) else tt
-    if not in_locale_script(script_tt, tgt_locale):
-        issues.append("wrong_language")
     if HAN_KANA.search(tt) and not HAN_KANA.search(source):
         issues.append("foreign_script")
     if tgt_locale == "ko-KR":
-        # 검증: "페anut"처럼 한글에 붙은 영문 조각이 원문 단어가 아니면 깨진 출력(U턴·B동·GPS가처럼 원문·약어는 허용)
-        src_words = {w.lower() for w in re.findall(r"[A-Za-z]+", source)}
-        frags = re.findall(r"(?<=[가-힣])[A-Za-z]{2,}|(?<![\dA-Za-z])[A-Za-z]{2,}(?=[가-힣])", tt)
-        broken = dict.fromkeys(f.lower() for f in frags if f.lower() not in src_words | UNIT_ABBR and not f.isupper())
+        # 원문에 있다는 이유만으로 일반 단어를 남기지 않는다. 등록된 이름은 전체 구간만 허용한다.
+        common = set().union(*FUNC_WORDS.values()) | {
+            fold(w).lower() for e in glossary()["entries"] if not e.get("proper_name")
+            for term in e[LANG_KEY[src_locale]] for w in latin_words(term)}
+        # shortcut: 미등록 이름은 문장 중간의 Titlecase만 추정한다. 문장 첫 이름은 용어집 검수 후 등록한다.
+        source_names = {w for sentence in re.split(r"[.!?。！？]", source) for w in latin_words(sentence)[1:]
+                        if w.istitle() and fold(w).lower() not in common}
+        checked = unicodedata.normalize("NFC", script_tt)
+        names = [(s, e) for s, e, _ in _find_terms(checked, _proper_names(), "en")]
+        names += [(s, e) for s, e, _ in _find_terms(checked, list(source_names), "en")
+                  if checked[s:e] in source_names]
+        names = [(s, e) for s, e in names if not (s and checked[s - 1].isdecimal()
+                                                  or e < len(checked) and checked[e].isdecimal())]
+        checked = _mask(checked, names)
+        script_tt = checked
+        frags = latin_tokens(checked)
+        broken = dict.fromkeys(f.lower() for f in frags
+                               if f not in source_names and not (f.isalpha() and f.isupper())
+                               and not re.fullmatch(r"[A-Z]+\d+", f)
+                               and re.sub(r"^\d+", "", f).lower() not in UNIT_ABBR)
         issues += [f"mixed_script:{frag}" for frag in broken]
+    if not in_locale_script(script_tt, tgt_locale):
+        issues.append("wrong_language")
     if tt.strip().lower() == source.strip().lower():
         issues.append("untranslated")
     source_nums, target_nums = extract_numbers(source, src_locale), extract_numbers(tt, tgt_locale)

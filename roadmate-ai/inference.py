@@ -74,6 +74,9 @@ class LlamaClient:
             "response_format": {"type": "json_schema", "json_schema": {"name": "output", "schema": schema, "strict": True}},
             **sampling,
         }
+        template_kwargs = (self.manifest or {}).get("runtime", {}).get("chat_template_kwargs")
+        if template_kwargs is not None:
+            body["chat_template_kwargs"] = template_kwargs
         if timeout_s <= 0:
             raise ModelTimeout("no time left")
         try:
@@ -90,7 +93,13 @@ class LlamaClient:
         if choice.get("finish_reason") == "length":
             raise ModelTruncated("hit max_tokens")
         try:
-            out = json.loads(choice["message"]["content"])
+            message = choice["message"]
+            content = message["content"]
+            if template_kwargs and template_kwargs.get("enable_thinking") is False:
+                if message.get("reasoning_content") or message.get("reasoning") or (
+                        isinstance(content, str) and any(tag in content.lower() for tag in ("<think>", "</think>"))):
+                    raise ModelBadOutput("thinking output received with enable_thinking=false")
+            out = json.loads(content)
         except (KeyError, TypeError, json.JSONDecodeError) as e:
             raise ModelBadOutput("non-JSON output") from e
         if not isinstance(out, dict):

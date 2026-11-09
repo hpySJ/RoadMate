@@ -19,7 +19,7 @@ import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from config import load_dotenv  # noqa: E402
+from config import load_dotenv, load_manifest  # noqa: E402
 from validation import validate_translation  # noqa: E402
 
 load_dotenv()
@@ -30,7 +30,7 @@ FIELDS = ["id", "group_id", "source_locale", "target_locale", "scenario", "text"
 def draft(a):
     pool = [json.loads(x) for x in Path(a.pool).read_text(encoding="utf-8").splitlines() if x.strip()]
     pool = pool[: a.limit] if a.limit else pool
-    bundle = json.loads((ROOT / "models" / "manifest.json").read_text(encoding="utf-8"))["engine_bundle"]
+    bundle = load_manifest()["engine_bundle"]
     headers = {"X-Internal-Token": os.environ["AI_INTERNAL_TOKEN"]} if os.environ.get("AI_INTERNAL_TOKEN") else {}
     DRAFTS.mkdir(parents=True, exist_ok=True)
     out = DRAFTS / f"{a.name}.review.csv"

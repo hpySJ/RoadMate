@@ -1,6 +1,5 @@
 """실행 PC 확인: GPU·VRAM·RAM·필수 파일. 에뮬레이터를 켜기 전/후로 한 번씩 실행해 기록한다."""
 import ctypes
-import json
 import platform
 import shutil
 import subprocess
@@ -8,6 +7,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from config import load_manifest, model_profile  # noqa: E402
 
 
 def ram_gib():
@@ -38,10 +39,12 @@ def gpu():
 
 
 def main():
-    m = json.loads((ROOT / "models" / "manifest.json").read_text(encoding="utf-8"))
+    m = load_manifest()
     ram = ram_gib()
     rows = {
         "python": sys.version.split()[0],
+        "model profile": model_profile(),
+        "model alias": m["model"]["alias"],
         "gpu (name, total, used, free, driver)": gpu(),
         "ram total/avail GiB": f"{ram[0]} / {ram[1]}" if ram else "n/a",
         "llama-server": any((ROOT / "tools" / "llama").rglob("llama-server*")),

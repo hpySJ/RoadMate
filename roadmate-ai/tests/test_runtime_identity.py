@@ -47,6 +47,17 @@ def test_loaded_model_file_context_and_adapter_must_match(tmp_path):
         verify_runtime(props, [], manifest, process, tmp_path)
 
 
+def test_runtime_identity_records_template_and_request_kwargs(tmp_path):
+    _, manifest, props = fixture(tmp_path)
+    manifest["runtime"]["chat_template_kwargs"] = {"enable_thinking": False}
+    props["chat_template"] = "an exact GGUF template"
+    identity = verify_runtime(props, [], manifest, {"pid": 1, "started": "now"}, tmp_path)
+    assert identity["chat_template_kwargs"] == {"enable_thinking": False}
+    assert identity["chat_template_sha256"] == hashlib.sha256(props["chat_template"].encode()).hexdigest()
+    props["chat_template"] = "a changed template"
+    assert verify_runtime(props, [], manifest, {"pid": 1, "started": "now"}, tmp_path) != identity
+
+
 def test_llama_restart_is_rejected_even_with_same_alias(tmp_path, monkeypatch):
     _, manifest, props = fixture(tmp_path)
     process = {"pid": 123, "started": "first"}

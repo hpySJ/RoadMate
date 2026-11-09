@@ -90,4 +90,7 @@ def verify_runtime(props: dict, adapters: list, manifest: dict, process: dict, r
         raise ValueError("unexpected loaded adapters")
     return {"model_sha256": sha, "adapter_sha256": adapter_sha, "context": ctx, "slots": props["total_slots"],
             "process": process, "build": props["build_info"],
+            "chat_template_kwargs": manifest["runtime"].get("chat_template_kwargs", {}),
+            "chat_template_sha256": hashlib.sha256(props["chat_template"].encode()).hexdigest()
+            if isinstance(props.get("chat_template"), str) else None,
             "default_parameters": props["default_generation_settings"]["params"]}

@@ -5,7 +5,13 @@ $Root = Split-Path $PSScriptRoot -Parent
 $Py = Join-Path $Root ".venv\Scripts\python.exe"
 
 function Read-Manifest {
-    Get-Content -Raw -Encoding UTF8 (Join-Path $Root "models\manifest.json") | ConvertFrom-Json
+    $manifestPython = if (Test-Path -LiteralPath $Py) { $Py }
+        elseif (Get-Command python -ErrorAction SilentlyContinue) { "python" }
+        elseif (Get-Command py -ErrorAction SilentlyContinue) { "py" }
+        else { throw "Python not found. Run scripts\setup_ai_env.ps1 first." }
+    $raw = & $manifestPython -c "import sys; sys.path.insert(0, sys.argv[1]); import json; from config import load_manifest; print(json.dumps(load_manifest()))" $Root
+    if ($LASTEXITCODE -ne 0) { throw "MODEL_PROFILE manifest could not be loaded" }
+    $raw | ConvertFrom-Json
 }
 
 function New-Venv([string]$Path, [string]$Version) {

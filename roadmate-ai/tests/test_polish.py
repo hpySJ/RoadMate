@@ -78,3 +78,24 @@ def test_polish_stays_off_by_default():
     assert Settings.__dataclass_fields__["polish_ko"].default is False
     result, rejected, calls = polish("I checked the form.", "내가 서류를 확인했어.", "제가 서류를 확인했어요.", enabled=False)
     assert result == "내가 서류를 확인했어." and rejected == [] and calls == 0
+
+
+@pytest.mark.parametrize("source,draft,candidate,locale", [
+    ("¿Me puede devolver el depósito?", "보증금을 돌려 주실 수 있나요?", "보증금을 돌려드릴 수 있나요?", "es-US"),
+    ("Can you return the key?", "열쇠를 돌려주실 수 있나요?", "열쇠를 돌려드릴 수 있나요?", "en-US"),
+    ("Can I return the key?", "열쇠를 돌려드릴 수 있나요?", "열쇠를 돌려주실 수 있나요?", "en-US"),
+    ("Please hand me the receipt.", "영수증을 건네주세요.", "영수증을 건네드리세요.", "en-US"),
+])
+def test_polish_keeps_draft_when_giving_direction_changes(source, draft, candidate, locale):
+    result, rejected, calls = polish(source, draft, candidate, locale)
+    assert result == draft and "polish_transfer_changed" in rejected and calls == 1
+
+
+@pytest.mark.parametrize("source,draft,candidate", [
+    ("Can you return the key?", "열쇠를 돌려 주실 수 있나요?", "열쇠를 돌려주실 수 있나요?"),
+    ("Can I return the key?", "열쇠를 돌려 드릴 수 있나요?", "열쇠를 돌려드릴 수 있나요?"),
+    ("I'll return the key.", "열쇠를 돌려줄게요.", "열쇠를 돌려드릴게요."),
+])
+def test_polish_allows_spacing_and_politeness_without_giving_reversal(source, draft, candidate):
+    result, rejected, calls = polish(source, draft, candidate)
+    assert result == candidate and rejected == [] and calls == 1

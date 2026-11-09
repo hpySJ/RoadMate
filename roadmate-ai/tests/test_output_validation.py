@@ -241,8 +241,8 @@ def test_invalid_pairs(src, sl, tgt, tl, issue):
     ("Are these peanuts?", "이것은 Anut인가요?", ["anut"]),
     ("Are these peanuts and walnuts?", "페anut와 월nut인가요? 페Anut가 맞나요?", ["anut", "nut"]),
     ("Is this a nut?", "이것은 페anut인가요?", ["anut"]),
-    ("Say anut.", "anut라고 말해 주세요.", []),
-    ("Are these Peanuts?", "이것은 peanuts인가요?", []),
+    ("Say anut.", "anut라고 말해 주세요.", ["anut"]),
+    ("Are these Peanuts?", "이것은 peanuts인가요?", ["peanuts"]),
     ("Go to Jeju.", "Jeju로 가 주세요.", []),
     ("Check the display.", "GPS가 km로 표시되는지 확인해 주세요.", []),
     ("Go to building B.", "B동으로 가 주세요.", []),
@@ -251,6 +251,65 @@ def test_mixed_script_reports_only_unique_lowercase_fragments(source, target, fr
     issues = v(source, "en-US", target, "ko-KR")
     assert [issue for issue in issues if issue.startswith("mixed_script")] == [
         f"mixed_script:{fragment}" for fragment in fragments]
+
+
+@pytest.mark.parametrize("source,locale,target,fragments", [
+    ("¿Ya llamó a la policía?", "es-US", "경찰에 already 전화했나요?", ["already"]),
+    ("¿Alguien aquí habla inglés?", "es-US", "여기 Anyone aquí가 영어를 말합니까?", ["anyone", "aquí"]),
+    ("¿Ya llamó?", "es-MX", "de\u0301ja\u0300 전화했나요?", ["déjà"]),
+    ("Where is the station?", "en-US", "역은 où 있나요?", ["où"]),
+    ("Wait for José in Łódź.", "en-US", "Łódź에서 Jose\u0301를 기다려 주세요.", []),
+    ("Meet at the café.", "en-US", "카caf에서 만나요.", ["caf"]),
+    ("Check the code.", "en-US", "코드에 x 표시를 확인해 주세요.", ["x"]),
+    ("Walk five meters.", "en-US", "5 m 걸어가세요.", []),
+    ("Check the units.", "en-US", "단위 m, L, l, s, h, km, kWh를 확인하세요.", []),
+])
+def test_korean_output_checks_all_latin_words(source, locale, target, fragments):
+    issues = v(source, locale, target, "ko-KR")
+    assert [issue for issue in issues if issue.startswith("mixed_script")] == [
+        f"mixed_script:{fragment}" for fragment in fragments]
+
+
+def test_latin_word_tokenizer_keeps_whole_accents_and_ignores_other_scripts():
+    from validation import latin_words
+    assert latin_words("페anut, cafe\u0301, Łódź, aqui\u0301가 × ÷ 日本語") == ["anut", "café", "Łódź", "aquí"]
+    assert latin_words("\u0301한국어 x\u0301입니다") == ["x\u0301"]
+
+
+@pytest.mark.parametrize("source,locale,target,fragment", [
+    ("Ya estoy aquí.", "es-US", "저는 ya 여기 있어요.", "ya"),
+    ("¿Alguien aquí habla inglés?", "es-US", "여기 aquí에서 영어를 하나요?", "aquí"),
+    ("Take the shuttle bus.", "en-US", "shuttle 버스를 타세요.", "shuttle"),
+    ("Shuttle buses stop here.", "en-US", "Shuttle 버스는 여기 서요.", "shuttle"),
+    ("Take the Shuttle bus.", "en-US", "Shuttle 버스를 타세요.", "shuttle"),
+    ("Avery is nearby.", "en-US", "Avery가 가까이 있어요.", "avery"),
+    ("Go to Seongsan.", "en-US", "Seongsan2로 가세요.", "seongsan2"),
+    ("Check the code.", "en-US", "코드 already2를 확인해 주세요.", "already2"),
+])
+def test_copied_common_words_are_not_proper_name_exceptions(source, locale, target, fragment):
+    assert f"mixed_script:{fragment}" in v(source, locale, target, "ko-KR")
+
+
+@pytest.mark.parametrize("source,target", [
+    ("Make a U-turn here.", "여기서 U턴하세요."),
+    ("Wait at the GPS point.", "GPS 지점에서 기다리세요."),
+    ("Please give me the USB cable.", "USB 케이블을 주세요."),
+    ("Park in zone B2.", "B2 구역에 세우세요."),
+    ("It is five meters ahead.", "5 m 앞에 있어요."),
+    ("It is five meters ahead.", "5m 앞에 있어요."),
+    ("Seongsan is nearby.", "Seongsan이 가까워요."),
+    ("Go to Seongsan.", "Seongsan으로 가세요."),
+    ("Please wait for Morgan.", "Morgan을 기다려 주세요."),
+    ("Use Hi-Pass.", "Hi-Pass를 이용하세요."),
+])
+def test_korean_output_preserves_names_labels_units_and_acronyms(source, target):
+    assert v(source, "en-US", target, "ko-KR") == []
+
+
+def test_latin_tokens_keep_label_digits_without_changing_word_extraction():
+    from validation import latin_tokens, latin_words
+    assert latin_tokens("B2 구역, 5m 앞, 페anut2, 12") == ["B2", "5m", "anut2"]
+    assert latin_words("B2 구역, 5m 앞, 페anut2, 12") == ["B", "m", "anut"]
 
 
 @pytest.mark.parametrize("source,target", [

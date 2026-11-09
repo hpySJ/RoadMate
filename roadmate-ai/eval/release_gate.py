@@ -18,16 +18,19 @@ def check_run(run: Path) -> tuple[dict, list[str]]:
     meta = json.loads((run / "run.json").read_text(encoding="utf-8"))
     ready = meta["ready"]
     settings = Settings.from_env()
-    target = {"model_id": settings.model_id, "polish_ko": settings.polish_ko,
+    target = {"model_id": settings.model_id, "model_profile": settings.model_profile, "polish_ko": settings.polish_ko,
               "model_timeout_s": settings.model_timeout_s, "max_text_chars": settings.max_text_chars}
     issues = []
     if ready.get("backend") != "llama" or ready.get("model_id") == "mock" or not ready.get("ready"):
         issues.append("real_model_required")
     if ready.get("runtime_config") != target or ready.get("model_id") != settings.model_id:
         issues.append("runtime_configuration_changed")
+    if (meta.get("model_profile") != settings.model_profile or ready.get("model_profile") != settings.model_profile
+            or meta.get("model_profile_consistent") is not True):
+        issues.append("model_profile_missing_or_changed")
     end = meta.get("ready_end", {})
     if (not isinstance(ready.get("instance_id"), str) or not ready["instance_id"] or not end.get("ready")
-            or any(ready.get(k) != end.get(k) for k in ("instance_id", "model_id", "backend", "runtime_config", "artifact_hashes", "model_runtime"))):
+            or any(ready.get(k) != end.get(k) for k in ("instance_id", "model_id", "model_profile", "backend", "runtime_config", "artifact_hashes", "model_runtime"))):
         issues.append("server_changed_during_run_or_missing_provenance")
     runtime = ready.get("model_runtime") or {}
     adapter = settings.manifest.get("adapter")
@@ -100,6 +103,7 @@ def check_run(run: Path) -> tuple[dict, list[str]]:
         issues.append("p95_over_8s_or_missing")
     return {"dataset": meta["dataset"], "n": len(rows), "auto": auto_rate, "meaning": meaning_rate,
             "naturalness": natural_rate, "p95_ms": p95, "polish_ko": ready.get("polish_ko"),
+            "model_profile": meta.get("model_profile"),
             "runtime_config": ready.get("runtime_config"),
             "model_runtime": {k: v for k, v in runtime.items() if k != "process"}}, issues
 
@@ -122,6 +126,8 @@ def main() -> int:
         failures.append("duplicate_dataset: select one final configuration per dataset")
     if len({r["polish_ko"] for r in reports}) > 1:
         failures.append("mixed_polish_configuration")
+    if len({r["model_profile"] for r in reports}) > 1:
+        failures.append("mixed_model_profile")
     if len({json.dumps(r["model_runtime"], sort_keys=True) for r in reports}) > 1:
         failures.append("mixed_model_runtime")
     print(json.dumps({"passed": not failures, "reports": reports, "failures": failures}, ensure_ascii=False, indent=2))

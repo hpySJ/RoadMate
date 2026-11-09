@@ -257,10 +257,11 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
         is_ready = all(v is True for k, v in checks.items() if k != "self_check") and checks["self_check"] in (
             "ok", "skipped_busy")
         body = {"ready": is_ready, "checks": checks, "engine_bundle": s.engine_bundle, "model_id": c.model_id,
+                "model_profile": s.model_profile,
                 "instance_id": st["instance_id"],
                 "model_runtime": identity,
                 "backend": s.model_backend, "versions": s.manifest["versions"], "polish_ko": s.polish_ko,
-                "runtime_config": {"model_id": c.model_id, "polish_ko": s.polish_ko,
+                "runtime_config": {"model_id": c.model_id, "model_profile": s.model_profile, "polish_ko": s.polish_ko,
                                    "model_timeout_s": s.model_timeout_s, "max_text_chars": s.max_text_chars},
                 "artifact_hashes": st["artifact_hashes"]}
         return UTF8JSONResponse(body, status_code=200 if is_ready else 503)

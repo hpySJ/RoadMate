@@ -100,3 +100,44 @@ S3은 공식 Kotlin·Java 예제의 좌표 순서가 서로 달라 생기는 연
 자동 통과는 의미·자연스러움 검수를 대신하지 않는다. `review.csv`의 사람 검수와 스페인어 원어민 확인, 시연 PC·백엔드 결정 및 앱 연동은 남아 있다.
 
 로컬 검증: 전체 테스트 1,218건·주행 시나리오 통과(`run/verify-a2fb0d6012/report.json`), 문맥 예산 932건 통과(최대 2,696/4,096토큰). 개발 번역 입력의 사전 차단 비교에서는 `d-a-015`만 추가됐고 general·general_es·naturalness.dev의 정상 입력에는 새 차단이 없었다. 실제 모델 재평가는 수행하지 않았다.
+
+## 번역 자연스러움 1단계
+
+사용자 검토에서 다듬기는 개선과 악화가 비슷했고 보증금 수수 방향 등 의미 변경을 놓쳤으며, general p95가 337→1135ms로 증가했다. `POLISH_KO=0`을 유지하고 학습 초안 생성 안내도 다듬기를 끄도록 바꿨다. 다듬기 전 출력에서도 심각한 오역이 보고돼 기존 자동 통과율을 MVP 품질 도달 근거로 취급하지 않는다. 원본 전체 출력이 로컬에 없어 약 200건의 전수 의미 검수는 수행하지 않았다.
+
+| 범위 | 변경 |
+|---|---|
+| 로마자 검사 | Unicode Latin 단어·영숫자 토큰을 검사하고, 원문 소문자 일반어 복사 예외를 제거. 약어·영숫자 표지·단위·등록 고유명사와 보수적으로 판별한 원문 고유명사만 허용 |
+| 다듬기 방어 | 주시다↔드리다 방향 변화는 초안 유지. 의미 동등성 전체를 보증하지 않으며 기본 활성화하지 않음 |
+| 용어집 v12 | `gasolina regular → 일반 휘발유`. `fill the tank` 계열은 부분 주유에도 나타나므로 `연료를 채우다`라는 중립 힌트 사용. 명시적 `full tank / fill it up`은 `가득` 유지 |
+| 대명사 후처리 | 영·스→한에서 공손한 대명사로 정규화 후 재검사. 인용·나다/내다·합성어 보호. 모호한 나는/우리는은 절 시작만, 붙여 쓴 우리 합성어는 보존. 당신은 삭제하지 않음 |
+| 번역투 통계 | 정상 한국어 최종 출력의 7그룹 표지별 출력 수와 any-marker 비율. 합격·치명 오류 판정에는 미사용 |
+| 모델 비교 | `MODEL_PROFILE=4b-q4/4b-q8/8b-q4`를 다운로드·실행·서버·평가에 일관 적용. 선택 manifest 해시·profile 기록, 8B thinking 해제와 실제 smoke 응답 검사 경로 추가 |
+
+`b8cf6a0`의 검사 함수와 현재 함수에 같은 제공 출력을 넣은 재현 결과는 다음과 같다. 실제 모델 생성 실험이 아니다.
+
+| 제공 출력/동작 | 수정 전 | 수정 후 |
+|---|---|---|
+| 경찰에 **ya** 전화했나요? | ACCEPTED | `mixed_script:ya` |
+| 죄송한데 **aquí** 영어 하시는 분 있어요? | ACCEPTED | `mixed_script:aquí` |
+| 경찰에 **already** 전화했나요? | ACCEPTED | `mixed_script:already` |
+| 여기 **Anyone aquí**가 영어를 말합니까? | ACCEPTED | `mixed_script:anyone`, `mixed_script:aquí` |
+| 주실 수 있나요 → 드릴 수 있나요 | 다듬기 guard 통과 | `polish_transfer_changed`, 초안 유지 |
+| U턴 / GPS / USB / B2 / 5 m | ACCEPTED | ACCEPTED |
+| Seongsan으로 가세요 | 한글/로마자 비율로 거절 | 허용된 고유명사를 제외해 ACCEPTED |
+
+추가 회귀에서 원문 `shuttle` 복사를 차단한다. `기름 냄새가 나는 것 같아요`, `소리가 나는데요`, `돈을 내 주세요`, `내 드릴게요`, `내일`, `내부`, `우리나라`, 인용문은 보존한다. 추가로 `내 볼게요/내 주려고/내 줍니다`, 따옴표 뒤 동사 `나는`, `우리말/우리은행`을 훼손하지 않도록 검사했다. 미등록 문장 첫머리 고유명사는 보수적으로 거절될 수 있고, 대명사 정규화도 모든 문장의 구문 분석을 대신하지 않는다.
+
+최종 로컬 검증: **1,377 tests passed**, 주행 시나리오 통과(`run/verify-d2bad2a58c/report.json`). 세 프로필 각각 토큰 예산 **932건 통과**, 4B Q4·Q8 최대 2,706/4,096, 8B Q4 최대 2,710/4,096. 정확한 GGUF template과 고정 tokenizer를 사용했으며 전체 모델 가중치는 받지 않았다. Bash 문법·PowerShell 프로필 선택 검사도 통과했다.
+
+실제 8B/Q8 생성 품질, thinking 비노출, GPU 적재·지연과 전체 출력 사람 검수는 DLPC 실행 후 확인해야 한다. 전달받은 컨테이너 사설 IP만으로 외부 SSH 접속을 확인하지 못했다. [guide.md 7.3](guide.md#73-세-프로필-비교dlpc)에 세 프로필의 동일 개발 평가 명령과 로그 보존을 정리했다. 프롬프트·예시·평가 파일은 이번 단계에서 바꾸지 않았고, 잠긴 최종셋의 모델 평가·튜닝도 수행하지 않았다.
+
+변경 파일(`roadmate-ai/` 기준):
+
+- 서버·검사: `app.py`, `config.py`, `engine.py`, `inference.py`, `runtime_identity.py`, `prompting.py`, `validation.py`
+- 평가: `eval/evaluate.py`, `eval/release_gate.py`
+- 모델·용어: `models/manifest.json`, `models/manifest.qwen3-4b-q8.json`, `models/manifest.qwen3-8b.json`, `packs/glossary.json`
+- 실행: `scripts/_common.ps1`, `scripts/check_env.py`, `scripts/check_prompt_budget.py`, `scripts/download_model.py`, `scripts/run.sh`, `scripts/smoke.py`
+- 학습 도구의 프로필 일치·보호: `train/convert_adapter.py`, `train/review_data.py`
+- 테스트: `tests/test_contract.py`, `tests/test_evaluation.py`, `tests/test_output_validation.py`, `tests/test_polish.py`, `tests/test_prompting.py`, `tests/test_runtime_identity.py`, `tests/test_korean_normalization.py`, `tests/test_model_profiles.py`
+- 설정·문서: `.env.example`, `README.md`, `docs/guide.md`, `docs/model_comparison.md`, `docs/mvp_acceptance.md`, `docs/review_followup.md`

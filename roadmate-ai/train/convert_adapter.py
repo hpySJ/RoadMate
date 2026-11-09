@@ -15,6 +15,8 @@ from pathlib import Path
 from huggingface_hub import snapshot_download
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from config import model_profile  # noqa: E402
 MANIFEST = ROOT / "models" / "manifest.json"
 BASE_BUNDLE = "roadmate-ko-en-q4-v1"
 
@@ -32,6 +34,8 @@ def save(m: dict):
 
 
 def main():
+    if model_profile() != "4b-q4":
+        sys.exit("adapter conversion/registration requires MODEL_PROFILE=4b-q4; comparison profiles are base-model only")
     ap = argparse.ArgumentParser()
     ap.add_argument("--adapter", default=str(ROOT / "train" / "runs" / "lora-v1" / "adapter"))
     ap.add_argument("--out", default=str(ROOT / "models" / "adapters" / "roadmate-lora-v1-f16.gguf"))

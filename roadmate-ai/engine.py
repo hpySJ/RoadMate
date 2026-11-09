@@ -9,7 +9,7 @@ from pathlib import Path
 
 import prompting as P
 from inference import ModelBadOutput, ModelError, ModelTimeout, ModelTruncated, ModelUnavailable
-from validation import add_meridiem, looks_like_other_language, neg_level, validate_destination, validate_translation
+from validation import add_meridiem, latin_tokens, looks_like_other_language, neg_level, validate_destination, validate_translation
 
 ROOT = Path(__file__).resolve().parent
 MIN_RETRY_S = 1.5
@@ -52,7 +52,7 @@ REPAIR_HINT = {
     "direction_missing": "Keep left/right exactly.",
     "direction_mismatch": "Keep left/right exactly.",
     "mixed_output": "Fill either translated_text or clarification_question, not both.",
-    "mixed_script": "Do not mix English letters into Korean words. Write each word fully in Hangul.",
+    "mixed_script": "Write Korean words fully in Hangul. Remove unexpected Latin words or fragments; keep only permitted source words, units and acronyms.",
 }
 
 
@@ -82,9 +82,9 @@ def translation_repair(messages: list[dict], issues: list[str]) -> list[dict]:
         hints.append("Preserve the A-or-B choice as alternatives in Korean, such as '...인가요, 아니면 ...인가요?'. "
                      "Do not turn an option into a negation or add negation absent from the utterance.")
     if "mixed_script" in kinds and payload["target_locale"] == "ko-KR":
-        fragments = {i.partition(":")[2].lower() for i in issues if i.startswith("mixed_script:")
-                     and re.fullmatch(r"[A-Za-z]{2,}", i.partition(":")[2])}
-        words = list(dict.fromkeys(w for w in re.findall(rf"[{P.LATIN}]+(?:['’-][{P.LATIN}]+)*", source)
+        fragments = {P.fold(i.partition(":")[2]).lower() for i in issues if i.startswith("mixed_script:")
+                     and latin_tokens(i.partition(":")[2]) == [i.partition(":")[2]]}
+        words = list(dict.fromkeys(w for w in latin_tokens(source)
                                    if any(f in P.fold(w).lower() for f in fragments)))
         if words:
             hints.append("Translate these source words into complete natural Korean words written in Hangul, "
@@ -128,6 +128,53 @@ def _with_meridiem(out, req):
 def _norm(s: str) -> str:
     s = P.fold(unicodedata.normalize("NFKC", s).lower())
     return re.sub(r"[\s\-_'’.,()·]", "", s)
+
+
+def _normalize_korean_pronouns(out, req):
+    if (req.source_locale not in ("en-US", "es-US", "es-MX") or req.target_locale != "ko-KR"
+            or not isinstance(out, dict) or out.get("status") != "ok"
+            or not isinstance(out.get("translated_text"), str)):
+        return out
+    # 인용은 닫는 따옴표가 빠졌어도 끝까지 보존한다.
+    quoted = r'''("(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|“[^”]*(?:”|$)|‘[^’]*(?:’|$)|「[^」]*(?:」|$)|『[^』]*(?:』|$)|«[^»]*(?:»|$))'''
+    replacements = {"나는": "저는", "내가": "제가", "나를": "저를", "나의": "제",
+                    "우리는": "저희는", "우리가": "저희가", "우리를": "저희를",
+                    "그들께": "그분들께", "그들에게": "그분들에게"}
+
+    def rewrite(text, context):
+        def pronoun(match):
+            word = match.group()
+            # shortcut: 나는/우리는의 동사 용법은 구문 분석 없이 판별할 수 없어 절 시작에서만 바꾼다.
+            if word in ("나는", "우리는"):
+                prefix = (context + text[:match.start()]).rstrip(" \t")
+                if prefix and prefix[-1] not in ".!?。！？,;:\n":
+                    return word
+                if re.match(r"\s*(?:것|게|거|걸|건|듯|동안|중)(?![가-힣])", text[match.end():]):
+                    return word
+            return replacements[word]
+
+        text = re.sub(r"(?<!\w)(?:나는|내가|나를|나의|우리는|우리가|우리를|그들께|그들에게)(?!\w)", pronoun, text)
+        def possessive(match):
+            before = re.search(r"([가-힣]+)\s*$", context + text[:match.start()])
+            after = re.match(r"\s+([가-힣]+)", text[match.end():]).group(1)
+            # 목적어 뒤의 내, 활용 어미·보조동사 앞의 내는 '내다'일 수 있어 보존한다.
+            if (before and before[1].endswith(("을", "를"))
+                    or after.endswith(("요", "니다", "다", "고", "면", "며", "게", "던", "도록"))
+                    or re.match(r"주(?:세|시|실|셔|셨|십|고|지|면|는|겠)|줄|줘|줬|줍|드(?:리|릴|려|렸)|볼|봐|봤|본|놓|보내", after)):
+                return match.group()
+            return "제"
+
+        text = re.sub(r"(?<!\w)내(?=\s+[가-힣])", possessive, text)
+        # 붙여 쓴 우리말·상호 등은 소유 표현으로 단정하지 않는다.
+        text = re.sub(r"(?<!\w)우리(?=\s+[가-힣])", "저희", text)
+        return text
+
+    original = out["translated_text"]
+    result, offset = [], 0
+    for i, part in enumerate(re.split(quoted, original)):
+        result.append(part if i % 2 else rewrite(part, original[:offset]))
+        offset += len(part)
+    return {**out, "translated_text": "".join(result)}
 
 
 def _polish_reported(text: str) -> bool:
@@ -186,6 +233,11 @@ def _polish_changes(source: str, locale: str, draft: str, polished: str) -> list
     issues = []
     if _polish_intent(draft, source_request) != _polish_intent(polished, source_request):
         issues.append("polish_intent_changed")
+    giving = [{name for name, pattern in (("honorific", r"주(?:시|실|신|셔|셨|세|십)"),
+                                         ("humble", r"드(?:리|릴|린|려|렸)")) if re.search(pattern, text)}
+              for text in (draft, polished)]
+    if giving[0] and giving[1] and giving[0] != giving[1]:
+        issues.append("polish_transfer_changed")
     before, after = _polish_people(draft), _polish_people(polished)
     for role in before:
         omitted_speaker = not after[role] and set(before[role]) <= {"speaker"}
@@ -304,6 +356,7 @@ class Engine:
         try:
             out = _with_meridiem(await self.client.chat_json(messages, P.TRANSLATE_SCHEMA, P.TRANSLATE_MAX_TOKENS,
                                                              P.TRANSLATE_SAMPLING, deadline - time.monotonic()), req)
+            out = _normalize_korean_pronouns(out, req)
             issues = validate_translation(out, req.text, req.source_locale, req.target_locale, structural)
         except (ModelBadOutput, ModelTruncated) as e:
             issues = [e.code]
@@ -321,6 +374,7 @@ class Engine:
         try:
             out = _with_meridiem(await self.client.chat_json(repair, P.TRANSLATE_SCHEMA, P.TRANSLATE_MAX_TOKENS,
                                                              P.RETRY_SAMPLING, deadline - time.monotonic()), req)
+            out = _normalize_korean_pronouns(out, req)
         except (ModelBadOutput, ModelTruncated) as e:
             self._log_attempt(req, 2, [e.code], None)
             raise ValidationFailed(issues + [e.code]) from e
@@ -355,6 +409,7 @@ class Engine:
             return out
         try:
             cand = _with_meridiem({**out, "translated_text": text.strip()}, req)
+            cand = _normalize_korean_pronouns(cand, req)
         except ModelBadOutput:
             return out
         issues = validate_translation(cand, req.text, req.source_locale, req.target_locale)
