@@ -2,7 +2,6 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -10,33 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "train"))
 
 import prepare_data  # noqa: E402
-import review_data  # noqa: E402
 import train_qlora  # noqa: E402
 import data_boundary as B  # noqa: E402
-
-
-def row(**kw):
-    r = {"id": "pool-0001", "group_id": "g1", "source_locale": "en-US", "target_locale": "ko-KR",
-         "scenario": "general", "text": "Can you write down your phone number for me?",
-         "draft": "전화번호를 제가 써 주세요.", "fixed": "", "approve": "", "notes": ""}
-    r.update(kw)
-    return r
-
-
-def test_import_uses_fixed_text_and_only_approved_rows():
-    rows = [row(id="a", approve="y", fixed="전화번호 좀 적어 주시겠어요?"),
-            row(id="b", approve="", fixed="안 쓰는 줄"),
-            row(id="c", approve="ㅇ")]
-    recs, errors = review_data.to_records(rows, "tester")
-    assert not errors and len(recs) == 2
-    assert recs[0]["output"]["translated_text"] == "전화번호 좀 적어 주시겠어요?" and recs[0]["source"] == "human_fixed"
-    assert recs[1]["source"] == "model_draft_reviewed" and recs[1]["review_status"] == "approved"
-    assert all(prepare_data.check(r) == [] for r in recs)  # 학습 준비 단계 검사와 같은 형식
-
-
-def test_import_rejects_approved_rows_that_break_checks():
-    recs, errors = review_data.to_records([row(approve="y", fixed="전화번호를 적지 마세요.")], "tester")
-    assert not recs and "negation_mismatch" in errors[0]
 
 
 def test_pool_groups_are_stable_and_parallel_templates_share_group():
@@ -67,22 +41,6 @@ def test_pool_has_no_eval_overlap():
     pool = [json.loads(x) for x in (ROOT / "train" / "sources" / "pool.jsonl").read_text(encoding="utf-8").splitlines()]
     assert pool and not {B.fingerprint(p["text"], p["source_locale"]) for p in pool} & B.protected_templates(ROOT)
     assert len({p["id"] for p in pool}) == len(pool)
-
-
-def test_seed_variants_share_pool_template_groups():
-    from sources import make_pool
-    seed = prepare_data.load_jsonl(ROOT / "train" / "data" / "seed.draft.jsonl")
-    expected = {
-        "Just 10,000 won of diesel, please.": "t_amount_fuel",
-        "It's a gasoline car. Please don't put diesel in it.": "t_not_fuel",
-        "Can I park here until 8 p.m.?": "t_en_park_until",
-        "내일 오전 10시까지 반납해 주세요.": "t_return_time",
-    }
-    pool_groups = {g for templates in (make_pool.EN_T, make_pool.KO_T) for g, _, _ in make_pool.expand(templates)}
-    for text, group in expected.items():
-        rec = next(r for r in seed if r["text"] == text)
-        assert rec["group_id"] == group and group in pool_groups
-    assert all(r["review_status"] == "draft" for r in seed)
 
 
 @pytest.mark.parametrize("eval_name", ["general_es.jsonl", "naturalness.dev.jsonl", "test.locked.jsonl", "test.locked.v2.jsonl"])
@@ -122,7 +80,10 @@ def test_generation_boundaries_and_prepare_nonlocked_boundaries(monkeypatch, tmp
 @pytest.mark.parametrize("case, message", [("draft", "no records"), ("few_shot", "leak:"),
                                            ("validation_only", "train split is empty")])
 def test_prepare_rejects_unusable_training_data(tmp_path, case, message):
-    rec = prepare_data.load_jsonl(ROOT / "train" / "data" / "seed.draft.jsonl")[0]
+    rec = {"group_id": "synthetic-draft", "task": "translate", "source_locale": "en-US", "target_locale": "ko-KR",
+           "scenario": "general", "text": "The orange folder belongs in the glove compartment.",
+           "review_status": "draft", "output": {"status": "ok", "translated_text": "주황색 서류철은 글러브 박스에 넣어야 해요.",
+                                                  "clarification_question": None}}
     if case != "draft":
         rec["review_status"] = "approved"
     if case == "few_shot":
@@ -141,17 +102,6 @@ def test_prepare_rejects_unusable_training_data(tmp_path, case, message):
                              *(["--allow-draft"] if case == "validation_only" else [])], capture_output=True)
     assert result.returncode != 0 and message.encode() in result.stdout + result.stderr
     assert not output.exists()
-
-
-def test_draft_does_not_overwrite_human_review(monkeypatch, tmp_path):
-    pool = tmp_path / "pool.jsonl"
-    pool.write_text("", encoding="utf-8")
-    review = tmp_path / "batch1.review.csv"
-    review.write_text("human review already saved", encoding="utf-8")
-    monkeypatch.setattr(review_data, "DRAFTS", tmp_path)
-    with pytest.raises(FileExistsError):
-        review_data.draft(SimpleNamespace(pool=pool, limit=0, name="batch1", url="http://127.0.0.1:1"))
-    assert review.read_text(encoding="utf-8") == "human review already saved"
 
 
 @pytest.mark.parametrize("case, message", [("missing", "run train/prepare_data.py first"),

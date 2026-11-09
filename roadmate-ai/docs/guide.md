@@ -303,7 +303,7 @@ MODEL_PROFILE=8b-q4 .venv/bin/python eval/evaluate.py --file eval/general.jsonl 
 
 ## 8. 8B LoRA 증류 준비
 
-학습 정답은 고정 Qwen 선생 모델의 **수정하지 않은 출력**만 사용한다. 사람·Claude·Codex 번역, 기존 seed·사람이 고친 review_data 산출물은 본학습에 넣지 않는다. AI 검토는 참고 판정이며 사람 검수로 표시하지 않는다.
+학습 정답은 고정 Qwen 선생 모델의 **수정하지 않은 출력**만 사용한다. 사람·Claude·Codex 번역이나 사람이 고친 정답은 본학습에 넣지 않는다. AI 검토는 참고 판정이며 사람 검수로 표시하지 않는다.
 
 ### 8.1 설치·용량
 
@@ -450,7 +450,7 @@ GGUF 어댑터와 .gguf.json 출처 파일을 만들며 기본 manifest를 수�
 
 ## 11. 검증 상태
 
-현재 버전은 14B 토크나이저 테스트를 포함한 `python scripts/verify_mvp.py --local`로 API·번역 검증·학습 경계·STT 형식 비교/학습 사본·런타임 해시·GPU 적재 확인·Windows 시작 경로·개인화 회귀 1,797건과 주행 시나리오를 통과했다. 결과는 `run/verify-a6c01a83b9/`에 기록한다. STT 학습 사본·해시·GPU 테스트는 합성 자료·응답으로, Windows 시작 테스트는 합성 실행 명령을 연결한 실제 PowerShell 스크립트로 확인했다. 14B 검사에는 8.3절의 `SOURCE_TOKENIZER_DIR` 설정을 사용했으며, 설정이 없으면 해당 4건은 건너뛴다. 이 명령은 실제 모델 번역이나 SDK 기기 시험이 아니다.
+현재 버전은 14B 토크나이저 테스트를 포함한 `python scripts/verify_mvp.py --local`로 API·번역 검증·학습 경계·STT 형식 비교/학습 사본·런타임 해시·GPU 적재 확인·Windows 시작 경로·개인화 회귀 1,793건과 주행 시나리오를 통과했다. 결과는 `run/verify-29c2caaa4b/`에 기록한다. STT 학습 사본·해시·GPU 테스트는 합성 자료·응답으로, Windows 시작 테스트는 합성 실행 명령을 연결한 실제 PowerShell 스크립트로 확인했다. 14B 검사에는 8.3절의 `SOURCE_TOKENIZER_DIR` 설정을 사용했으며, 설정이 없으면 해당 4건은 건너뛴다. 이 명령은 실제 모델 번역이나 SDK 기기 시험이 아니다.
 
 실제 모델 품질의 완료 기준과 실행 순서는 [mvp_acceptance.md](mvp_acceptance.md)에 있다. 평가기는 mock을 기본 거절하고, 실제 서버의 코드·팩 해시와 실행 설정을 기록한다. 자연스러움과 의미 보존은 review.csv에 별도로 검토해야 한다. 기존 버전의 모델 평가 수치를 이번 버전의 성적으로 쓰지 않는다.
 

@@ -363,6 +363,7 @@ class Pipeline:
                       "--url", f"http://127.0.0.1:{env.get('AI_PORT', '8000')}"], "generate", env)
         draft = self.out / "distill.draft.jsonl"
         canonical = self.root / "train" / "data" / "distill.draft.jsonl"
+        canonical.parent.mkdir(parents=True, exist_ok=True)
         if canonical.exists():
             shutil.copy2(canonical, self.out / "previous-distill.draft.jsonl")
         shutil.copy2(draft, canonical)

@@ -309,7 +309,6 @@ def test_cleanup_log_copy_error_does_not_leave_live_owned_process(pipeline, monk
 def test_generate_propagates_selected_teacher(pipeline, monkeypatch, teacher):
     pipeline.teacher = teacher
     calls = []
-    (pipeline.root / "train/data").mkdir(parents=True)
     (pipeline.out / "distill.draft.jsonl").write_text("synthetic draft")
     @contextmanager
     def server(profile, arm):
@@ -319,6 +318,7 @@ def test_generate_propagates_selected_teacher(pipeline, monkeypatch, teacher):
     monkeypatch.setattr(pipeline, "run", lambda command, name, env: calls.append((name, command)))
     monkeypatch.setattr(pipeline, "archive_reviews", lambda files: None)
     pipeline.generate()
+    assert (pipeline.root / "train/data/distill.draft.jsonl").read_text() == "synthetic draft"
     assert calls[0] == ("server", teacher, "teacher")
     command = calls[1][1]
     assert command[command.index("--teacher") + 1] == teacher

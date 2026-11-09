@@ -140,6 +140,6 @@ S3은 공식 Kotlin·Java 예제의 좌표 순서가 서로 달라 생기는 연
 - 평가: `eval/evaluate.py`, `eval/release_gate.py`
 - 모델·용어: `models/manifest.json`, `models/manifest.qwen3-4b-q8.json`, `models/manifest.qwen3-8b.json`, `packs/glossary.json`
 - 실행: `scripts/_common.ps1`, `scripts/check_env.py`, `scripts/check_prompt_budget.py`, `scripts/download_model.py`, `scripts/run.sh`, `scripts/smoke.py`
-- 학습 도구의 프로필 일치·보호: `train/convert_adapter.py`, `train/review_data.py`
+- 학습 도구의 프로필 일치·보호: `train/convert_adapter.py`
 - 테스트: `tests/test_contract.py`, `tests/test_evaluation.py`, `tests/test_output_validation.py`, `tests/test_polish.py`, `tests/test_prompting.py`, `tests/test_runtime_identity.py`, `tests/test_korean_normalization.py`, `tests/test_model_profiles.py`
 - 설정·문서: `.env.example`, `README.md`, `docs/guide.md`, `docs/model_comparison.md`, `docs/mvp_acceptance.md`, `docs/review_followup.md`

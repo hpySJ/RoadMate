@@ -152,7 +152,7 @@ def main():
     norm = lambda s: "".join(s.lower().split())  # noqa: E731
     blocked = protected_templates(ROOT)
     seen = set()
-    for path in (ROOT / "train" / "data").glob("*.jsonl"):  # 이미 학습 자료(시드·승인분)에 있는 문장도 뺀다
+    for path in (ROOT / "train" / "data").glob("*.jsonl"):  # 이미 생성한 학습 자료에 있는 문장도 뺀다
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 seen.add(norm(json.loads(line)["text"]))
