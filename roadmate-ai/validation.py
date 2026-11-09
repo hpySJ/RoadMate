@@ -637,7 +637,7 @@ NEG = {
 
 def neg_level(text: str, locale: str) -> int:
     hard, soft = NEG[LANG_KEY[locale]]
-    text = fold(text)
+    text = fold(text).replace("’", "'")
     return 2 if hard.search(text) else 1 if soft.search(text) else 0
 
 
@@ -826,8 +826,8 @@ def validate_translation(out: dict, source: str, src_locale: str, tgt_locale: st
         # 검증: "페anut"처럼 한글에 붙은 영문 조각이 원문 단어가 아니면 깨진 출력(U턴·B동·GPS가처럼 원문·약어는 허용)
         src_words = {w.lower() for w in re.findall(r"[A-Za-z]+", source)}
         frags = re.findall(r"(?<=[가-힣])[A-Za-z]{2,}|(?<![\dA-Za-z])[A-Za-z]{2,}(?=[가-힣])", tt)
-        if any(f.lower() not in src_words | UNIT_ABBR and not f.isupper() for f in frags):
-            issues.append("mixed_script")
+        broken = dict.fromkeys(f.lower() for f in frags if f.lower() not in src_words | UNIT_ABBR and not f.isupper())
+        issues += [f"mixed_script:{frag}" for frag in broken]
     if tt.strip().lower() == source.strip().lower():
         issues.append("untranslated")
     source_nums, target_nums = extract_numbers(source, src_locale), extract_numbers(tt, tgt_locale)

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import prompting as P
 from inference import ModelBadOutput, ModelError, ModelTimeout, ModelTruncated, ModelUnavailable
-from validation import add_meridiem, looks_like_other_language, validate_destination, validate_translation
+from validation import add_meridiem, looks_like_other_language, neg_level, validate_destination, validate_translation
 
 ROOT = Path(__file__).resolve().parent
 MIN_RETRY_S = 1.5
@@ -73,6 +73,22 @@ def translation_repair(messages: list[dict], issues: list[str]) -> list[dict]:
     if replaced_number:
         hints.append("Correct the mismatched numbers and times using the utterance and the exact supplied "
                      "equivalents, including their units and a.m./p.m. Preserve every other source value.")
+    source = payload["utterance"]
+    if ("negation_mismatch" in kinds and payload["source_locale"] == "en-US"
+            and payload["target_locale"] == "ko-KR" and neg_level(source, "en-US") == 0
+            and re.search(r"\bor\b", source, re.I)
+            and (re.search(r"[?？]", source) or re.match(
+                r"\s*(?:do|does|did|is|are|was|were|can|could|will|would|should|may|which|who|what)\b", source, re.I))):
+        hints.append("Preserve the A-or-B choice as alternatives in Korean, such as '...인가요, 아니면 ...인가요?'. "
+                     "Do not turn an option into a negation or add negation absent from the utterance.")
+    if "mixed_script" in kinds and payload["target_locale"] == "ko-KR":
+        fragments = {i.partition(":")[2].lower() for i in issues if i.startswith("mixed_script:")
+                     and re.fullmatch(r"[A-Za-z]{2,}", i.partition(":")[2])}
+        words = list(dict.fromkeys(w for w in re.findall(rf"[{P.LATIN}]+(?:['’-][{P.LATIN}]+)*", source)
+                                   if any(f in P.fold(w).lower() for f in fragments)))
+        if words:
+            hints.append("Translate these source words into complete natural Korean words written in Hangul, "
+                         "not partly transliterated Latin fragments: " + json.dumps(words, ensure_ascii=False) + ".")
     payload["repair"] = (
         "Translate the utterance again from " + P.LANG_NAME[payload["source_locale"]]
         + " into " + P.LANG_NAME[payload["target_locale"]] + ". The previous attempt failed: "

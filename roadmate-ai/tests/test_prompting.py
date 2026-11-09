@@ -95,6 +95,33 @@ def test_gas_alone_not_mapped_to_fuel():
     assert P.select_glossary("Fill it with gas", "en-US", "ko-KR") == {}
 
 
+@pytest.mark.parametrize("source,target,text,expected", [
+    ("ko-KR", "en-US", "셀프 주유인가요, 직원 주유인가요?", {"셀프": "self-service", "직원 주유": "full-service"}),
+    ("ko-KR", "es-US", "셀프 주유인가요, 직원 주유인가요?", {"셀프": "autoservicio", "직원 주유": "servicio completo"}),
+    ("ko-KR", "es-MX", "셀프인가요?", {"셀프": "autoservicio"}),
+    ("en-US", "ko-KR", "Do you offer self-service or full service?", {"self-service": "셀프 주유", "full service": "직원 주유"}),
+    ("en-US", "ko-KR", "Do you offer self service or full-service?", {"self service": "셀프 주유", "full-service": "직원 주유"}),
+    ("es-US", "ko-KR", "¿Es de autoservicio o servicio completo?", {"autoservicio": "셀프 주유", "servicio completo": "직원 주유"}),
+    ("es-MX", "ko-KR", "¿Es de autoservicio o servicio completo?", {"autoservicio": "셀프 주유", "servicio completo": "직원 주유"}),
+])
+def test_service_mode_glossary(source, target, text, expected):
+    assert P.select_glossary(text, source, target) == expected
+
+
+def test_service_mode_preserves_station_and_does_not_infer_fuel():
+    assert P.select_glossary("셀프 주유소예요.", "ko-KR", "en-US") == {
+        "셀프": "self-service", "주유소": "gas station"}
+    assert P.select_glossary("self service gas station", "en-US", "ko-KR") == {
+        "self service": "셀프 주유", "gas station": "주유소"}
+    assert P.match_concepts("autoservicio", "es-US", {"fuel"}) == {}
+    assert P.match_concepts("autogás", "es-US", {"fuel"}) == {"fuel_lpg": "autogás"}
+
+
+@pytest.mark.parametrize("text", ["self", "full", "service", "selfish", "fuller service"])
+def test_generic_english_words_do_not_choose_service_mode(text):
+    assert P.select_glossary(text, "en-US", "ko-KR") == {}
+
+
 def test_glossary_spacing_and_place_names():
     assert P.select_glossary("자차 보험에 가입하세요.", "ko-KR", "en-US") == {"자차 보험": "collision damage waiver"}
     assert P.select_glossary("성산일출봉까지 한 시간 걸려요.", "ko-KR", "en-US") == {"성산일출봉": "Seongsan Ilchulbong"}
@@ -252,6 +279,17 @@ def test_examples_pass_own_validators():
         i = ex["input"]
         assert validate_translation(ex["output"], i["utterance"], i["source_locale"], i["target_locale"]) == []
         assert P.select_glossary(i["utterance"], i["source_locale"], i["target_locale"]) == i["glossary"]
+
+
+def test_alternative_question_example_keeps_both_choices_and_listener_role():
+    source = "Do you want the blue folder or the green folder?"
+    shots = [e for e in P.examples("translate") if e["input"]["utterance"] == source]
+    assert len(shots) == 1
+    example = shots[0]
+    assert example["input"]["source_locale"] == "en-US"
+    assert example["input"]["target_locale"] == "ko-KR"
+    assert example["output"]["translated_text"] == "파란색 서류철을 원하세요, 아니면 초록색 서류철을 원하세요?"
+    assert example["output"]["status"] == "ok" and example["output"]["clarification_question"] is None
 
 
 def test_spanish_glossary_hints():

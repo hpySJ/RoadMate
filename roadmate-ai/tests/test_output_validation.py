@@ -168,7 +168,7 @@ def test_valid_pairs(src, sl, tgt, tl):
      "fuel_polarity_mismatch:fuel_diesel"),
     ("이건 경유가 아닙니다.", "ko-KR", "This is diesel.", "en-US", "negation_mismatch"),
     ("Could you tell the staff that my wife is allergic to peanuts?", "en-US", "제 아내가 페anut 알레르기가 있다고 알려 주세요.",
-     "ko-KR", "mixed_script"),
+     "ko-KR", "mixed_script:anut"),
     ("Could you come back at a quarter past four?", "en-US", "4시 30분에 다시 와 주시겠어요?", "ko-KR", "number_added:30"),
     ("Please don't park here.", "en-US", "여기 주차해도 돼요.", "ko-KR", "negation_mismatch"),
     ("회원이 아니면 여기에 서세요.", "ko-KR", "If you are a member, stand here.", "en-US", "negation_mismatch"),
@@ -186,6 +186,53 @@ def test_valid_pairs(src, sl, tgt, tl):
 ])
 def test_invalid_pairs(src, sl, tgt, tl, issue):
     assert issue in v(src, sl, tgt, tl)
+
+
+@pytest.mark.parametrize("source,target,fragments", [
+    ("Are these peanuts?", "이것은 페anut인가요?", ["anut"]),
+    ("Are these peanuts?", "이것은 Anut인가요?", ["anut"]),
+    ("Are these peanuts and walnuts?", "페anut와 월nut인가요? 페Anut가 맞나요?", ["anut", "nut"]),
+    ("Is this a nut?", "이것은 페anut인가요?", ["anut"]),
+    ("Say anut.", "anut라고 말해 주세요.", []),
+    ("Are these Peanuts?", "이것은 peanuts인가요?", []),
+    ("Go to Jeju.", "Jeju로 가 주세요.", []),
+    ("Check the display.", "GPS가 km로 표시되는지 확인해 주세요.", []),
+    ("Go to building B.", "B동으로 가 주세요.", []),
+])
+def test_mixed_script_reports_only_unique_lowercase_fragments(source, target, fragments):
+    issues = v(source, "en-US", target, "ko-KR")
+    assert [issue for issue in issues if issue.startswith("mixed_script")] == [
+        f"mixed_script:{fragment}" for fragment in fragments]
+
+
+@pytest.mark.parametrize("source,target", [
+    ("Is it A or B?", "A인가요 아니면 B인가요?"),
+    ("Are these peanuts or walnuts?", "땅콩인가요 아니면 호두인가요?"),
+    ("Is this self-service or full-service?", "셀프인가요 아니면 직원이 넣어 주나요?"),
+])
+def test_unpunctuated_choices_keep_their_meaning(source, target):
+    assert v(source, "en-US", target, "ko-KR") == []
+    assert v(target, "ko-KR", source, "en-US") == []
+
+
+@pytest.mark.parametrize("apostrophe", ["'", "’"])
+def test_english_apostrophe_style_preserves_negation_in_both_directions(apostrophe):
+    source = f"Doesn{apostrophe}t the engine start?"
+    negative, positive = "엔진 시동이 안 걸리나요?", "엔진 시동이 걸리나요?"
+    assert v(source, "en-US", negative, "ko-KR") == []
+    assert v(negative, "ko-KR", source, "en-US") == []
+    assert "negation_mismatch" in v(source, "en-US", positive, "ko-KR")
+    assert "negation_mismatch" in v(positive, "ko-KR", source, "en-US")
+
+
+@pytest.mark.parametrize("apostrophe", ["'", "’"])
+def test_positive_contraction_is_not_negation(apostrophe):
+    source = f"The driver{apostrophe}s ready."
+    positive, negative = "운전자가 준비됐어요.", "운전자가 준비되지 않았어요."
+    assert v(source, "en-US", positive, "ko-KR") == []
+    assert v(positive, "ko-KR", source, "en-US") == []
+    assert "negation_mismatch" in v(source, "en-US", negative, "ko-KR")
+    assert "negation_mismatch" in v(negative, "ko-KR", source, "en-US")
 
 
 @pytest.mark.parametrize("src,tgt,fixed", [

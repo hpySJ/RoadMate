@@ -2,7 +2,9 @@
 
 우리 앱은 Pleos Connect SDK 다섯 가지(STT, TTS, 차량 정보, NaviHelper, FusedLocation)를 연결할 계획입니다. 공모전은 SDK 개수보다 핵심 기능과 사용 경험에 맞는 활용을 평가합니다. 이 문서는 앱 담당의 Kotlin 어댑터와 AI 파트 사이의 구현 계약입니다. Python 규칙과 API가 있어도 실제 SDK 연결이 완료된 것은 아닙니다. [공식 심사 기준](https://appdevchallenge.auto-hmg.io/guide/judging-awards)
 
-이름과 동작은 Pleos 공식 문서(2026년 11월 8일 확인) 기준입니다. 10월 19일 릴리스 노트는 Vehicle 2.3.1, NaviHelper 3.0.5, STT·TTS 3.3.1, FusedLocation 1.1.2를 나열하지만, Vehicle 개요는 SDK 2.3.2·Service 2.3.21 기준입니다. 실제 설치할 SDK·서비스 버전을 기록하고 해당 API 시그니처와 권한을 확인해야 합니다. 저장소에는 Kotlin SDK 어댑터 구현이 없으며 에뮬레이터 연동도 확인하지 않았습니다. 초기화 성공·권한·지원 여부를 확인한 다음 이벤트를 전달합니다. [SDK 릴리스 노트](https://document.pleos.ai/en/docs/pleos-only/release-note/sdk-release-note) · [Vehicle 개요](https://document.pleos.ai/en/docs/pleos-only/connect-sdk-pleos/Vehicle/intro)
+공식 문서와 구현 증거를 구분합니다. 10월 19일 릴리스 노트는 Vehicle 2.3.1, NaviHelper 3.0.5, STT·TTS 3.3.1, FusedLocation 1.1.2를 나열하지만, Vehicle 개요는 SDK 2.3.2·Service 2.3.21 기준입니다. 실제 설치 SDK·서비스의 버전·권한·지원 여부를 확인한 다음 이벤트를 전달합니다. [SDK 릴리스 노트](https://document.pleos.ai/en/docs/pleos-only/release-note/sdk-release-note) · [Vehicle 개요](https://document.pleos.ai/en/docs/pleos-only/connect-sdk-pleos/Vehicle/intro)
+
+2026년 11월 9일 팀 Android `895bb0801ee840f1cf4c83b1671752e35c002a7d`의 클론을 확인했습니다. 기어·방향지시등은 Pleos Vehicle 2.3.2, 속도는 Android `CarPropertyManager`에서 `VehiclePropertyIds.PERF_VEHICLE_SPEED`로 받으며 Kotlin 안내 규칙·TTS·음성 큐도 있습니다. 팀 README에는 기어·방향지시등·속도 표시·4개 언어 TTS의 에뮬레이터 확인 기록이 있습니다. 이번 검토에서 빌드·에뮬레이터를 재실행한 것은 아닙니다. STT 앱 의존성·호출, HTTP 통역 연결, `INTERNET` 권한은 아직 없습니다. [Android 검증 기록](https://github.com/roadmate-korea/roadmate-android/blob/895bb0801ee840f1cf4c83b1671752e35c002a7d/README.md#L101)
 
 ## 한눈에 보기
 
@@ -10,7 +12,7 @@
 |---|---|---|
 | SpeechToText | 정차 중 통역 버튼을 누르면 말을 받아 적음 | 최종 인식 문장 → `/internal/v1/translate`의 `text`. 인식에 쓴 locale → `source_locale` |
 | TextToSpeech | 번역문, 확인 질문, 주행 안내를 읽음 | `translated_text`는 `target_locale`로, `clarification_question`은 `source_locale`로 읽음 |
-| 차량 정보 | 방향지시등 연결 검증. 기어·속도 관측 API는 미확인 | `StopLock.update()`와 스냅샷의 `gear`·`speed`·`turn_signal`; 관측 경로 확보 전에는 의존 기능 차단 |
+| 차량 정보 | 기어·방향지시등은 Pleos Vehicle, 속도는 Android CarPropertyManager로 수신 구현 | `StopLock.update()`와 스냅샷의 `gear`·`speed`·`turn_signal`; 원본 정밀도·신선도 전달과 정차 잠금은 추가 구현 필요 |
 | NaviHelper | 회전 안내(TBT), 현재 도로 제한속도, 주의 지점, 목적지 설정 | 스냅샷의 `tbt`·`current_speed_limit`·`school_zone`, 목적지 후보 좌표로 경로 설정 |
 | FusedLocation | `addProximityAlert`로 스쿨존 진입·이탈 | 스냅샷의 `school_zone`(NaviHelper 주의 지점이 안 올 때) |
 
@@ -45,13 +47,13 @@
 
 ## 2. 정차 잠금(차량 정보)
 
-통역은 정차 중에만 씁니다. `guidance.py`의 `StopLock`이 판단하고, 앱은 기어나 속도 값이 들어올 때마다 `update()`를 부릅니다.
+통역은 정차 중에만 씁니다. `guidance.py`의 `StopLock`은 앱에 이식할 기준입니다. 앱은 기어나 속도 값이 들어올 때마다 판단을 갱신하고, 이벤트가 끊겨도 신선도 만료 시 잠기도록 확인해야 합니다. 이때 확인 타이머로 표본의 관측 시각을 갱신하지 않습니다.
 
-**기어·속도 관측 경로 확보가 구현 선행 조건입니다.** `GEAR_SELECTION`·`PERF_VEHICLE_SPEED`는 Android 속성 이름이며 Pleos 앱에 노출된다는 근거가 아닙니다. 10월 19일 릴리스 노트에는 `VehicleSpeedListener`와 `onSpeedUpdated`가 제거됐다고 적혀 있습니다. Vehicle 2.3.2의 `Brake`는 브레이크 페달·주차 브레이크 상태, `DrivingMode`는 주행 모드·크루즈 정보이므로 기어 `P`나 차속의 대체값으로 쓰지 않습니다. [제거된 속도 리스너](https://document.pleos.ai/en/docs/pleos-only/release-note/sdk-release-note) · [Vehicle 도메인 설명](https://document.pleos.ai/en/docs/pleos-only/connect-sdk-pleos/Vehicle/intro)
+**수신 경로는 확인됐지만 현재 Kotlin 잠금은 `error || gear != PARK`뿐입니다.** Pleos의 `VehicleSpeedListener` 제거가 Android CarPropertyManager 경로까지 없다는 뜻은 아닙니다. 팀이 구현한 기어·속도 경로를 사용하되, 아래 신선도와 정밀도 조건을 연결해야 합니다. `Brake`나 `DrivingMode`를 기어 P·실제 차속 대신 쓰지는 않습니다. [기어 수신](https://github.com/roadmate-korea/roadmate-android/blob/895bb0801ee840f1cf4c83b1671752e35c002a7d/app/src/main/java/com/roadmatekorea/android/vehicle/VehicleSignalSource.kt#L44) · [현재 잠금](https://github.com/roadmate-korea/roadmate-android/blob/895bb0801ee840f1cf4c83b1671752e35c002a7d/app/src/main/java/com/roadmatekorea/android/drive/VehicleStatus.kt#L18)
 
 | 기능 | 확인해야 할 입력 | 입력 미확인·미지원 시 |
 |---|---|---|
-| 정차 통역 | 실제 기어 `P`와 유효한 속도 관측 API·권한·단위 | 통역 버튼 비활성화. 주차 브레이크나 수동 체크로 우회하지 않음 |
+| 정차 통역 | 원본 m/s 속도, 기어 `P`, 각 관측의 유효성·시각·갱신 경로 | 계약을 충족하기 전 통역 버튼 비활성화. 주차 브레이크나 수동 체크로 우회하지 않음 |
 | 스쿨존 과속 경고 | 실제 속도와 해당 도로·구역의 제한값 | 속도 기반 경고 비활성화. 검증된 구역 정보가 있을 때 고정 진입 안내만 가능 |
 | 우회전 안내 | 실제 방향지시등과 경로상 TBT 방향·거리 | 필요한 값이 없으면 안내하지 않음 |
 | 스쿨존·비보호 좌회전 안내 | 검증된 구역·교차로와 경로의 대응 | 해당 동적 안내 비활성화. 임의 ID나 좌회전 TBT만으로 활성화하지 않음 |
@@ -62,6 +64,12 @@
 - STT 시작, 요청 전송, 번역 도착, TTS 직전에 다시 확인합니다. 그사이 P가 풀리면 백엔드가 `/internal/v1/cancel`을 호출하고 도착한 번역은 읽지 않습니다.
 - NaviHelper `onDrivingInfo`는 후보일 뿐입니다. 실제 전달 필드·단위·주기·유효성은 확인되지 않았으므로, 콜백 이름만으로 속도나 기어를 얻는다고 가정하지 않습니다. 필요한 값이 확인되지 않으면 위 표의 차단을 유지합니다.
 - 차량 좌표, 속도, 기어 값은 통역 API로 보내지 않습니다.
+
+### 현재 Android 신호와의 충돌
+
+- 기어는 리스너 등록 후 `getCurrentGearSelectionState`를 한 번만 부릅니다. 이후 새 기어 관측 없이 P가 유지되면 기준의 5초를 넘는 시점에 통역이 잠깁니다. 통역 화면에서 주기적으로 현재값을 읽는 방안을 우선 검토하되, 그 결과가 새로운 유효 관측인지 SDK 캐시인지 확인해야 합니다. 검증 없이 조회 완료 시각을 새 관측 시각으로 쓰면 안 됩니다. 재조회 실패·무응답·서비스 단절 때는 마지막 P를 근거로 통역을 계속 허용하지 않습니다. 다른 신선도 정의를 선택한다면 연결 생존 근거와 만료 동작을 합의하고 기준·fixture를 함께 바꿉니다.
+- 속도의 `HEARTBEAT_MS=1000`은 독립적인 주기 조회가 아니라 센서 콜백 안의 전송 제한입니다. 정수 km/h가 바뀌거나 마지막 송신 이후 1초가 지나야 전달하므로, 콜백이 끊기면 heartbeat도 없습니다. 같은 정수 km/h 안에서 0.1m/s 경계를 넘는 변화도 늦게 전달될 수 있습니다. 정차 판단에는 이 필터 이전의 원본 `Float metersPerSecond`와 유효성·관측 시각을 연결하고, 정수 km/h는 화면 표시용으로만 씁니다. [속도 전송 조건](https://github.com/roadmate-korea/roadmate-android/blob/895bb0801ee840f1cf4c83b1671752e35c002a7d/app/src/main/java/com/roadmatekorea/android/vehicle/VehicleSpeedSource.kt#L65)
+- `RawSignal`은 현재 기어·속도의 관측 시각을 전달하지 않습니다. 원천 시각을 앱의 단조 시계와 맞추고, 수신·조회 시각을 대신 쓸 경우 보장 범위를 검증해야 합니다. 속도 신선도 1.5초와 실제 콜백 간격·지터를 함께 측정합니다. 잠금 깜빡임을 감추려고 오래된 값을 계속 유효하게 처리하지 않습니다.
 
 ## 3. 주행 안내(NaviHelper·FusedLocation·방향지시등)
 
@@ -80,6 +88,18 @@ NaviHelper 이벤트 전달 여부는 내비 앱 구현에 따라 달라집니�
 
 규칙을 Kotlin으로 옮긴 뒤에는 `packs/fixtures/guidance_scenarios.json`의 시나리오로 결과가 같은지 확인합니다.
 
+### Android 895bb08과 맞춰야 할 정책
+
+| 항목 | 현재 Kotlin | AI 기준 `rules-v5` |
+|---|---|---|
+| 우회전 | 깜빡이 또는 150m 안의 TBT. 경로 없으면 깜빡이만으로도 가능 | 우측 깜빡이와 10~150m TBT 모두 필요 |
+| 우회전 간격 | 60초, 24시간 창에서 최대 2회 | 300초, `day_key` 날짜별 최대 2회 |
+| 좌회전 | 상세 안내 대상 운전자에게 일반 좌회전도 안내 | 같은 교차로의 비보호가 확인된 경우만 |
+| 스쿨존 과속 | 제한+2km/h 초과, 계속 초과 시 30초. 제한 이하로 감속한 뒤 재초과하면 마지막 경고부터 최소 20초 | 반올림한 km/h가 제한+3을 초과하는 관측이 2초 지속, 120초 간격 |
+| 횟수·쿨다운 기록 | 안내 생성 시 기록, 벽시계 사용 | 실제 TTS 완료 시 기록, 단조 시계·`day_key` 사용 |
+
+Kotlin 큐는 기다리다 만료된 안내를 버리므로 생성 시 횟수를 차감하면 들리지 않은 우회전 설명도 소진됩니다. 완료 시점으로 옮길 때는 콜백도 분리해야 합니다. 현재 `TtsEngine.Listener.onStopped()`의 기본 구현이 `onDone()`을 호출하며, `GuidanceSpeaker`의 완료 정리 경로는 시간 초과·자막 전용 출력에서도 사용됩니다. 이 공통 경로에 횟수 차감을 넣지 말고, 실제 SDK `onDone`을 발화·epoch와 연결해 한 번만 기록합니다. 중단·오류·시간 초과·자막만 표시·큐 만료는 재생 완료로 세지 않습니다. 앱 담당은 같은 fixture로 정책·큐 폐기·취소를 함께 검증합니다. [중단 콜백](https://github.com/roadmate-korea/roadmate-android/blob/895bb0801ee840f1cf4c83b1671752e35c002a7d/app/src/main/java/com/roadmatekorea/android/voice/TtsEngine.kt#L34) · [재생 정리 경로](https://github.com/roadmate-korea/roadmate-android/blob/895bb0801ee840f1cf4c83b1671752e35c002a7d/app/src/main/java/com/roadmatekorea/android/voice/GuidanceSpeaker.kt#L112)
+
 ## 4. 목적지(NaviHelper)
 
 1. STT 최종 문장을 `/internal/v1/parse-destination`에 보냅니다(`source_locale`은 STT locale). 지원 언어는 한국어·영어·스페인어이며 프랑스어 STT 결과는 이 API에도 보내지 않습니다.
@@ -94,10 +114,13 @@ NaviHelper 3.0.5 릴리스 노트는 `RouteInfo` 등의 생성자 좌표 순서�
 
 ## 5. 에뮬레이터에서 확인할 것
 
+아래는 통합 검증 항목입니다. 팀 README의 기존 신호·TTS 확인 기록을 부정하는 목록이 아니며, 정차 계약과 통역까지 이어지는 검증은 별도로 남아 있습니다.
+
 - [ ] Pleos Connect AVD·Virtual Console·마이크 접근·cold boot 설정, 각 SDK 초기화·권한·해제 처리
 - [ ] STT·TTS ON_DEVICE가 `ko-KR`, `en-US`, `es-US`(또는 `es-MX`)에서 실제로 동작하는지; 안내용 `fr-CA` TTS와 언어 전환도 확인
 - [ ] 중간 STT 결과가 API로 가지 않고, 최종 결과 중복·취소·P 해제 시 늦게 온 결과가 재생되지 않는지
-- [ ] 기어·속도의 실제 접근 API·권한·단위·갱신 주기를 먼저 확인. `onDrivingInfo`는 필드 확인 전까지 대안으로 확정하지 않으며 미확인 상태에서는 통역·속도 기반 경고 차단
+- [ ] 구현된 기어·속도 경로에서 권한·원본 단위·관측 시각·갱신 주기 확인. P를 오래 유지해도 유효한 재관측으로 정차가 유지되고 실패·무응답·단절 시 잠기는지 확인
+- [ ] 정수 km/h가 같아도 0.1m/s 경계를 넘으면 즉시 다시 잠기는지, 콜백 지연·정지 때 1.5초 만료가 적용되는지 확인
 - [ ] 같은 표본 재조회로 정차·과속 지속시간이 늘지 않는지, 5초 지난 기어·단위 누락·시계 역행을 차단하는지
 - [ ] TTS `onDone()`만 재생 완료로 기록하고 `onStop()`·`onError()`·취소/이전 `clock_epoch`의 콜백은 세지 않는지
 - [ ] `onCautionPointInfo`에 스쿨존이 오는지, 안 오면 `addProximityAlert` 경로. 근접 알림은 반경 기준이라 지나가는 길에 있는 구역인지는 TBT·진행 방향으로 따로 확인
@@ -105,6 +128,14 @@ NaviHelper 3.0.5 릴리스 노트는 `RouteInfo` 등의 생성자 좌표 순서�
 - [ ] 비보호 표지와 TBT의 동일 교차로 매칭을 검증할 자료가 있는지; 없으면 동적 안내가 꺼지는지
 - [ ] Kotlin named arguments로 목적지 좌표 전달 후 `onDestinationInfo`·지도 위치·경로 결과 확인
 - [ ] 모델 서버와 에뮬레이터를 같이 30분 돌렸을 때 메모리와 지연
+
+## 6. 통역 연결 전에 정할 배치와 순서
+
+1. 시연할 GPU PC와 백엔드 사용 여부·담당을 먼저 정합니다. 현재 문서의 `APK → 백엔드(8080) → AI(8000) → 모델(8081)`은 연동 계약이며 팀 백엔드 구현이 확인됐다는 뜻이 아닙니다. 저장소를 찾지 못했다는 사실만으로 백엔드가 없다고 확정하지 않습니다. 외부 접속 경로가 없는 DLPC 작업을 시연 서버로 전제하지 않습니다.
+2. 같은 PC의 에뮬레이터는 `10.0.2.2`로 호스트의 `127.0.0.1`에 접근할 수 있습니다. 백엔드가 있으면 앱은 `10.0.2.2:8080`, 로컬 시연에서 AI 직접 연결을 선택하면 `10.0.2.2:8000`입니다. 다른 PC의 서버에는 이 별칭이 적용되지 않습니다. 필요한 앱 변경은 `INTERNET` 권한·HTTP 클라이언트·debug 빌드 전용 cleartext 예외이며, STT 의존성·최종 결과 전달도 연결해야 합니다. [Android 에뮬레이터 네트워크](https://developer.android.com/studio/run/emulator-networking-address) · [네트워크 권한](https://developer.android.com/develop/connectivity/network-ops/connecting) · [HTTP 예외 설정](https://developer.android.com/privacy-and-security/security-config)
+3. AI 직접 연결을 선택하면 요청 ID·epoch·중복 방지·`/internal/v1/cancel`·오류 처리도 앱이 맡습니다. 내부 토큰을 APK에 배포용 비밀값으로 넣지 않습니다. 직접 연결의 인증·접근 범위는 로컬 시연용으로 정하고 release 구성과 분리합니다. 실제 배치는 아직 결정하지 않았습니다.
+4. 기어 재관측·속도 원본·신선도 계약을 결정해 정차 잠금을 완성한 뒤 STT → HTTP → 화면 → 기존 음성 큐를 연결합니다. 전송·응답·재생 직전 재확인과 취소를 포함합니다.
+5. 주행 안내 정책·완료 콜백 정리는 앱 담당이 위 작업과 병행할 수 있습니다. 공통 fixture가 일치한 뒤 정차 유지·신호 단절·큐 만료·취소·언어 변경과 30분 동시 실행을 에뮬레이터에서 확인합니다.
 
 1차는 기획서가 필수이고 영상·저장소·APK는 선택 가산점 자료입니다. 2차 PT 전에는 실제 동작 가능한 앱이 필요하므로 이 문서와 fixture 통과만으로 SDK 연동 완료라고 제출하지 않습니다. [공식 제출 안내](https://appdevchallenge.auto-hmg.io/guide/submission)
 

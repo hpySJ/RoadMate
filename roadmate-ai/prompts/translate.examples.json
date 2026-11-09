@@ -74,5 +74,9 @@
   {
     "input": {"source_locale": "ko-KR", "target_locale": "es-MX", "scenario": "rental_counter", "glossary": {}, "utterance": "좀 더 크게 말씀해 주시겠어요?"},
     "output": {"status": "ok", "translated_text": "¿Podría hablar un poco más fuerte, por favor?", "clarification_question": null}
+  },
+  {
+    "input": {"source_locale": "en-US", "target_locale": "ko-KR", "scenario": "general", "glossary": {}, "utterance": "Do you want the blue folder or the green folder?"},
+    "output": {"status": "ok", "translated_text": "파란색 서류철을 원하세요, 아니면 초록색 서류철을 원하세요?", "clarification_question": null}
   }
 ]

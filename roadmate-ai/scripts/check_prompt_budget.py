@@ -1,6 +1,7 @@
 """고정 모델의 tokenizer 디렉터리로 개발 문장·최대 입력·교정 재시도의 토큰 예산을 잰다."""
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -46,8 +47,9 @@ def main() -> int:
             continue
         messages = P.translate_messages(c["source_locale"], c["target_locale"], c["scenario"], c["text"])
         check(c["id"], messages, P.TRANSLATE_MAX_TOKENS)
-        # 실제와 같은 재시도 프롬프트에 모든 교정 지시를 넣어 상한을 확인한다. 오답 초안은 넣지 않는다.
-        check(c["id"] + ":retry", translation_repair(messages, list(REPAIR_HINT)), P.TRANSLATE_MAX_TOKENS)
+        # 모든 교정 지시와 혼합 문자 교정의 원문 단어 전체를 예약해 상한을 잰다. 오답 초안은 넣지 않는다.
+        issues = list(REPAIR_HINT) + [f"mixed_script:{w}" for w in re.findall(r"[A-Za-z]{2,}", P.fold(c["text"]))]
+        check(c["id"] + ":retry", translation_repair(messages, issues), P.TRANSLATE_MAX_TOKENS)
         if c["target_locale"] == "ko-KR":
             # 초안 256토큰 전체를 예약한다. 짧은 정답/자리표시자를 실제 초안 상한으로 쓰지 않는다.
             check(c["id"] + ":polish", P.polish_messages(c["source_locale"], c["text"], "",

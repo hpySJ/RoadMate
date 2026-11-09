@@ -47,7 +47,7 @@ def test_translate_ok_and_ready(client):
     assert r.status_code == 200, r.text
     d = r.json()
     assert d["status"] == "ok" and d["model_id"] == "mock" and d["translated_text"].startswith("[모의 번역]")
-    assert d["prompt_version"] == "translate-v8" and r.headers["content-type"].endswith("charset=utf-8")
+    assert d["prompt_version"] == "translate-v9" and r.headers["content-type"].endswith("charset=utf-8")
     assert client.get("/health/live").json() == {"status": "ok"}
     ready = client.get("/health/ready")
     assert ready.status_code == 200 and ready.json()["ready"] is True
@@ -161,6 +161,69 @@ def test_retry_single_added_number_keeps_its_hint():
     original = P.translate_messages("en-US", "ko-KR", "general", "Please wait.")
     repair = json.loads(translation_repair(original, ["number_added:6"])[-1]["content"])
     assert REPAIR_HINT["number_added"] in repair["repair"]
+
+
+@pytest.mark.parametrize("source", [
+    "Is this pump self-service or full-service?",
+    "If the car breaks down again, who should I call first, you or the insurance company?",
+    "Do you want the blue folder or the green folder",
+])
+def test_retry_keeps_nonnegative_alternative_questions(source):
+    import prompting as P
+    from engine import translation_repair
+    original = P.translate_messages("en-US", "ko-KR", "general", source)
+    repair = json.loads(translation_repair(original, ["negation_mismatch"])[-1]["content"])
+    assert "A-or-B choice" in repair["repair"] and "아니면" in repair["repair"]
+    assert repair["utterance"] == source
+
+
+@pytest.mark.parametrize("source,issues", [
+    ("Don't use gasoline or diesel.", ["negation_mismatch"]),
+    ("Doesn’t this car use gasoline or diesel?", ["negation_mismatch"]),
+    ("Is it free or paid?", ["negation_mismatch"]),
+    ("Please call me or the insurance company.", ["negation_mismatch"]),
+    ("Could you help me?", ["negation_mismatch"]),
+    ("Do you want tea or coffee?", ["too_short"]),
+])
+def test_choice_retry_hint_is_not_applied_to_other_cases(source, issues):
+    import prompting as P
+    from engine import translation_repair
+    original = P.translate_messages("en-US", "ko-KR", "general", source)
+    repair = json.loads(translation_repair(original, issues)[-1]["content"])
+    assert "A-or-B choice" not in repair["repair"]
+
+
+def test_mixed_script_retry_names_source_word_without_copying_bad_draft():
+    source = "Could you tell the staff that my wife is allergic to peanuts?"
+    bad = "제 아내가 페anut 알레르기가 있다고 직원에게 알려 주시겠어요?"
+    good = "제 아내가 땅콩 알레르기가 있다고 직원에게 알려 주시겠어요?"
+    fake = RecordingLlama([ok(bad), ok(good)])
+    with TestClient(create_app(SETTINGS, fake)) as c:
+        r = c.post("/internal/v1/translate", json=body(text=source, scenario="general"))
+    assert r.status_code == 200 and r.json()["translated_text"] == good and fake.calls == 2
+    repair = json.loads(fake.messages[1][-1]["content"])
+    assert '["peanuts"]' in repair["repair"]
+    assert "complete natural Korean words" in repair["repair"]
+    assert "페anut" not in json.dumps(fake.messages[1], ensure_ascii=False)
+    assert repair["utterance"] == source
+
+
+def test_mixed_script_retry_matches_only_complete_source_tokens_and_deduplicates():
+    import prompting as P
+    from engine import translation_repair
+    original = P.translate_messages("en-US", "ko-KR", "general", "peanuts, peanuts; walnuts.")
+    repair = json.loads(translation_repair(original, ["mixed_script:ANUT", "mixed_script:anut", "mixed_script:alnu"])[-1]["content"])
+    assert '["peanuts", "walnuts"]' in repair["repair"]
+
+
+@pytest.mark.parametrize("issue", ["mixed_script", "mixed_script:zzzz", "mixed_script:a.*"])
+def test_mixed_script_retry_does_not_invent_source_words(issue):
+    import prompting as P
+    from engine import REPAIR_HINT, translation_repair
+    original = P.translate_messages("en-US", "ko-KR", "general", "Please wait.")
+    repair = json.loads(translation_repair(original, [issue])[-1]["content"])
+    assert REPAIR_HINT["mixed_script"] in repair["repair"]
+    assert "Translate these source words" not in repair["repair"]
 
 
 @pytest.mark.parametrize("text,source,target,bad,good,term,equivalent", [

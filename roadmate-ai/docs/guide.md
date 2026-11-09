@@ -129,7 +129,7 @@ POST /internal/v1/translate
 {"request_id":"req-001","session_id":"sess-001","session_epoch":3,"turn_id":1,
  "status":"ok","translated_text":"휘발유로 가득 넣어 주세요.","clarification_question":null,
  "engine_bundle":"roadmate-ko-en-q4-v1","model_id":"roadmate-qwen4b-q4",
- "prompt_version":"translate-v8","glossary_version":"rental-ko-en-es-v10","latency_ms":850}
+ "prompt_version":"translate-v9","glossary_version":"rental-ko-en-es-v11","latency_ms":850}
 ```
 - `source_locale`/`target_locale`: `ko-KR`, `en-US`, `es-US`, `es-MX` 중 한쪽은 반드시 `ko-KR`(한↔영, 한↔스). Pleos STT·TTS locale 값을 그대로 쓴다 / `scenario`: `gas_station`, `parking`, `rental_counter`, `accident`, `general`
 - 스페인어는 `es-US`와 `es-MX`를 같은 말로 처리한다. 번역문은 중남미식 존댓말(usted), 원화는 `30,000 wones`, 시각은 `3 p. m.`.
@@ -161,11 +161,15 @@ POST /internal/v1/translate
 `.env`(예시 `.env.example`)에 `AI_INTERNAL_TOKEN=...`을 넣으면 `X-Internal-Token` 헤더가 필요하다. 서버·`smoke.py`·`evaluate.py`가 모두 `config.py`로 같은 `.env`를 읽으므로 새 터미널에서도 따로 설정하지 않는다(이미 설정된 환경 변수가 우선). AI 서버는 `127.0.0.1`에만 바인딩한다. FastAPI·모델 포트를 인터넷에 공개하지 않는다.
 
 ### 에뮬레이터 주소
-APK의 `127.0.0.1`은 PC가 아니다. APK → `http://10.0.2.2:8080`(백엔드), 백엔드 → `http://127.0.0.1:8000`(AI). HTTP 예외는 debug 빌드 `network_security_config`의 `10.0.2.2` domain-config에만 둔다.
+APK의 `127.0.0.1`은 에뮬레이터 자신이다. 같은 PC에서는 `10.0.2.2`가 호스트의 loopback으로 연결되므로 AI 서버를 `127.0.0.1`에 바인딩한 것 자체가 접속 불가 이유는 아니다. 백엔드 구성이면 APK → `http://10.0.2.2:8080`(백엔드), 백엔드 → `http://127.0.0.1:8000`(AI)다. 로컬 시연에서 앱의 AI 직접 연결을 선택하면 주소는 `http://10.0.2.2:8000`이다. 다른 PC나 DLPC에는 이 별칭이 적용되지 않는다. [Android 네트워크 주소](https://developer.android.com/studio/run/emulator-networking-address)
+
+Android `895bb08`에는 `INTERNET` 권한·HTTP 클라이언트·cleartext 예외가 없으므로 주소만 바꿔서는 통역되지 않는다. HTTP 예외는 debug 소스 세트의 `network_security_config`에서 `10.0.2.2` domain-config에만 두고 release에서는 허용하지 않는다. XML의 `debug-overrides`는 인증서 설정용이므로 cleartext 예외와 혼동하지 않는다. [Android 보안 설정](https://developer.android.com/privacy-and-security/security-config)
+
+팀 백엔드의 존재·배치와 시연용 GPU PC를 먼저 확정한다. AI 직접 연결을 선택하면 앱이 요청 ID·epoch·취소·오류 처리를 맡고, 내부 토큰을 APK의 배포용 비밀값으로 두지 않는다. 정차 신호의 재관측·유효성까지 포함한 작업 순서는 [`pleos_sdk.md`](pleos_sdk.md) 6장을 따른다.
 
 ## 5. 앱 연동(주행 안내 규칙·정차 잠금)
 
-주행 안내는 LLM이 아니라 **고정 규칙과 문구(현재 draft, 출시 전 검수 필요)**로 APK 안에서 실행한다. `guidance.py`가 기준 구현이고, 앱 담당이 Kotlin으로 포팅한 뒤 같은 fixture로 동등성을 시험한다.
+주행 안내는 LLM이 아니라 **고정 규칙과 문구(현재 draft, 출시 전 검수 필요)**로 APK 안에서 실행한다. `guidance.py`가 기준 구현이며, 팀 Android `895bb08`의 기존 Kotlin 규칙과 같은 fixture로 동등성을 시험한다. 현재 차이와 기어 재관측·원본 속도·TTS 완료/중단 분리 조건은 [`pleos_sdk.md`](pleos_sdk.md) 2~3장에 기록했다.
 
 - 규칙·문구: `packs/rules.json` (스쿨존 현재 구간 과속, 스쿨존 접근, 제한값 미상 접근, 우회전 조건부 안내, 출발 브리핑)
 - 시나리오 fixture: `packs/fixtures/guidance_scenarios.json` → `.\.venv\Scripts\python.exe guidance.py`로 전부 OK 확인

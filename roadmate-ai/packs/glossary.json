@@ -1,5 +1,5 @@
 {
-  "version": "rental-ko-en-es-v10",
+  "version": "rental-ko-en-es-v11",
   "review": {"status": "draft", "reviewer": null, "checked_at": "2026-11-09"},
   "ko_only_hints": {
     "완전자차": {
@@ -14,6 +14,8 @@
     {"id": "fuel_lpg", "category": "fuel", "critical": true, "en": ["LPG", "autogas"], "es": ["GLP", "gas LP", "autogás", "LPG"], "ko": ["LPG", "엘피지"]},
     {"id": "fuel_ev", "category": "fuel", "critical": true, "en": ["EV charging", "EV charger", "charging station"], "es": ["estación de carga", "cargador eléctrico", "carga eléctrica", "punto de carga"], "ko": ["전기차 충전", "충전소"]},
     {"id": "gas_station", "category": "place", "critical": false, "en": ["gas station", "petrol station", "filling station"], "es": ["gasolinera", "estación de servicio", "estación de gasolina"], "ko": ["주유소"]},
+    {"id": "self_service", "category": "service", "critical": false, "en": ["self-service", "self service"], "es": ["autoservicio"], "ko": ["셀프"], "preferred": {"ko": "셀프 주유"}},
+    {"id": "full_service", "category": "service", "critical": false, "en": ["full-service", "full service"], "es": ["servicio completo"], "ko": ["직원 주유"]},
     {"id": "full_tank", "category": "amount", "critical": false, "en": ["fill it up", "full tank", "fill up"], "es": ["tanque lleno", "llénelo", "lléneme el tanque", "llenar el tanque", "lleno completo"], "ko": ["가득"]},
     {"id": "receipt", "category": "document", "critical": false, "en": ["receipt"], "es": ["recibo", "comprobante"], "ko": ["영수증"]},
     {"id": "rental_agreement", "category": "document", "critical": false, "en": ["rental agreement", "rental contract"], "es": ["contrato de renta", "contrato de alquiler", "contrato de arrendamiento"], "ko": ["대여계약서", "렌터카 계약서"]},

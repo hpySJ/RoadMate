@@ -168,7 +168,8 @@ def select_glossary(text: str, source_locale: str, target_locale: str) -> dict[s
     # QWEN 구현: 발화에 나온 용어·데모 장소 이름만 넣어 프롬프트를 짧게 유지(성산일출봉 = Seongsan Ilchulbong)
     by_id = {e["id"]: e for e in glossary()["entries"]}
     src, tgt = LANG_KEY[source_locale], LANG_KEY[target_locale]
-    out = {surface: by_id[cid][tgt][0] for cid, surface in match_concepts(text, source_locale).items()}
+    out = {surface: by_id[cid].get("preferred", {}).get(tgt, by_id[cid][tgt][0])
+           for cid, surface in match_concepts(text, source_locale).items()}
     if src == "ko":
         for term, targets in glossary().get("ko_only_hints", {}).items():
             for start, end, _ in _find_terms(text, [term], "ko"):
