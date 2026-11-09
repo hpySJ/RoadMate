@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 LANG_KEY = {"en-US": "en", "ko-KR": "ko", "es-US": "es", "es-MX": "es"}
+LANG_NAME = {"ko-KR": "Korean", "en-US": "English", "es-US": "Spanish", "es-MX": "Spanish"}
 LATIN = "A-Za-zÀ-ÿ"
 
 
@@ -83,7 +84,7 @@ def match_concepts(text: str, locale: str, categories: set | None = None) -> dic
     return found
 
 
-EN_TIME = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*([ap])(?:\.\s?m\.|\s?m)(?![A-Za-z])", re.IGNORECASE)
+EN_TIME = re.compile(r"(?<![\w.,:])(\d{1,2})(?::(\d{2}))?\s*([ap])(?:\.\s?m\.|\s?m)(?![A-Za-z])", re.IGNORECASE)
 KO_TIME = re.compile(r"(오전|오후)\s?(\d{1,2})시(?:\s?(\d{1,2})분|\s?(반))?")
 # 프론트 연동: 목표 언어별 시각·원화 표기(TTS가 그대로 읽는다)
 PM_FMT = {"en": ("a.m.", "p.m."), "es": ("a. m.", "p. m.")}
@@ -138,8 +139,17 @@ def _time_hints(text: str, src: str, tgt: str) -> dict[str, str]:
             times = [(text[start:end], int(hour.value) % 24, mins)
                      for start, end, hour, mins in spanish_times(text) if hour.exact]
         else:
-            times = [(m.group(0), int(m.group(1)) % 12 + (12 if m.group(3).lower() == "p" else 0),
-                      int(m.group(2) or 0)) for m in EN_TIME.finditer(text)]
+            from validation import english_times
+            spoken = list(english_times(text))
+            for start, end, hour, mins in spoken:
+                if not hour.exact:
+                    out[text[start:end]] = f"{int(hour.value)}시 {mins}분"
+            times = [(text[start:end], int(hour.value) % 24, mins)
+                     for start, end, hour, mins in spoken if hour.exact]
+            times += [(m.group(0), int(m.group(1)) % 12 + (12 if m.group(3).lower() == "p" else 0),
+                       int(m.group(2) or 0)) for m in EN_TIME.finditer(text)
+                      if 1 <= int(m.group(1)) <= 12 and int(m.group(2) or 0) < 60
+                      if not any(m.start() < end and start < m.end() for start, end, _, _ in spoken)]
         for surface, h, mins in times:
             minute = f" {mins}분" if mins else ""
             if h in (0, 12):
@@ -204,6 +214,7 @@ def translate_messages(source_locale: str, target_locale: str, scenario: str, te
     payload = {
         "source_locale": source_locale,
         "target_locale": target_locale,
+        "target_language": LANG_NAME[target_locale],
         "scenario": scenario,
         "glossary": select_glossary(text, source_locale, target_locale),
         "utterance": text,

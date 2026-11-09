@@ -31,8 +31,7 @@ WHICH_PLACE = {
     "es-US": "¿A qué lugar quiere ir? Por favor, diga el nombre del lugar.",
     "ko-KR": "어느 장소로 갈까요? 장소 이름을 말씀해 주세요.",
 }
-LANG_NAME = {"ko-KR": "Korean", "en-US": "English", "es-US": "Spanish"}
-for _d in (WRONG_LANG, SAY_AGAIN, WHICH_PLACE, LANG_NAME):
+for _d in (WRONG_LANG, SAY_AGAIN, WHICH_PLACE):
     _d["es-MX"] = _d["es-US"]
 CLARIFY_ISSUES = {"bad_clarification", "clarification_wrong_language", "clarification_echo"}
 
@@ -67,11 +66,17 @@ class ValidationFailed(ModelError):
 
 def translation_repair(messages: list[dict], issues: list[str]) -> list[dict]:
     payload = json.loads(messages[-1]["content"])
-    hints = dict.fromkeys(REPAIR_HINT[i.split(":")[0]] for i in issues if i.split(":")[0] in REPAIR_HINT)
+    kinds = dict.fromkeys(i.split(":")[0] for i in issues)
+    replaced_number = {"number_missing", "number_added"} <= kinds.keys()
+    hints = [REPAIR_HINT[k] for k in kinds if k in REPAIR_HINT
+             and not (replaced_number and k in ("number_missing", "number_added"))]
+    if replaced_number:
+        hints.append("Correct the mismatched numbers and times using the utterance and the exact supplied "
+                     "equivalents, including their units and a.m./p.m. Preserve every other source value.")
     payload["repair"] = (
-        "Translate the utterance again from " + LANG_NAME[payload["source_locale"]]
-        + " into " + LANG_NAME[payload["target_locale"]] + ". The previous attempt failed: "
-        + ", ".join(dict.fromkeys(i.split(":")[0] for i in issues)) + ". " + " ".join(hints)
+        "Translate the utterance again from " + P.LANG_NAME[payload["source_locale"]]
+        + " into " + P.LANG_NAME[payload["target_locale"]] + ". The previous attempt failed: "
+        + ", ".join(kinds) + ". " + " ".join(hints)
         + " Use these term equivalents, inflecting naturally without changing their meaning: "
         + json.dumps(payload["glossary"], ensure_ascii=False)
         + ". Preserve which action or fuel is negated. Do not copy the utterance. JSON only."
@@ -83,8 +88,24 @@ def translation_repair(messages: list[dict], issues: list[str]) -> list[dict]:
 def _with_meridiem(out, req):
     # QWEN 구현: 모델이 원문의 오전·오후를 빼면 원문 기준으로 채운다(모델 재호출 없이)
     if isinstance(out, dict) and out.get("status") == "ok" and isinstance(out.get("translated_text"), str):
-        return {**out, "translated_text": add_meridiem(out["translated_text"], req.text, req.source_locale,
-                                                       req.target_locale)}
+        text = out["translated_text"]
+        if req.target_locale == "ko-KR":
+            # 한국어에 남은 6 p.m.도 같은 시각의 한글 표기로 바꾼 뒤 원문과 검증한다.
+            hints = P._time_hints(text, "en", "ko")
+            if hints:
+                def korean_time(m):
+                    prefix, surface = m.groups()
+                    hint = hints[surface]
+                    marker = ("오후" if hint.startswith(("오후 ", "정오", "낮 ")) else
+                              "오전" if hint.startswith(("오전 ", "자정", "0시")) else None)
+                    if prefix and marker and prefix != marker:
+                        raise ModelBadOutput("conflicting Korean and English time markers")
+                    return (prefix + " " if prefix and marker is None else "") + hint
+
+                pattern = r"(?<![A-Za-z0-9.,:])(?:(오전|오후)\s*)?(" + "|".join(
+                    re.escape(s) for s in sorted(hints, key=len, reverse=True)) + r")(?![A-Za-z0-9])"
+                text = re.sub(pattern, korean_time, text)
+        return {**out, "translated_text": add_meridiem(text, req.text, req.source_locale, req.target_locale)}
     return out
 
 
@@ -316,7 +337,10 @@ class Engine:
         text = pol.get("text") if isinstance(pol, dict) else None
         if not isinstance(text, str) or not text.strip():
             return out
-        cand = _with_meridiem({**out, "translated_text": text.strip()}, req)
+        try:
+            cand = _with_meridiem({**out, "translated_text": text.strip()}, req)
+        except ModelBadOutput:
+            return out
         issues = validate_translation(cand, req.text, req.source_locale, req.target_locale)
         issues += _polish_changes(req.text, req.source_locale, out["translated_text"], cand["translated_text"])
         if issues:

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from config import Settings, artifact_hashes
 from eval.release_gate import check_run
-from eval.evaluate import attach_attempts, reserve_final
+from eval.evaluate import attach_attempts, reserve_final, retry_summary
 
 
 def test_retry_measurement_counts_only_traced_attempts(tmp_path):
@@ -23,7 +23,13 @@ def test_retry_measurement_counts_only_traced_attempts(tmp_path):
         {"request_id": rid, "attempt": attempt, "issues": issues, "output": out}) + "\n"
         for rid, attempt, issues, out in attempts), encoding="utf-8")
     assert attach_attempts(rows, log) == {"translate_cases": 5, "traced_cases": 4, "retried": 3,
-                                         "recovered": 1, "identical": 1, "incomplete": 0, "log_errors": 0}
+                                         "recovered": 1, "identical": 1, "incomplete": 0, "log_errors": 0,
+                                         "first_attempts": 4, "first_wrong_language": 0,
+                                         "first_by_direction": {"?>?": {"cases": 5, "traced": 4, "wrong_language": 0}},
+                                         "retry_by_first_issue": {
+                                             "wrong_language": {"retried": 0, "recovered": 0, "identical": 0},
+                                             "other": {"retried": 3, "recovered": 1, "identical": 1},
+                                             "mixed": {"retried": 0, "recovered": 0, "identical": 0}}}
     assert rows[0]["translation_attempts"][0]["output"] == bad
     assert rows[-1]["translation_attempts"] == []
 
@@ -38,6 +44,40 @@ def test_corrupt_or_missing_attempt_log_does_not_lose_http_results(tmp_path):
     assert stats["traced_cases"] == 0 and stats["log_errors"] == 2
     assert row["http"] == 200 and row["body"] == {"status": "ok"}
     assert attach_attempts([row], tmp_path / "missing.log")["log_errors"] == 1
+
+
+def test_retry_groups_do_not_attribute_mixed_language_errors_to_content_recovery(tmp_path):
+    rows = [{"case": {"task": "translate", "source_locale": "ko-KR", "target_locale": "es-US"}, "request_id": rid}
+            for rid in ("language", "content", "mixed", "accepted", "incomplete", "missing")]
+    rows.append({"case": {"task": "destination"}, "request_id": "destination"})
+    bad = {"status": "ok", "translated_text": "bad"}
+    good = {"status": "ok", "translated_text": "good"}
+    attempts = [("language", 1, ["wrong_language"], bad), ("language", 2, [], good),
+                ("content", 1, ["number_missing:60"], bad), ("content", 2, ["number_missing:60"], bad),
+                ("mixed", 1, ["wrong_language", "number_missing:60"], bad), ("mixed", 2, [], good),
+                ("accepted", 1, [], good), ("incomplete", 2, [], good)]
+    log = tmp_path / "ai.err.log"
+    log.write_text("".join("translation_attempt " + json.dumps(
+        {"request_id": rid, "attempt": attempt, "issues": issues, "output": out}) + "\n"
+        for rid, attempt, issues, out in attempts), encoding="utf-8")
+    stats = attach_attempts(rows, log)
+    assert stats["first_attempts"] == 4 and stats["first_wrong_language"] == 2
+    assert stats["incomplete"] == 1 and stats["translate_cases"] == 6
+    assert stats["first_by_direction"] == {"ko-KR>es-US": {"cases": 6, "traced": 4, "wrong_language": 2}}
+    assert stats["retry_by_first_issue"] == {
+        "wrong_language": {"retried": 1, "recovered": 1, "identical": 0},
+        "other": {"retried": 1, "recovered": 0, "identical": 1},
+        "mixed": {"retried": 1, "recovered": 1, "identical": 0}}
+    assert "- first-attempt wrong_language ko-KR>es-US: 2/4 (first-attempt coverage: 4/6)" in retry_summary(stats)
+    assert "| other | 1 | 0/1 (0.0%) | 1 |" in retry_summary(stats)
+    assert "| mixed | 1 | 1/1 (100.0%) | 0 |" in retry_summary(stats)
+
+
+def test_retry_summary_without_logs_does_not_claim_zero_percent_recovery(tmp_path):
+    row = {"case": {"task": "translate"}, "request_id": "missing"}
+    lines = retry_summary(attach_attempts([row], tmp_path / "missing.log"))
+    assert "| other | 0 | 0/0 (N/A) | 0 |" in lines
+    assert "- retry validator recovery: 0/0 (N/A)" in lines
 
 
 def test_quality_gate_rejects_mock_unreviewed_and_changed_evidence(tmp_path, monkeypatch):

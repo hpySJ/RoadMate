@@ -129,7 +129,7 @@ POST /internal/v1/translate
 {"request_id":"req-001","session_id":"sess-001","session_epoch":3,"turn_id":1,
  "status":"ok","translated_text":"휘발유로 가득 넣어 주세요.","clarification_question":null,
  "engine_bundle":"roadmate-ko-en-q4-v1","model_id":"roadmate-qwen4b-q4",
- "prompt_version":"translate-v7","glossary_version":"rental-ko-en-es-v9","latency_ms":850}
+ "prompt_version":"translate-v8","glossary_version":"rental-ko-en-es-v10","latency_ms":850}
 ```
 - `source_locale`/`target_locale`: `ko-KR`, `en-US`, `es-US`, `es-MX` 중 한쪽은 반드시 `ko-KR`(한↔영, 한↔스). Pleos STT·TTS locale 값을 그대로 쓴다 / `scenario`: `gas_station`, `parking`, `rental_counter`, `accident`, `general`
 - 스페인어는 `es-US`와 `es-MX`를 같은 말로 처리한다. 번역문은 중남미식 존댓말(usted), 원화는 `30,000 wones`, 시각은 `3 p. m.`.
@@ -206,7 +206,7 @@ for dataset in dev general general_es naturalness.dev; do
 done
 ```
 
-`results.jsonl`의 `translation_attempts`에 요청별 첫 출력·재시도 출력·검사 결과를 보존한다. `summary.md`의 `retry validator recovery`는 첫 시도 실패 후 재시도가 검사를 통과한 비율이며, 의미 정확도를 뜻하지 않는다. 동일 출력 수와 로그 수집 범위도 함께 표시한다. 로그가 누락·손상되면 회복 0%로 단정하지 않는다. 같은 모델·GPU·다듬기 설정과 개발 자료를 사용하고, 반복 횟수를 미리 정해 모든 실행을 보존한다. 고정 seed도 출력 일치를 보장한다고 가정하지 않으며 좋은 실행만 고르지 않는다. 잠근 최종 시험은 반복 비교에 사용하지 않는다.
+`results.jsonl`의 `translation_attempts`에 요청별 첫 출력·재시도 출력·검사 결과를 보존한다. `summary.md`는 첫 시도의 `wrong_language` 건수와 추적 범위를 언어 방향별로 표시한다. 재시도 회복은 첫 실패가 언어 오류만인 `wrong_language`, 그 외 검사 오류인 `other`, 둘 다 있는 `mixed`로 나눈다. `retry validator recovery`는 재시도가 검사를 통과한 비율이며 의미 정확도를 뜻하지 않는다. 특히 `other`에는 숫자·연료뿐 아니라 출력 구조 오류도 포함된다. 동일 출력 수와 로그 수집 범위도 함께 표시하며 로그가 누락·손상되면 회복 0%로 단정하지 않는다. 같은 모델·GPU·다듬기 설정과 개발 자료를 사용하고, 반복 횟수를 미리 정해 모든 실행을 보존한다. 고정 seed도 출력 일치를 보장한다고 가정하지 않으며 좋은 실행만 고르지 않는다. 잠근 최종 시험은 반복 비교에 사용하지 않는다.
 
 - `eval/dev.jsonl` 100건(통역 60 · 목적지 25 · 모호/지시 삽입 15): 프롬프트·용어집·추론 설정을 고를 때 사용.
 - `eval/general.jsonl` 180건(영→한 80 · 한→영 80 · 목적지 20): 정답 없이 주유·주차·렌터카·사고·도로·여행·숫자·부정·구어체·긴 문장·외래어 섞인 문장을 고르게 담은 범용 점검용. 요약에 상황(category)별 통과율과 502가 걸린 검사 종류가 나온다. 특정 문장에 맞춘 땜질이 아니라 걸린 검사 종류·상황을 보고 일반적인 규칙으로 고치고, 의미는 `review.csv`에서 사람이 본다.

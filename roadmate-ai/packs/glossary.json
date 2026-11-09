@@ -1,6 +1,6 @@
 {
-  "version": "rental-ko-en-es-v9",
-  "review": {"status": "draft", "reviewer": null, "checked_at": "2026-11-08"},
+  "version": "rental-ko-en-es-v10",
+  "review": {"status": "draft", "reviewer": null, "checked_at": "2026-11-09"},
   "ko_only_hints": {
     "완전자차": {
       "en": "full rental car damage coverage option",
@@ -20,7 +20,7 @@
     {"id": "idp", "category": "document", "critical": false, "en": ["international driving permit", "international driver's license", "IDP"], "es": ["permiso internacional de conducir", "licencia internacional de conducir", "licencia internacional"], "ko": ["국제운전면허증"]},
     {"id": "insurance_cdw", "category": "insurance", "critical": false, "en": ["collision damage waiver", "CDW"], "es": ["seguro contra colisión", "exención de daños por colisión", "CDW"], "ko": ["자차보험"]},
     {"id": "deductible", "category": "insurance", "critical": false, "en": ["deductible", "excess"], "es": ["deducible", "franquicia"], "ko": ["면책금", "자기부담금"]},
-    {"id": "hipass", "category": "toll", "critical": false, "en": ["Hi-Pass", "Hipass"], "es": ["Hi-Pass", "Hipass"], "ko": ["하이패스"]},
+    {"id": "hipass", "category": "toll", "proper_name": true, "critical": false, "en": ["Hi-Pass", "Hipass"], "es": ["Hi-Pass", "Hipass"], "ko": ["하이패스"]},
     {"id": "tollgate", "category": "toll", "critical": false, "en": ["tollgate", "toll booth", "toll plaza"], "es": ["caseta de peaje", "caseta de cobro", "plaza de peaje"], "ko": ["요금소", "톨게이트"]},
     {"id": "tow_truck", "category": "accident", "critical": false, "en": ["tow truck"], "es": ["grúa", "grua"], "ko": ["견인차"]},
     {"id": "dashcam", "category": "accident", "critical": false, "en": ["dashcam", "dash cam", "black box"], "es": ["cámara del tablero", "cámara de tablero", "dashcam", "caja negra"], "ko": ["블랙박스"]},
@@ -31,6 +31,7 @@
     {"id": "school_zone", "category": "road", "critical": false, "en": ["school zone"], "es": ["zona escolar"], "ko": ["어린이보호구역", "스쿨존"]},
     {"id": "bus_lane", "category": "road", "critical": false, "en": ["bus lane", "bus-only lane"], "es": ["carril de autobuses", "carril exclusivo para autobuses", "carril de autobús", "carril bus"], "ko": ["버스전용차로"]},
     {"id": "parking_fee", "category": "parking", "critical": false, "en": ["parking fee"], "es": ["tarifa de estacionamiento", "costo del estacionamiento", "cuota de estacionamiento"], "ko": ["주차비", "주차 요금"]},
+    {"id": "payment_machine", "category": "payment", "critical": false, "en": ["payment machine", "payment kiosk"], "es": ["máquina de pago", "cajero de pago"], "ko": ["정산기"]},
     {"id": "return_car", "category": "rental", "critical": false, "en": ["return the car", "drop off the car"], "es": ["devolución del auto", "devolver el auto", "devolver el carro", "devolver el coche", "entregar el auto"], "ko": ["차량 반납", "반납"]},
     {"id": "shuttle", "category": "rental", "critical": false, "en": ["shuttle bus"], "es": ["autobús de traslado", "autobús de cortesía", "shuttle"], "ko": ["셔틀버스"]},
     {"id": "extra_driver", "category": "rental", "critical": false, "en": ["additional driver", "second driver", "extra driver"], "es": ["conductor adicional", "segundo conductor", "conductor extra"], "ko": ["추가 운전자"]},
@@ -58,14 +59,14 @@
     {"id": "speed_camera", "category": "road", "critical": false, "en": ["speed camera"], "es": ["cámara de velocidad", "radar de velocidad", "fotomulta", "fotorradar"], "ko": ["과속 단속 카메라"]},
     {"id": "convenience_store", "category": "place", "critical": false, "en": ["convenience store"], "es": ["tienda de conveniencia", "minisúper"], "ko": ["편의점"]},
     {"id": "tangerine", "category": "jeju", "critical": false, "en": ["tangerine", "tangerines", "mandarin orange", "mandarin oranges"], "es": ["mandarina", "mandarinas"], "ko": ["귤", "감귤"]},
-    {"id": "hallasan", "category": "jeju", "critical": false, "en": ["Hallasan", "Mount Halla", "Mt. Halla", "Halla Mountain"], "es": ["Hallasan", "monte Halla", "montaña Halla"], "ko": ["한라산"]},
-    {"id": "udo", "category": "jeju", "critical": false, "en": ["Udo Island", "Udo"], "es": ["isla Udo", "Udo"], "ko": ["우도"]},
-    {"id": "jeju", "category": "jeju", "critical": false, "en": ["Jeju Island", "Jeju"], "es": ["isla de Jeju", "Jeju"], "ko": ["제주도", "제주"]},
-    {"id": "jeju_city", "category": "jeju", "critical": false, "en": ["Jeju City", "Jeju-si"], "es": ["ciudad de Jeju", "Jeju-si"], "ko": ["제주시"]},
-    {"id": "seogwipo", "category": "jeju", "critical": false, "en": ["Seogwipo"], "es": ["Seogwipo"], "ko": ["서귀포"]},
-    {"id": "aewol", "category": "jeju", "critical": false, "en": ["Aewol"], "es": ["Aewol"], "ko": ["애월"]},
-    {"id": "hallim", "category": "jeju", "critical": false, "en": ["Hallim"], "es": ["Hallim"], "ko": ["한림"]},
-    {"id": "jungmun", "category": "jeju", "critical": false, "en": ["Jungmun"], "es": ["Jungmun"], "ko": ["중문"]},
-    {"id": "seongsan", "category": "jeju", "critical": false, "en": ["Seongsan"], "es": ["Seongsan"], "ko": ["성산"]}
+    {"id": "hallasan", "category": "jeju", "proper_name": true, "critical": false, "en": ["Hallasan", "Mount Halla", "Mt. Halla", "Halla Mountain"], "es": ["Hallasan", "monte Halla", "montaña Halla"], "ko": ["한라산"]},
+    {"id": "udo", "category": "jeju", "proper_name": true, "critical": false, "en": ["Udo Island", "Udo"], "es": ["isla Udo", "Udo"], "ko": ["우도"]},
+    {"id": "jeju", "category": "jeju", "proper_name": true, "critical": false, "en": ["Jeju Island", "Jeju"], "es": ["isla de Jeju", "Jeju"], "ko": ["제주도", "제주"]},
+    {"id": "jeju_city", "category": "jeju", "proper_name": true, "critical": false, "en": ["Jeju City", "Jeju-si"], "es": ["ciudad de Jeju", "Jeju-si"], "ko": ["제주시"]},
+    {"id": "seogwipo", "category": "jeju", "proper_name": true, "critical": false, "en": ["Seogwipo"], "es": ["Seogwipo"], "ko": ["서귀포"]},
+    {"id": "aewol", "category": "jeju", "proper_name": true, "critical": false, "en": ["Aewol"], "es": ["Aewol"], "ko": ["애월"]},
+    {"id": "hallim", "category": "jeju", "proper_name": true, "critical": false, "en": ["Hallim"], "es": ["Hallim"], "ko": ["한림"]},
+    {"id": "jungmun", "category": "jeju", "proper_name": true, "critical": false, "en": ["Jungmun"], "es": ["Jungmun"], "ko": ["중문"]},
+    {"id": "seongsan", "category": "jeju", "proper_name": true, "critical": false, "en": ["Seongsan"], "es": ["Seongsan"], "ko": ["성산"]}
   ]
 }

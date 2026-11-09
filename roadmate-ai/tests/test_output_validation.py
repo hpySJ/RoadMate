@@ -16,6 +16,72 @@ def v(src, sl, tgt, tl):
     return validate_translation({"status": "ok", "translated_text": tgt, "clarification_question": None}, src, sl, tl)
 
 
+@pytest.mark.parametrize("locale", ["es-US", "es-MX"])
+def test_spanish_place_name_does_not_hide_english_sentence(locale):
+    source = "성산일출봉까지 차로 30분 정도 걸려요."
+    english = "It takes about 30 minutes by car to get to Pico del Amanecer de Seongsan."
+    spanish = "Se tarda unos 30 minutos en carro en llegar al Pico del Amanecer de Seongsan."
+    assert "wrong_language" in v(source, "ko-KR", english, locale)
+    assert v(source, "ko-KR", spanish, locale) == []
+
+
+def test_language_detection_masks_only_registered_proper_names():
+    from validation import in_locale_script, latin_lang
+    assert latin_lang("It is on isla de Jeju.") == "en"
+    assert latin_lang("Where is museo del té?") == "en"
+    assert latin_lang("La estación de carga.") == "es"
+    assert latin_lang("La isla de Jejudo.") == "es"
+    for locale in ("en-US", "es-US", "es-MX"):
+        assert in_locale_script("Pico del Amanecer de Seongsan", locale)
+    assert v("시동이 안 걸려요.", "ko-KR", "The engine will not start.", "en-US") == []
+    assert "negation_mismatch" in v("시동이 안 걸려요.", "ko-KR", "The engine starts.", "en-US")
+
+
+@pytest.mark.parametrize("locale", ["es-US", "es-MX"])
+@pytest.mark.parametrize("verb", ["toma", "tome", "tomará"])
+def test_spanish_tomar_fuel_polarity(locale, verb):
+    korean = "이 차는 경유 말고 휘발유를 넣어요."
+    spanish = f"Este carro no {verb} diésel, sino gasolina."
+    assert v(korean, "ko-KR", spanish, locale) == []
+    assert v(spanish, locale, korean, "ko-KR") == []
+    assert "fuel_polarity_mismatch:fuel_diesel" in v(
+        korean, "ko-KR", f"Este carro no {verb} gasolina, sino diésel.", locale)
+
+
+@pytest.mark.parametrize("source", [
+    "Check them one by one.", "Check them ONE BY ONE, please.", "Check them one  by\none tomorrow.",
+])
+def test_one_by_one_is_not_a_clock(source):
+    assert extract_numbers(source, "en-US") == []
+    assert v(source, "en-US", "하나씩 확인해 주세요.", "ko-KR") == []
+    assert "number_added:1" in v(source, "en-US", "1시에 확인해 주세요.", "ko-KR")
+
+
+def test_one_by_one_keeps_a_separate_clock():
+    from validation import Num
+    assert extract_numbers("Check them one by one at one.", "en-US") == [Num(1.0, "time")]
+
+
+@pytest.mark.parametrize("source,good", [
+    ("Come back at quarter past four.", "4시 15분에 돌아오세요."),
+    ("Come back at half past four.", "4시 30분에 돌아오세요."),
+    ("Come back at quarter to twelve a.m.", "오후 11시 45분에 돌아오세요."),
+    ("Come back at quarter to twelve p.m.", "오전 11시 45분에 돌아오세요."),
+])
+def test_spoken_english_clock_is_shared_with_hints(source, good):
+    from validation import english_times
+    assert len(list(english_times(source))) == 1
+    assert v(source, "en-US", good, "ko-KR") == []
+    assert v(good, "ko-KR", source, "en-US") == []
+    assert v(source, "en-US", "4분 15초 후에 돌아오세요.", "ko-KR")
+
+
+@pytest.mark.parametrize("source", ["quarter past zero", "half past 13", "quarter to 99", "quarter to 4.5", "quarter to 4,000"])
+def test_spoken_english_clock_rejects_invalid_hours(source):
+    from validation import english_times
+    assert list(english_times(source)) == []
+
+
 @pytest.mark.parametrize("src,sl,tgt,tl", [
     ("Please put in 30,000 won worth of gasoline, not diesel.", "en-US", "경유 말고 휘발유로 3만 원어치 넣어 주세요.", "ko-KR"),
     ("5만 원이에요.", "ko-KR", "It is fifty thousand won.", "en-US"),

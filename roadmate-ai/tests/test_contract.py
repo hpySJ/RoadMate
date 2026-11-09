@@ -47,7 +47,7 @@ def test_translate_ok_and_ready(client):
     assert r.status_code == 200, r.text
     d = r.json()
     assert d["status"] == "ok" and d["model_id"] == "mock" and d["translated_text"].startswith("[모의 번역]")
-    assert d["prompt_version"] == "translate-v7" and r.headers["content-type"].endswith("charset=utf-8")
+    assert d["prompt_version"] == "translate-v8" and r.headers["content-type"].endswith("charset=utf-8")
     assert client.get("/health/live").json() == {"status": "ok"}
     ready = client.get("/health/ready")
     assert ready.status_code == 200 and ready.json()["ready"] is True
@@ -137,6 +137,30 @@ def test_retry_deduplicates_checks_without_dropping_the_source():
     repair = json.loads(translation_repair(original, ["number_missing:2"] * 190)[-1]["content"])
     assert repair["utterance"] == text
     assert repair["repair"].count("number_missing") == 1
+
+
+@pytest.mark.parametrize("text,surface,korean", [
+    ("We'll be back by 6 p.m.", "6 p.m.", "오후 6시"),
+    ("I'll return at quarter past four.", "quarter past four", "4시 15분"),
+])
+def test_retry_replaces_misread_numbers_with_concrete_hints(text, surface, korean):
+    import prompting as P
+    from engine import REPAIR_HINT, translation_repair
+    original = P.translate_messages("en-US", "ko-KR", "general", text)
+    repair = json.loads(translation_repair(original, ["number_missing:16", "number_added:4"])[-1]["content"])
+    assert repair["glossary"][surface] == korean
+    assert surface in repair["repair"] and korean in repair["repair"]
+    assert "exact supplied equivalents" in repair["repair"]
+    assert REPAIR_HINT["number_added"] not in repair["repair"]
+    assert repair["utterance"] == text
+
+
+def test_retry_single_added_number_keeps_its_hint():
+    import prompting as P
+    from engine import REPAIR_HINT, translation_repair
+    original = P.translate_messages("en-US", "ko-KR", "general", "Please wait.")
+    repair = json.loads(translation_repair(original, ["number_added:6"])[-1]["content"])
+    assert REPAIR_HINT["number_added"] in repair["repair"]
 
 
 @pytest.mark.parametrize("text,source,target,bad,good,term,equivalent", [
@@ -239,6 +263,63 @@ def test_dropped_pm_is_filled_without_retry():
     with TestClient(create_app(SETTINGS, fake)) as c:
         d = c.post("/internal/v1/translate", json=body(text="We'll be back by 6 p.m.", scenario="parking")).json()
     assert d["translated_text"] == "오후 6시까지 돌아올 예정이에요." and fake.calls == 1
+
+
+@pytest.mark.parametrize("time_text,korean", [
+    ("6 p.m.", "오후 6시"), ("6:15 PM", "오후 6시 15분"),
+    ("9 a. m.", "오전 9시"), ("12 a.m.", "자정"), ("12 p.m.", "정오"),
+])
+def test_english_clock_in_korean_is_normalized_without_retry(time_text, korean):
+    fake = FakeLlama(outputs=[ok(f"{time_text}까지 돌아올 거예요.")])
+    with TestClient(create_app(SETTINGS, fake)) as c:
+        r = c.post("/internal/v1/translate", json=body(text=f"We'll be back by {time_text}", scenario="parking"))
+    assert r.status_code == 200 and r.json()["translated_text"] == f"{korean}까지 돌아올 거예요."
+    assert fake.calls == 1
+
+
+@pytest.mark.parametrize("draft,expected", [
+    ("오후 6 p.m.까지 돌아올 거예요.", "오후 6시까지 돌아올 거예요."),
+    ("오후 quarter past six", "오후 6시 15분"),
+    ("quarter to 12 p.m. 또는 12 p.m.에 만나요.", "오전 11시 45분 또는 정오에 만나요."),
+])
+def test_clock_normalization_preserves_complete_expressions(draft, expected):
+    from types import SimpleNamespace
+    from engine import _with_meridiem
+    req = SimpleNamespace(text="", source_locale="en-US", target_locale="ko-KR")
+    assert _with_meridiem(ok(draft), req)["translated_text"] == expected
+
+
+@pytest.mark.parametrize("draft", ["오전 6 p.m.까지 돌아올 거예요.", "오전 12 p.m.까지 돌아올 거예요."])
+def test_conflicting_clock_markers_require_retry(draft):
+    fake = FakeLlama(outputs=[ok(draft), ok(draft)])
+    with TestClient(create_app(SETTINGS, fake)) as c:
+        r = c.post("/internal/v1/translate", json=body(text="We'll be back by 6 p.m.", scenario="parking"))
+    assert r.status_code == 502 and r.json()["error_code"] == "output_validation_failed"
+    assert fake.calls == 2
+
+
+def test_polish_conflicting_clock_keeps_valid_draft():
+    draft = "오후 6시까지 돌아올 거예요."
+    fake = FakeLlama(outputs=[ok(draft), {"text": "오전 6 p.m.까지 돌아올 거예요."}])
+    with TestClient(create_app(dataclasses.replace(SETTINGS, polish_ko=True), fake)) as c:
+        r = c.post("/internal/v1/translate", json=body(text="We'll be back by 6 p.m.", scenario="parking"))
+    assert r.status_code == 200 and r.json()["translated_text"] == draft
+
+
+def test_normalized_clock_still_rejects_changed_time():
+    bad = ok("7 p.m.까지 돌아올 거예요.")
+    fake = FakeLlama(outputs=[bad, bad])
+    with TestClient(create_app(SETTINGS, fake)) as c:
+        r = c.post("/internal/v1/translate", json=body(text="We'll be back by 6 p.m.", scenario="parking"))
+    assert r.status_code == 502 and r.json()["error_code"] == "output_validation_failed"
+
+
+@pytest.mark.parametrize("text", ["13 p.m.까지요.", "6:99 p.m.까지요.", "1.5 p.m.까지요.", "3:6 p.m.까지요."])
+def test_invalid_clocks_are_not_normalized(text):
+    from types import SimpleNamespace
+    from engine import _with_meridiem
+    req = SimpleNamespace(text="Please wait.", source_locale="en-US", target_locale="ko-KR")
+    assert _with_meridiem(ok(text), req)["translated_text"] == text
 
 
 def test_bad_clarification_becomes_fixed_question():

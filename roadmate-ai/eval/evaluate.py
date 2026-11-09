@@ -64,7 +64,10 @@ def attach_attempts(rows: list[dict], path: Path) -> dict:
     """서버의 opt-in 로그만 읽는다. 검사 통과는 의미 정확도와 별개다."""
     by_id = {}
     stats = Counter(translate_cases=0, traced_cases=0, retried=0, recovered=0, identical=0,
-                    incomplete=0, log_errors=0)
+                    incomplete=0, log_errors=0, first_attempts=0, first_wrong_language=0)
+    first_by_direction = {}
+    retry_by_first_issue = {kind: Counter(retried=0, recovered=0, identical=0)
+                            for kind in ("wrong_language", "other", "mixed")}
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeError):
@@ -93,6 +96,10 @@ def attach_attempts(rows: list[dict], path: Path) -> dict:
         if row["case"]["task"] != "translate":
             continue
         stats["translate_cases"] += 1
+        case = row["case"]
+        direction = f"{case.get('source_locale', '?')}>{case.get('target_locale', '?')}"
+        first_stats = first_by_direction.setdefault(direction, Counter(cases=0, traced=0, wrong_language=0))
+        first_stats["cases"] += 1
         attempts = by_id.get(row["request_id"], [])
         row["translation_attempts"] = attempts
         if not attempts:
@@ -101,13 +108,42 @@ def attach_attempts(rows: list[dict], path: Path) -> dict:
         if [a["attempt"] for a in attempts] not in ([1], [1, 2]):
             stats["incomplete"] += 1
             continue
+        first_issues = {issue.split(":", 1)[0] for issue in attempts[0]["issues"]}
+        wrong_language = "wrong_language" in first_issues
+        stats["first_attempts"] += 1
+        stats["first_wrong_language"] += wrong_language
+        first_stats["traced"] += 1
+        first_stats["wrong_language"] += wrong_language
         if len(attempts) == 2:
             first, second = attempts
-            stats["retried"] += 1
-            stats["identical"] += first["output"] is not None and first["output"] == second["output"]
-            stats["recovered"] += (bool(first["issues"]) and not second["issues"]
-                                   and (second["output"] or {}).get("status") == "ok")
-    return dict(stats)
+            kind = "mixed" if wrong_language and len(first_issues) > 1 else "wrong_language" if wrong_language else "other"
+            for counts in (stats, retry_by_first_issue[kind]):
+                counts["retried"] += 1
+                counts["identical"] += first["output"] is not None and first["output"] == second["output"]
+                counts["recovered"] += (bool(first["issues"]) and not second["issues"]
+                                        and (second["output"] or {}).get("status") == "ok")
+    return {**stats, "first_by_direction": first_by_direction, "retry_by_first_issue": retry_by_first_issue}
+
+
+def retry_summary(stats: dict) -> list[str]:
+    n = stats["retried"]
+    rate = f"{stats['recovered'] / n:.1%}" if n else "N/A"
+    lines = [f"- retry trace coverage: {stats['traced_cases']}/{stats['translate_cases']} "
+             f"(incomplete: {stats['incomplete']}, log errors: {stats['log_errors']})",
+             f"- first-attempt wrong_language: {stats['first_wrong_language']}/{stats['first_attempts']} traced first attempts",
+             f"- retry validator recovery: {stats['recovered']}/{n} ({rate})",
+             f"- retry identical output: {stats['identical']}/{n}"]
+    for direction, counts in sorted(stats["first_by_direction"].items()):
+        lines.append(f"- first-attempt wrong_language {direction}: {counts['wrong_language']}/{counts['traced']} "
+                     f"(first-attempt coverage: {counts['traced']}/{counts['cases']})")
+    lines += ["", "| first failure | retries | validator recovery | identical output |",
+              "|---|---:|---:|---:|"]
+    for kind, counts in stats["retry_by_first_issue"].items():
+        n = counts["retried"]
+        rate = f"{counts['recovered'] / n:.1%}" if n else "N/A"
+        lines.append(f"| {kind} | {n} | {counts['recovered']}/{n} ({rate}) | {counts['identical']} |")
+    lines += ["", "wrong_language: 언어 오류만, other: 그 외 검사 오류, mixed: 두 종류가 함께 발생한 첫 시도."]
+    return lines
 
 
 def final_input_digest(path: Path) -> str:
@@ -246,12 +282,7 @@ def main():
               f"- errors: {dict(errors) or 'none'}",
               f"- 502 reasons: {dict(issues) or 'none'}"]
     if retry_stats is not None:
-        n = retry_stats["retried"]
-        rate = f"{retry_stats['recovered'] / n:.1%}" if n else "N/A"
-        lines += [f"- retry trace coverage: {retry_stats['traced_cases']}/{retry_stats['translate_cases']} "
-                  f"(incomplete: {retry_stats['incomplete']}, log errors: {retry_stats['log_errors']})",
-                  f"- retry validator recovery: {retry_stats['recovered']}/{n} ({rate})",
-                  f"- retry identical output: {retry_stats['identical']}/{n}"]
+        lines += retry_summary(retry_stats)
     else:
         lines.append("- retry recovery: not measured (use LOG_REJECTED=1 and --attempt-log)")
     lines += ["", "자동 통과·재시도 회복은 보조 지표다. review.csv에서 사람이 의미 보존·치명 오류를 판정한다."]

@@ -2,7 +2,7 @@
 import re
 from dataclasses import dataclass
 
-from prompting import LANG_KEY, concept_spans, fold, match_concepts
+from prompting import LANG_KEY, _find_terms, concept_spans, fold, glossary, match_concepts, places
 
 HANGUL = re.compile(r"[가-힣]")
 LATIN = re.compile(r"[A-Za-z]")
@@ -22,6 +22,11 @@ def script_counts(text: str) -> tuple[int, int]:
 
 def latin_lang(text: str) -> str | None:
     """로마자 문장이 영어인지 스페인어인지. 확실하지 않으면 None(짧은 문장, 고유명사)."""
+    # 지명 안의 de/del 같은 기능어는 주변 문장의 언어를 나타내지 않는다.
+    names = [name for p in places() for name in [p["name_en"], p["name_es"], *p.get("aliases", [])]
+             if not HANGUL.search(name)]
+    names += [name for e in glossary()["entries"] if e.get("proper_name") for lang in ("en", "es") for name in e[lang]]
+    text = _mask(text, [(s, e) for s, e, _ in _find_terms(text, names, "en")])
     words = re.findall(r"[a-z]+", fold(text).lower())
     en, es = (sum(w in FUNC_WORDS[k] for w in words) for k in ("en", "es"))
     if en >= 2 and en > 2 * es:
@@ -96,7 +101,7 @@ EN_BARE_TIME_RE = re.compile(
 EN_ORD_ANY = re.compile(r"\b(" + "|".join(EN_ORD) + r")\s+(?=[A-Za-z])", re.IGNORECASE)
 KO_ORD = re.compile(r"(?<![가-힣])(첫|두|세|네|다섯|여섯|일곱|여덟|아홉|열|\d{1,2})\s?번째")
 KO_MERIDIEM = re.compile(r"(오전|새벽|아침|오후|저녁|낮|밤)\s*$")
-EN_PAST_RE = re.compile(r"\b(quarter|half)\s+(past|after|to)\s+(\d{1,2}|" + "|".join(EN_UNITS) + r")\b", re.IGNORECASE)
+EN_PAST_RE = re.compile(r"\b(quarter|half)\s+(past|after|to)\s+(\d{1,2}|" + "|".join(EN_UNITS) + r")\b(?![.,]\d)", re.IGNORECASE)
 EN_SPAN_RE = re.compile(r"\b(?:(half)\s+(?:an\s+)?hour|(?:a\s+)?(quarter)\s+(?:of\s+an\s+)?hour"
                         r"|(?:an|one|a)\s+hour(\s+and\s+a\s+half)?|(?:a|one)\s+(?:full\s+)?(minutes?|mins?))\b", re.IGNORECASE)
 DUR_EN = re.compile(r"\s?(?:(minutes?|mins?)|(hours?|hrs?))\b", re.IGNORECASE)
@@ -295,6 +300,22 @@ def _mask(text: str, spans: list[tuple[int, int]]) -> str:
     return "".join(chars)
 
 
+def english_times(text: str):
+    """quarter/half past/to 시각을 검증과 프롬프트에서 같은 범위로 읽는다."""
+    for m in EN_PAST_RE.finditer(text):
+        h = int(m.group(3)) if m.group(3).isdigit() else EN_UNITS[m.group(3).lower()]
+        if not 1 <= h <= 12:
+            continue
+        mins = 15 if m.group(1).lower() == "quarter" else 30
+        t = EN_TIME_TAIL.match(text, m.end())
+        anchor = _time(h, _en_pm(t, h))
+        if m.group(2).lower() == "to":
+            # 오전·오후를 먼저 적용한다(quarter to 12 p.m. = 11:45).
+            val = (anchor.value - 1) % 24 if anchor.exact else float((h - 1) or 12)
+            anchor, mins = Num(val, "time", exact=anchor.exact), 60 - mins
+        yield m.start(), t.end() if t else m.end(), anchor, mins
+
+
 def spanish_times(text: str):
     """검증과 프롬프트 힌트가 같은 시각·원문 범위를 쓴다. 반환: (시작, 끝, 시각, 분)."""
     text = fold(text)
@@ -385,17 +406,11 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
 
     if lang == "en":
         # 검증: 말로 하는 시각(quarter past 4 p.m.)은 숫자 시각보다 먼저 읽어 두 번 세지 않는다
-        for m in EN_PAST_RE.finditer(text):
-            h = int(m.group(3)) if m.group(3).isdigit() else EN_UNITS[m.group(3).lower()]
-            mins = 15 if m.group(1).lower() == "quarter" else 30
-            t = EN_TIME_TAIL.match(text, m.end())
-            anchor = _time(h, _en_pm(t, h))  # 오전·오후를 먼저 적용한 뒤 "to"를 뺀다(quarter to 12 p.m. = 11:45)
-            if m.group(2).lower() == "to":
-                val = (anchor.value - 1) % 24 if anchor.exact else float((h - 1) or 12)
-                anchor, mins = Num(val, "time", exact=anchor.exact), 60 - mins
-            out += [anchor, Num(float(mins), "n")]
-            spans.append((m.start(), t.end() if t else m.end()))
+        for start, end, anchor, mins in english_times(text):
+            out += [anchor, Num(float(mins), "n", unit="min")]
+            spans.append((start, end))
         text = _mask(text, spans)
+        text = _mask(text, [m.span() for m in re.finditer(r"\bone\s+by\s+one\b", text, re.I)])
         bare_times = list(EN_BARE_TIME_RE.finditer(text))
         for m in bare_times:
             h = m.group("hour")
@@ -703,7 +718,7 @@ def check_critical_terms(src: str, src_locale: str, tgt: str, tgt_locale: str) -
 
 
 _EN_FUEL_VERB = r"(?:put(?:\s+in)?|use|want|need|take|pump|add|give\s+me|fill\s+(?:it\s+)?(?:up\s+)?with)"
-_ES_FUEL_VERB = r"pon\w*|ech\w*|carg\w*|us[aeo]\w*|llen\w*|met\w*|surt\w*|llev\w*|acept\w*|admit\w*|sirv\w*"
+_ES_FUEL_VERB = r"pon\w*|ech\w*|carg\w*|us[aeo]\w*|tom\w*|llen\w*|met\w*|surt\w*|llev\w*|acept\w*|admit\w*|sirv\w*"
 # 검증: 보조동사는 연결어까지 읽어 부정의 범위를 유지한다(volver a, ir a, tener que + 주유 동사).
 _ES_FUEL_AUX = (r"(?:vuelv\w*|volv\w*)\s+a|(?:ir|voy|vas?|vamos|van|vay\w*|ib[ao]\w*)\s+a"
                 r"|(?:teng\w*|tien\w*|ten\w*|tuv\w*)\s+que|pued\w*|pod\w*|deb\w*")

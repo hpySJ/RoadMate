@@ -78,6 +78,19 @@ def test_messages_shape_and_glossary():
     assert payload["glossary"] == {"gasoline": "휘발유", "gas station": "주유소", "Fill it up": "가득"}
 
 
+@pytest.mark.parametrize("source,target,language", [
+    ("ko-KR", "es-US", "Spanish"),
+    ("ko-KR", "es-MX", "Spanish"),
+    ("ko-KR", "en-US", "English"),
+    ("en-US", "ko-KR", "Korean"),
+    ("es-US", "ko-KR", "Korean"),
+])
+def test_initial_request_names_target_language(source, target, language):
+    payload = json.loads(P.translate_messages(source, target, "general", "x")[-1]["content"])
+    assert payload["target_locale"] == target
+    assert payload["target_language"] == language
+
+
 def test_gas_alone_not_mapped_to_fuel():
     assert P.select_glossary("Fill it with gas", "en-US", "ko-KR") == {}
 
@@ -86,6 +99,17 @@ def test_glossary_spacing_and_place_names():
     assert P.select_glossary("자차 보험에 가입하세요.", "ko-KR", "en-US") == {"자차 보험": "collision damage waiver"}
     assert P.select_glossary("성산일출봉까지 한 시간 걸려요.", "ko-KR", "en-US") == {"성산일출봉": "Seongsan Ilchulbong"}
     assert P.select_glossary("My shoulder hurts.", "en-US", "ko-KR") == {}
+
+
+@pytest.mark.parametrize("source,target,text,expected", [
+    ("ko-KR", "en-US", "정산기는 어디에 있나요?", {"정산기": "payment machine"}),
+    ("ko-KR", "es-US", "정산기는 어디에 있나요?", {"정산기": "máquina de pago"}),
+    ("ko-KR", "es-MX", "정산기는 어디에 있나요?", {"정산기": "máquina de pago"}),
+    ("es-US", "ko-KR", "¿Dónde está la máquina de pago?", {"máquina de pago": "정산기"}),
+    ("es-MX", "ko-KR", "¿Dónde está el cajero de pago?", {"cajero de pago": "정산기"}),
+])
+def test_payment_machine_glossary(source, target, text, expected):
+    assert P.select_glossary(text, source, target) == expected
 
 
 def test_polish_examples_keep_meaning_checks():
@@ -170,6 +194,45 @@ def test_time_hints():
     assert P.select_glossary("Meet at 3:30 pm.", "en-US", "ko-KR") == {"3:30 pm": "오후 3시 30분"}
     assert P.select_glossary("오전 10시까지 와 주세요.", "ko-KR", "en-US") == {"오전 10시": "10 a.m."}
     assert P.select_glossary("오후 3시 반에 만나요.", "ko-KR", "en-US") == {"오후 3시 반": "3:30 p.m."}
+
+
+@pytest.mark.parametrize("source,surface,korean", [
+    ("Could you come back at a quarter past four?", "quarter past four", "4시 15분"),
+    ("Come back at quarter to 4.", "quarter to 4", "3시 45분"),
+    ("Come back at half past four.", "half past four", "4시 30분"),
+    ("Come back at half past 4 p.m.", "half past 4 p.m.", "오후 4시 30분"),
+    ("Meet at a quarter to twelve p.m.", "quarter to twelve p.m.", "오전 11시 45분"),
+    ("Meet at quarter to 12 a.m.", "quarter to 12 a.m.", "오후 11시 45분"),
+    ("Meet at half past twelve.", "half past twelve", "12시 30분"),
+    ("Meet at quarter past four in the afternoon.", "quarter past four in the afternoon", "오후 4시 15분"),
+])
+def test_english_spoken_clock_hints_preserve_time_without_guessing_daypart(source, surface, korean):
+    from validation import extract_numbers
+    assert P.select_glossary(source, "en-US", "ko-KR") == {surface: korean}
+    assert extract_numbers(surface, "en-US") == extract_numbers(korean, "ko-KR")
+
+
+def test_english_spoken_clock_hint_does_not_overlap_numeric_meridiem_hint():
+    assert P.select_glossary("Meet at quarter to 12 p.m. or 6 p.m.", "en-US", "ko-KR") == {
+        "quarter to 12 p.m.": "오전 11시 45분", "6 p.m.": "오후 6시"}
+
+
+def test_english_idiom_and_duration_do_not_get_clock_hints():
+    assert P.select_glossary("Please get in one by one.", "en-US", "ko-KR") == {}
+    assert P.select_glossary("Come back in half an hour.", "en-US", "ko-KR") == {}
+
+
+@pytest.mark.parametrize("text", [
+    "Return at 13 p.m.", "Return at 6:99 p.m.", "Return at 0 a.m.",
+    "Return at 1.5 p.m.", "Return at 3:6 p.m.", "Return at 1,000 p.m.",
+])
+def test_invalid_english_clock_does_not_get_a_normalizing_hint(text):
+    assert P.select_glossary(text, "en-US", "ko-KR") == {}
+
+
+@pytest.mark.parametrize("text", ["1.5 p.m.", "3:6 p.m.", "1,000 p.m."])
+def test_english_clock_does_not_match_trailing_numeric_fragment(text):
+    assert P.EN_TIME.search(text) is None
 
 
 def test_schema_blocks_cjk_in_generated_text():
