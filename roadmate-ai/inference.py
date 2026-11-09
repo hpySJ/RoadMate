@@ -5,7 +5,7 @@ import time
 from urllib.parse import urlsplit
 
 import httpx
-from runtime_identity import ROOT, process_identity, verify_runtime
+from runtime_identity import ROOT, prepare_runtime_files, process_identity, verify_runtime
 
 
 class ModelError(Exception):
@@ -41,6 +41,14 @@ class LlamaClient:
         self.http = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=2.0))
         self.manifest, self._identity = manifest, None
 
+    async def prepare_runtime(self) -> None:
+        """Cold file hashing belongs to startup, outside translation deadlines."""
+        if self.manifest:
+            try:
+                await asyncio.to_thread(prepare_runtime_files, self.manifest)
+            except (OSError, ValueError, KeyError, TypeError) as e:
+                raise ModelUnavailable(f"model runtime preparation failed: {e}") from e
+
     async def runtime_identity(self) -> dict:
         if not self.manifest or urlsplit(self.root_url).hostname not in ("localhost", "127.0.0.1", "::1"):
             raise ModelUnavailable("verified local model launch required")
@@ -48,7 +56,7 @@ class LlamaClient:
             props = await self.http.get(f"{self.root_url}/props", timeout=2.0)
             props.raise_for_status()
             current = await asyncio.to_thread(verify_runtime, props.json(), await self.lora_adapters(), self.manifest,
-                                              process_identity(ROOT / "run" / "llama.pid"))
+                                              process_identity(ROOT / "run" / "llama.pid"), allow_hash=False)
         except (OSError, ValueError, KeyError, TypeError, httpx.HTTPError) as e:
             raise ModelUnavailable(f"model runtime verification failed: {e}") from e
         if self._identity is not None and current != self._identity:

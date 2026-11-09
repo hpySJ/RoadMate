@@ -49,6 +49,12 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app):
         c = client or (MockClient() if s.model_backend == "mock" else LlamaClient(s.model_base_url, s.model_id, s.manifest))
+        if isinstance(c, LlamaClient):
+            try:
+                await c.prepare_runtime()
+            except Exception:
+                await c.aclose()
+                raise
         st.update(client=c, engine=Engine(c, s), registry=TurnRegistry(s.dedupe_ttl_s), slot=ModelSlot(),
                   self_check=None, settle=None, artifact_hashes=artifact_hashes(), instance_id=uuid.uuid4().hex)
         log.info("ai server up: backend=%s bundle=%s", s.model_backend, s.engine_bundle)

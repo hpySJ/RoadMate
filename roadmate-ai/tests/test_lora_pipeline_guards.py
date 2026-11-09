@@ -22,6 +22,9 @@ def pipeline(tmp_path, monkeypatch):
             "runtime": {"port": 8081, "ctx": 4096, "n_gpu_layers": 99}}))
     monkeypatch.setattr(L, "STAGE_HEADROOM", 1000)
     monkeypatch.setattr(L.shutil, "disk_usage", lambda path: SimpleNamespace(free=100000))
+    monkeypatch.setattr(L, "process_identity", lambda path: {"pid": int(path.read_text()), "started": "synthetic-start"})
+    monkeypatch.setattr(L.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(
+        returncode=1, stdout="", stderr="synthetic nvidia-smi unavailable"))
     result = L.Pipeline(root, out, "teacher-check", "32b-q4")
     for variable in ("GPU_LAYERS", "LLAMA_ARG_N_CPU_FFN", "LLAMA_ARG_OVERRIDE_TENSOR", "GGML_CUDA_ENABLE_UNIFIED_MEMORY"):
         result.env.pop(variable, None)
@@ -131,6 +134,105 @@ def test_old_or_unowned_logs_never_prove_offload(pipeline, marker, matching):
     start = startup(pipeline, FULL, marker=marker, matching=matching)
     assert not pipeline.inspect_32b_offload(start, "teacher", True)
     assert pipeline.offload_checks["teacher"]["raw_logs"] == []
+
+
+def gpu_query(pipeline, monkeypatch, stdout, *, returncode=0):
+    path = pipeline.root / "models" / L.MODEL_PROFILES["32b-q4"]
+    manifest = json.loads(path.read_text())
+    manifest["model"]["gguf_size"] = 20 * 1024 ** 3
+    path.write_text(json.dumps(manifest))
+    calls = []
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        return SimpleNamespace(returncode=returncode, stdout=stdout, stderr="synthetic driver message")
+    monkeypatch.setattr(L.subprocess, "run", run)
+    return calls
+
+
+def test_missing_layer_logs_use_owned_process_memory_and_record_evidence(pipeline, monkeypatch):
+    start = startup(pipeline, "load_model: starting\nmodel loaded\n")
+    calls = gpu_query(pipeline, monkeypatch, "99999, 24576\n12345, 18432\n")
+    assert pipeline.inspect_32b_offload(start, "teacher", True)
+    fact = pipeline.offload_checks["teacher"]
+    assert fact["verification_method"] == "nvidia_smi_process_memory"
+    assert fact["offload_reports"] == []
+    assert fact["process"] == {"pid": 12345, "started": "synthetic-start"}
+    assert fact["gpu_memory"]["process_memory_mib"] == [18432]
+    assert fact["gpu_memory"]["maximum_device_bytes"] == 18 * 1024 ** 3
+    assert fact["gpu_memory"]["minimum_bytes"] == 18 * 1024 ** 3
+    assert calls[0][0] == ["nvidia-smi", "--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits"]
+    assert calls[0][1]["timeout"] == 10
+    pipeline.summary()
+    summary = json.loads((pipeline.out / "stage_summary.json").read_text(encoding="utf-8"))
+    assert summary["offload_checks"]["teacher"] == fact
+    assert "nvidia_smi_process_memory" in (pipeline.out / "stage_summary.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("stdout,error", [
+    ("12345, 18431\n", "below 90%"),
+    ("99999, 24576\n", "host/container PID mismatch"),
+    ("", "PID absent"),
+    ("12345, N/A\n", "unavailable"),
+    ("12345, 18432 MiB\n", "unavailable"),
+    ("12345, NaN\n", "unavailable"),
+    ("12345, -5\n", "unavailable"),
+    ("invalid output", "invalid process-memory row"),
+    ("12345, 10000\n12345, 10000\n", "below 90%"),
+])
+def test_memory_proxy_refuses_insufficient_unowned_unknown_or_summed_allocations(pipeline, monkeypatch, stdout, error):
+    start = startup(pipeline, "model loaded")
+    gpu_query(pipeline, monkeypatch, stdout)
+    assert not pipeline.inspect_32b_offload(start, "teacher", True)
+    assert error in pipeline.offload_checks["teacher"]["error"]
+
+
+@pytest.mark.parametrize("failure", [FileNotFoundError("no nvidia-smi"), L.subprocess.TimeoutExpired("nvidia-smi", 10)])
+def test_memory_probe_failure_cannot_authorize_cpu_fallback(pipeline, monkeypatch, failure):
+    start = startup(pipeline, "model loaded")
+    def run(*args, **kwargs):
+        raise failure
+    monkeypatch.setattr(L.subprocess, "run", run)
+    assert not pipeline.inspect_32b_offload(start, "teacher", True)
+    assert str(failure) == pipeline.offload_checks["teacher"]["error"]
+
+
+def test_nonzero_gpu_query_is_preserved_as_failure(pipeline, monkeypatch):
+    start = startup(pipeline, "model loaded")
+    gpu_query(pipeline, monkeypatch, "12345, 24576\n", returncode=2)
+    assert not pipeline.inspect_32b_offload(start, "teacher", True)
+    fact = pipeline.offload_checks["teacher"]
+    assert fact["gpu_memory"]["stderr"] == "synthetic driver message"
+    assert fact["gpu_memory"]["returncode"] == 2
+
+
+def test_gpu_query_rejects_process_replacement(pipeline, monkeypatch):
+    start = startup(pipeline, "model loaded")
+    gpu_query(pipeline, monkeypatch, "12345, 24576\n")
+    processes = iter([{"pid": 12345, "started": "old"}, {"pid": 12345, "started": "new"}])
+    monkeypatch.setattr(L, "process_identity", lambda path: next(processes))
+    assert not pipeline.inspect_32b_offload(start, "teacher", True)
+    assert "identity changed" in pipeline.offload_checks["teacher"]["error"]
+
+
+def test_non_llama_pid_does_not_use_other_process_memory_or_logs(pipeline, monkeypatch):
+    start = startup(pipeline, FULL)
+    calls = gpu_query(pipeline, monkeypatch, "12345, 24576\n")
+    def wrong_process(path):
+        raise ValueError("model pid is not llama-server")
+    monkeypatch.setattr(L, "process_identity", wrong_process)
+    assert not pipeline.inspect_32b_offload(start, "teacher", True)
+    assert not calls
+
+
+@pytest.mark.parametrize("text,success", [
+    (FULL.replace("65/65", "20/65"), True), (FULL.replace("18500", "0"), True),
+    ("model loaded\nCUDA error: out of memory", True), ("model loaded", False),
+])
+def test_memory_cannot_override_explicit_partial_offload_or_failed_load(pipeline, monkeypatch, text, success):
+    start = startup(pipeline, text)
+    calls = gpu_query(pipeline, monkeypatch, "12345, 24576\n")
+    assert not pipeline.inspect_32b_offload(start, "teacher", success)
+    assert not calls
 
 
 @pytest.mark.parametrize("text,raises", [(FULL, None), (FULL.replace("65/65", "20/65"), "full CUDA"), (FULL, "launch failed")])

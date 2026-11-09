@@ -1,7 +1,7 @@
 """Synthetic STT cases; evaluation sentences are not fixtures here."""
 import pytest
 
-from validation import extract_numbers, fuel_polarity, neg_level, validate_translation
+from validation import extract_numbers, fuel_polarity, neg_level, space_english_number_boundaries, validate_translation
 
 
 def issues(source, target):
@@ -83,7 +83,7 @@ def test_digit_thousand_compounds_preserve_value_and_currency(stt, normal):
 
 @pytest.mark.parametrize("source", [
     "63 thousand cars 250 won", "63 thousand, 250 won", "63 thousand 1250 won",
-    "63 thousand 250.5 won", "63 thousand 250 100 won", "63 thousand 250red one",
+    "63 thousand 250.5 won", "63 thousand 250 100 won",
 ])
 def test_thousand_compound_does_not_merge_unrelated_or_malformed_numbers(source):
     assert 63250 not in [n.value for n in extract_numbers(source, "en-US")]
@@ -111,3 +111,53 @@ def test_compound_money_validation_still_checks_amount_and_currency():
 @pytest.mark.parametrize("source", ["42 thousand one", "42 thousand1", "63 thousand250red one", "one red car"])
 def test_ambiguous_one_or_digit_one_is_not_restored_to_currency(source):
     assert all(n.unit != "KRW" for n in extract_numbers(source, "en-US"))
+
+
+@pytest.mark.parametrize("joined, spaced, value, unit", [
+    ("just42 thousand1", "just 42 thousand 1", 42001, None),
+    ("is63 thousand250red one", "is 63 thousand 250 red one", 63250, None),
+    ("63 thousand 250red one", "63 thousand 250 red one", 63250, None),
+    ("about42thousand250won", "about 42 thousand 250 won", 42250, "KRW"),
+    ("PAY18thousand75DOLLARS", "PAY 18 thousand 75 DOLLARS", 18075, "USD"),
+])
+def test_scale_anchored_boundaries_preserve_every_word_digit_and_currency(joined, spaced, value, unit):
+    assert space_english_number_boundaries(joined) == spaced
+    assert joined.replace(" ", "") == spaced.replace(" ", "")
+    assert space_english_number_boundaries(spaced) == spaced
+    nums = extract_numbers(joined, "en-US")
+    assert nums == extract_numbers(spaced, "en-US")
+    assert [(n.value, n.unit) for n in nums] == [(value, unit)]
+
+
+@pytest.mark.parametrize("source", [
+    "B2 A320 GPS", "b2 a320 gps", "abc42thousand250", "ABC42thousand250", "gps42thousand250",
+    "B2 thousand250", "A320 thousand250", "part42 thousand250", "just42", "is63red", "42kg",
+    "9:25am", "925am", "2 thousand 3/4 won",
+])
+def test_joined_boundaries_do_not_reinterpret_identifiers_or_unanchored_digits(source):
+    assert space_english_number_boundaries(source) == source
+
+
+def test_joined_boundaries_preserve_decimal_remainder_without_guessing_its_value():
+    source = "12thousand250.5won"
+    assert space_english_number_boundaries(source) == "12 thousand 250.5 won"
+    assert 12250.5 not in [n.value for n in extract_numbers(source, "en-US")]
+
+
+def test_attached_digit_one_is_not_dropped_as_a_misheard_currency():
+    source = "please charge just42 thousand1"
+    assert issues(source, "4만 2천1원만 청구해 주세요.") == []
+    assert "number_missing:42001" in issues(source, "4만 2천 원만 청구해 주세요.")
+
+
+def test_joined_money_preserves_amount_currency_and_fuel_checks():
+    source = "please dont add diesel just42 thousand250won of gasoline"
+    assert issues(source, "경유 말고 휘발유를 4만 2천250원어치 넣어 주세요.") == []
+    assert any(i.startswith("number_") for i in issues(source, "경유 말고 휘발유를 4만 2천500원어치 넣어 주세요."))
+    assert any(i.startswith("number_") for i in issues(source, "경유 말고 휘발유를 4만 2천250달러어치 넣어 주세요."))
+    assert any(i.startswith("fuel_polarity_mismatch:") for i in issues(source, "휘발유 말고 경유를 4만 2천250원어치 넣어 주세요."))
+
+
+def test_joined_money_does_not_merge_distinct_currencies():
+    assert [(n.value, n.unit) for n in extract_numbers("pay $2thousand and 300won", "en-US")] == [
+        (2000, "USD"), (300, "KRW")]

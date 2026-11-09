@@ -7,6 +7,10 @@ $exe = Join-Path $Root "tools\llama\llama-server.exe"
 $model = Join-Path $Root ("models\" + $m.model.gguf_file)
 if (-not (Test-Path $exe)) { throw "tools\llama\llama-server.exe missing: run scripts\setup_llama.ps1" }
 if (-not (Test-Path $model)) { throw "model missing: run .venv\Scripts\python.exe scripts\download_model.py" }
+if (-not (Test-Path $Py)) { throw ".venv missing: run scripts\setup_ai_env.ps1" }
+# 큰 모델 해시는 프로세스 시작과 Wait-Http 제한 시간 전에 검증한다.
+& $Py (Join-Path $Root "runtime_identity.py")
+if ($LASTEXITCODE -ne 0) { throw "model runtime preparation failed" }
 $ngl = if ($GpuLayers -ge 0) { $GpuLayers } else { $r.n_gpu_layers }
 
 # 파라미터 튜닝: 문맥은 manifest, 슬롯 1, 출력 상한 256, GPU 레이어, 배치, RAM 프롬프트 캐시 끔

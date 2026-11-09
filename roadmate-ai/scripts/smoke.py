@@ -1,6 +1,7 @@
 """연기 시험: 준비 확인 → 한↔영·한↔스 번역 → 목적지 → 취소. 품질 평가는 eval에서 별도 실행."""
 import asyncio
 import json
+import logging
 import os
 import sys
 import time
@@ -25,6 +26,7 @@ async def non_thinking_chat():
     settings = Settings.from_env()
     client = LlamaClient(settings.model_base_url, settings.model_id, settings.manifest)
     try:
+        await client.prepare_runtime()
         return await client.chat_json(P.translate_messages("en-US", "ko-KR", "general", "Hello, thank you."),
                                       P.TRANSLATE_SCHEMA, P.TRANSLATE_MAX_TOKENS, P.TRANSLATE_SAMPLING,
                                       max(settings.model_timeout_s, 20))
@@ -33,6 +35,8 @@ async def non_thinking_chat():
 
 
 def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     sys.stdout.reconfigure(encoding="utf-8")
     c = httpx.Client(timeout=60, headers=HEADERS)
     ready = c.get(f"{AI}/health/ready", timeout=httpx.Timeout(300, connect=2))

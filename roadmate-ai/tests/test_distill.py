@@ -318,6 +318,8 @@ def test_generation_uses_selected_teacher_and_refuses_other_ready_server(monkeyp
     monkeypatch.setattr(D.Settings, "from_env", lambda: settings)
     identity = record(teacher_profile=teacher_profile)["teacher"]["runtime"]
     class Client:
+        async def prepare_runtime(self):
+            pass
         async def runtime_identity(self):
             return identity
         async def aclose(self):

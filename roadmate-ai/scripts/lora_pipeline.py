@@ -18,6 +18,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from config import MODEL_PROFILES, TEACHER_PROFILES  # noqa: E402
+from runtime_identity import process_identity  # noqa: E402
 
 DATASETS = ("general", "general_es", "naturalness.dev")
 STAGE_HEADROOM = 2 * 1024 ** 3
@@ -203,6 +204,14 @@ class Pipeline:
         pids = re.findall(r"^llama started \(pid (\d+)\),", text, re.M)
         pidfile = self.root / "run" / "llama.pid"
         owned = len(pids) == 1 and pidfile.is_file() and pidfile.read_text().strip() == pids[0]
+        process, error = None, None
+        if owned:
+            try:
+                process = process_identity(pidfile)
+                if process["pid"] != int(pids[0]):
+                    raise ValueError("model PID changed after startup")
+            except (OSError, ValueError) as exc:
+                process, error = None, str(exc)
         paths = copy_process_logs(self.root, "llama", self.out / "logs" / arm) if owned else []
         raw = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in paths)
         reports = [{"offloaded": int(a), "total": int(b)}
@@ -211,11 +220,49 @@ class Pipeline:
         failures = [line for line in raw.splitlines() if re.search(
             r"failed to load (?:the )?model|error loading model|failed to allocate|out of memory|CUDA error|cudaMalloc.*failed",
             line, re.I)]
-        verified = bool(startup_succeeded and owned and reports and all(
-            r["offloaded"] == r["total"] > 0 for r in reports) and any(n > 0 for n in cuda) and not failures)
+        partial = bool(reports and not all(r["offloaded"] == r["total"] > 0 for r in reports))
+        full_logs = bool(reports and not partial and any(n > 0 for n in cuda))
+        verified = bool(startup_succeeded and process and full_logs and not failures)
+        method = "offload_logs" if verified else None
+        model_bytes = self.manifest("32b-q4")["model"]["gguf_size"]
+        threshold = (model_bytes * 9 + 9) // 10
+        gpu = {"command": ["nvidia-smi", "--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits"],
+               "model_bytes": model_bytes, "minimum_bytes": threshold, "minimum_ratio": .9,
+               "process_memory_mib": [], "maximum_device_bytes": None, "stdout": None, "stderr": None}
+        if startup_succeeded and process and not verified and not partial and not failures and not (cuda and not any(cuda)):
+            try:
+                result = subprocess.run(gpu["command"], capture_output=True, text=True, timeout=10, env=self.env)
+                gpu.update(stdout=result.stdout, stderr=result.stderr, returncode=result.returncode)
+                if result.returncode:
+                    raise ValueError(f"nvidia-smi failed ({result.returncode})")
+                for line in result.stdout.splitlines():
+                    columns = [part.strip() for part in line.split(",")]
+                    if len(columns) != 2 or not columns[0].isdigit():
+                        raise ValueError("nvidia-smi returned an invalid process-memory row")
+                    if int(columns[0]) == process["pid"]:
+                        if not re.fullmatch(r"\d+(?:\.\d+)?", columns[1]):
+                            raise ValueError("GPU memory for llama-server is unavailable (N/A or invalid)")
+                        gpu["process_memory_mib"].append(float(columns[1]))
+                if process_identity(pidfile) != process:
+                    raise ValueError("llama-server process identity changed during GPU memory query")
+                if not gpu["process_memory_mib"]:
+                    raise ValueError("llama-server PID absent from nvidia-smi; host/container PID mismatch or no GPU allocation")
+                # One configured CUDA device must fit; allocations on different GPUs must not be summed.
+                gpu["maximum_device_bytes"] = max(gpu["process_memory_mib"]) * 1024 ** 2
+                verified = gpu["maximum_device_bytes"] >= threshold
+                if verified:
+                    method = "nvidia_smi_process_memory"
+                else:
+                    error = "llama-server GPU memory is below 90% of GGUF size; CPU fallback is not allowed"
+            except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+                error = str(exc)
+        if not verified and not error:
+            error = ("model startup failed" if not startup_succeeded else "startup PID ownership was not verified" if not process
+                     else "explicit partial/invalid offload or loading failure in model logs")
         evidence = {"profile": "32b-q4", "startup_succeeded": startup_succeeded,
                     "requested_gpu_layers": 99, "device": "CUDA0", "fit": "off", "context": 4096,
                     "pid": int(pids[0]) if len(pids) == 1 else None, "pidfile_matches": owned,
+                    "process": process, "verification_method": method, "gpu_memory": gpu, "error": error,
                     "raw_logs": [str(p) for p in paths], "offload_reports": reports,
                     "cuda_model_buffer_mib": cuda, "loading_failures": failures, "verified": verified}
         self.offload_checks[arm] = evidence
@@ -252,7 +299,8 @@ class Pipeline:
             self.run(command, f"{arm}-start", env)
             startup_succeeded = True
             if profile == "32b-q4" and not self.inspect_32b_offload(start_log, arm, True):
-                raise ValueError("32b-q4 full CUDA offload was not verified in current startup logs; no evaluation or generation run")
+                raise ValueError("32b-q4 full CUDA offload was not verified: " + self.offload_checks[arm]["error"]
+                                 + "; no evaluation or generation run")
             yield env
         finally:
             try:
@@ -361,8 +409,13 @@ class Pipeline:
             for fs in check["filesystems"]:
                 lines.append(f"- disk check {index}: {fs['probe_path']}; required={fs['required_bytes']} bytes; free={fs['free_bytes']} bytes")
         for arm, check in self.offload_checks.items():
-            lines.append(f"- {arm} CUDA offload verified: {check['verified']}; reports={check['offload_reports']}; "
+            lines.append(f"- {arm} CUDA offload verified: {check['verified']}; method={check['verification_method']}; reports={check['offload_reports']}; "
                          f"CUDA model buffers MiB={check['cuda_model_buffer_mib']}; startup succeeded={check['startup_succeeded']}")
+            gpu = check["gpu_memory"]
+            lines.append(f"- {arm} GPU memory: PID={check['pid']}; per-device MiB={gpu['process_memory_mib']}; "
+                         f"maximum device bytes={gpu['maximum_device_bytes']}; required bytes={gpu['minimum_bytes']} (90% GGUF)")
+            if check["error"]:
+                lines.append(f"- {arm} offload check error: {check['error']}")
             lines.append(f"- {arm} raw logs: {', '.join(check['raw_logs']) or 'no owned startup log'}")
             if check["loading_failures"]:
                 lines.append(f"- {arm} loading failures: {check['loading_failures']}")

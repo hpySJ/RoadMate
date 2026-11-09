@@ -4,11 +4,14 @@ import hashlib
 import json
 import os
 import threading
+import subprocess
+import sys
 
 import httpx
 import pytest
 
 from inference import LlamaClient, ModelUnavailable
+import runtime_identity as R
 from runtime_identity import process_identity, verify_runtime
 
 
@@ -63,7 +66,8 @@ def test_llama_restart_is_rejected_even_with_same_alias(tmp_path, monkeypatch):
     process = {"pid": 123, "started": "first"}
     monkeypatch.setattr("inference.process_identity", lambda path: dict(process))
     real_verify = verify_runtime
-    monkeypatch.setattr("inference.verify_runtime", lambda p, a, m, proc: real_verify(p, a, m, proc, tmp_path))
+    R.prepare_runtime_files(manifest, tmp_path)
+    monkeypatch.setattr("inference.verify_runtime", lambda p, a, m, proc, **kw: real_verify(p, a, m, proc, tmp_path, **kw))
 
     async def run():
         client = LlamaClient("http://127.0.0.1:8081/v1", "same-alias", manifest)
@@ -88,7 +92,7 @@ def test_hash_verification_does_not_block_the_event_loop(tmp_path, monkeypatch):
     async def run():
         entered = asyncio.Event()
         loop = asyncio.get_running_loop()
-        def slow_verification(*args):
+        def slow_verification(*args, **kwargs):
             loop.call_soon_threadsafe(entered.set)
             if not release.wait(3):
                 raise ValueError("event loop could not release hash worker")
@@ -108,5 +112,118 @@ def test_hash_verification_does_not_block_the_event_loop(tmp_path, monkeypatch):
             assert await task == {"verified": True}
         finally:
             release.set()
+            await client.aclose()
+    asyncio.run(run())
+
+
+def test_hash_cache_is_shared_by_fresh_processes(tmp_path, caplog):
+    model, manifest, _ = fixture(tmp_path)
+    cache = tmp_path / "run/runtime-hashes"
+    with caplog.at_level("INFO", logger="roadmate.runtime"):
+        assert R.digest(model, cache) == manifest["model"]["gguf_sha256"]
+        assert R.digest(model, cache, allow_hash=False) == manifest["model"]["gguf_sha256"]
+    assert "hash cache miss" in caplog.text and "hash cache hit" in caplog.text and "elapsed_s=" in caplog.text
+    script = ("from pathlib import Path; import runtime_identity as r; "
+              "r._digest=lambda p: (_ for _ in ()).throw(AssertionError('must use disk cache')); "
+              "print(r.digest(Path(__import__('sys').argv[1]), Path(__import__('sys').argv[2]), allow_hash=False))")
+    result = subprocess.run([sys.executable, "-c", script, str(model), str(cache)], cwd=R.ROOT,
+                            check=True, capture_output=True, text=True)
+    assert result.stdout.strip() == manifest["model"]["gguf_sha256"]
+
+
+@pytest.mark.parametrize("field", ["size", "mtime_ns", "ctime_ns", "inode", "path"])
+def test_every_file_identity_field_invalidates_hash_cache(tmp_path, monkeypatch, field):
+    model, _, _ = fixture(tmp_path)
+    cache = tmp_path / "run/runtime-hashes"
+    R.digest(model, cache)
+    real_key = R._file_key
+    def changed_key(path):
+        key = real_key(path)
+        key[field] = key[field] + (".other" if field == "path" else 1)
+        return key
+    monkeypatch.setattr(R, "_file_key", changed_key)
+    calls, real_digest = [], R._digest
+    monkeypatch.setattr(R, "_digest", lambda p: calls.append(p) or real_digest(p))
+    with pytest.raises(ValueError, match="missing or stale"):
+        R.digest(model, cache, allow_hash=False)
+    assert not calls
+    R.digest(model, cache)
+    assert calls == [model.resolve()]
+    R.digest(model, cache, allow_hash=False)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("contents", ["not json", "[]", '{"sha256":"invalid"}'])
+def test_corrupt_hash_cache_never_proves_identity(tmp_path, contents):
+    model, manifest, _ = fixture(tmp_path)
+    cache = tmp_path / "run/runtime-hashes"
+    R.digest(model, cache)
+    path, = cache.glob("*.json")
+    path.write_text(contents, encoding="utf-8")
+    with pytest.raises(ValueError, match="missing or stale"):
+        R.digest(model, cache, allow_hash=False)
+    assert R.digest(model, cache) == manifest["model"]["gguf_sha256"]
+
+
+def test_file_changed_while_hashing_never_creates_cache(tmp_path, monkeypatch):
+    model, _, _ = fixture(tmp_path)
+    cache = tmp_path / "run/runtime-hashes"
+    def changing_file(path):
+        sha = hashlib.sha256(path.read_bytes()).hexdigest()
+        path.write_bytes(b"changed while being hashed")
+        return sha
+    monkeypatch.setattr(R, "_digest", changing_file)
+    with pytest.raises(ValueError, match="changed while computing"):
+        R.digest(model, cache)
+    assert not cache.exists()
+
+
+def test_interrupted_cache_write_leaves_previous_record_intact(tmp_path, monkeypatch):
+    model, _, _ = fixture(tmp_path)
+    cache = tmp_path / "run/runtime-hashes"
+    R.digest(model, cache)
+    record, = cache.glob("*.json")
+    previous = record.read_bytes()
+    model.write_bytes(b"new model")
+    monkeypatch.setattr(R.os, "replace", lambda *args: (_ for _ in ()).throw(OSError("interrupted")))
+    with pytest.raises(OSError, match="interrupted"):
+        R.digest(model, cache)
+    assert record.read_bytes() == previous
+    assert list(cache.glob("*.tmp")) == []
+    with pytest.raises(ValueError, match="missing or stale"):
+        R.digest(model, cache, allow_hash=False)
+
+
+def test_request_never_hashes_cold_or_changed_model(tmp_path, monkeypatch):
+    model, manifest, props = fixture(tmp_path)
+    monkeypatch.setattr("inference.process_identity", lambda path: {"pid": 123, "started": "test"})
+    monkeypatch.setattr("inference.verify_runtime",
+                        lambda p, a, m, proc, **kw: R.verify_runtime(p, a, m, proc, tmp_path, **kw))
+    monkeypatch.setattr("inference.prepare_runtime_files", lambda m: R.prepare_runtime_files(m, tmp_path))
+    posts = []
+    def handler(request):
+        if request.method == "POST":
+            posts.append(request)
+            return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {"content": "{}"}}]})
+        return httpx.Response(200, json=props if request.url.path == "/props" else [])
+    async def run():
+        client = LlamaClient("http://127.0.0.1:8081/v1", "test", manifest)
+        await client.http.aclose()
+        client.http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        real_digest = R._digest
+        try:
+            monkeypatch.setattr(R, "_digest", lambda p: (_ for _ in ()).throw(AssertionError("hash in request")))
+            with pytest.raises(ModelUnavailable, match="missing or stale"):
+                await client.chat_json([], {}, 16, {}, 1)
+            assert not posts
+            monkeypatch.setattr(R, "_digest", real_digest)
+            await client.prepare_runtime()
+            monkeypatch.setattr(R, "_digest", lambda p: (_ for _ in ()).throw(AssertionError("hash in request")))
+            assert await client.chat_json([], {}, 16, {}, 1) == {}
+            model.write_bytes(b"model replaced during service")
+            with pytest.raises(ModelUnavailable, match="missing or stale"):
+                await client.chat_json([], {}, 16, {}, 1)
+            assert len(posts) == 1
+        finally:
             await client.aclose()
     asyncio.run(run())

@@ -1,16 +1,25 @@
 """관리 스크립트로 띄운 로컬 모델의 파일·프로세스·문맥을 확인한다. 원격 증명/전자서명은 아니다."""
 import ctypes
 import hashlib
+import json
+import logging
 import os
 import re
-from functools import lru_cache
+import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+log = logging.getLogger("roadmate.runtime")
 
 
-@lru_cache(maxsize=8)
-def _digest(path: str, size: int, modified: int, changed: int) -> str:
+def _file_key(path: Path) -> dict:
+    stat = path.stat()
+    return {"path": str(path), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns,
+            "ctime_ns": stat.st_ctime_ns, "inode": stat.st_ino}
+
+
+def _digest(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(4 * 1024 * 1024), b""):
@@ -18,10 +27,48 @@ def _digest(path: str, size: int, modified: int, changed: int) -> str:
     return h.hexdigest()
 
 
-def digest(path: Path) -> str:
+def digest(path: Path, cache_dir: Path = ROOT / "run" / "runtime-hashes", *, allow_hash: bool = True) -> str:
+    started = time.monotonic()
     p = path.resolve(strict=True)
-    stat = p.stat()
-    return _digest(str(p), stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+    key = _file_key(p)
+    cache = cache_dir / (hashlib.sha256(str(p).encode()).hexdigest() + ".json")
+    try:
+        record = json.loads(cache.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        record = None
+    if (isinstance(record, dict) and record.get("key") == key
+            and isinstance(record.get("sha256"), str) and re.fullmatch(r"[0-9a-f]{64}", record["sha256"])):
+        if _file_key(p) != key:
+            raise ValueError("file changed during cached hash verification")
+        log.info("hash cache hit path=%s elapsed_s=%.3f", p, time.monotonic() - started)
+        return record["sha256"]
+    log.info("hash cache miss path=%s allow_hash=%s elapsed_s=%.3f", p, allow_hash, time.monotonic() - started)
+    if not allow_hash:
+        raise ValueError("hash cache missing or stale; prepare runtime outside the request before use")
+    sha = _digest(p)
+    if _file_key(p) != key:
+        raise ValueError("file changed while computing SHA256")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    temp = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=cache_dir, suffix=".tmp", delete=False) as stream:
+            temp = Path(stream.name)
+            json.dump({"key": key, "sha256": sha}, stream)
+        os.replace(temp, cache)
+    finally:
+        if temp is not None:
+            temp.unlink(missing_ok=True)
+    log.info("hash computed path=%s elapsed_s=%.3f", p, time.monotonic() - started)
+    return sha
+
+
+def prepare_runtime_files(manifest: dict, root: Path = ROOT) -> None:
+    model = root / "models" / manifest["model"]["gguf_file"]
+    if digest(model, root / "run" / "runtime-hashes") != manifest["model"]["gguf_sha256"]:
+        raise ValueError("model SHA256 mismatch")
+    if adapter := manifest.get("adapter"):
+        if digest(root / adapter["file"], root / "run" / "runtime-hashes") != adapter["sha256"]:
+            raise ValueError("adapter SHA256 mismatch")
 
 
 def process_identity(pid_file: Path) -> dict:
@@ -64,11 +111,12 @@ def process_identity(pid_file: Path) -> dict:
     return {"pid": pid, "started": str(started)}
 
 
-def verify_runtime(props: dict, adapters: list, manifest: dict, process: dict, root: Path = ROOT) -> dict:
+def verify_runtime(props: dict, adapters: list, manifest: dict, process: dict, root: Path = ROOT,
+                   *, allow_hash: bool = True) -> dict:
     model = root / "models" / manifest["model"]["gguf_file"]
     if Path(props["model_path"]).resolve() != model.resolve():
         raise ValueError("loaded model path differs from manifest")
-    sha = digest(model)
+    sha = digest(model, root / "run" / "runtime-hashes", allow_hash=allow_hash)
     if sha != manifest["model"]["gguf_sha256"]:
         raise ValueError("model SHA256 mismatch")
     ctx = props["default_generation_settings"]["n_ctx"]
@@ -83,7 +131,7 @@ def verify_runtime(props: dict, adapters: list, manifest: dict, process: dict, r
         path = root / expected["file"]
         if len(adapters) != 1 or Path(adapters[0]["path"]).resolve() != path.resolve() or adapters[0]["scale"] != 1:
             raise ValueError("loaded adapter differs from manifest")
-        adapter_sha = digest(path)
+        adapter_sha = digest(path, root / "run" / "runtime-hashes", allow_hash=allow_hash)
         if adapter_sha != expected["sha256"]:
             raise ValueError("adapter SHA256 mismatch")
     elif adapters:
@@ -94,3 +142,9 @@ def verify_runtime(props: dict, adapters: list, manifest: dict, process: dict, r
             "chat_template_sha256": hashlib.sha256(props["chat_template"].encode()).hexdigest()
             if isinstance(props.get("chat_template"), str) else None,
             "default_parameters": props["default_generation_settings"]["params"]}
+
+
+if __name__ == "__main__":
+    from config import load_manifest
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    prepare_runtime_files(load_manifest())

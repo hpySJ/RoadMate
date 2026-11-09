@@ -60,6 +60,25 @@ def test_korean_and_spanish_numeric_formats_do_not_use_english_conversions(local
     assert F.normalize_source(source, locale) == expected
 
 
+@pytest.mark.parametrize("source, expected", [
+    ("Only18 thousand75won", "only 18 thousand 75 won"),
+    ("is63 thousand250red one", "is 63 thousand 250 red one"),
+    ("just42 thousand1", "just 42 thousand 1"),
+    ("B2 A320 ABC42thousand250 GPS42thousand250", "b2 a320 abc42thousand250 gps42thousand250"),
+    ("Just42 is63red code42", "just42 is63red code42"),
+])
+def test_joined_numbers_share_validator_rules_without_guessing_currency(source, expected):
+    from validation import extract_numbers
+    assert F.normalize_source(source, "en-US") == expected
+    assert F.normalize_source(expected, "en-US") == expected
+    assert extract_numbers(source, "en-US") == extract_numbers(expected, "en-US")
+
+
+@pytest.mark.parametrize("locale", ["ko-KR", "es-US", "es-MX"])
+def test_joined_english_scale_spacing_is_not_applied_to_other_locales(locale):
+    assert F.normalize_source("just42 thousand1", locale) == "just42 thousand1"
+
+
 def test_variant_bytes_uses_each_cases_source_locale():
     cases = [{"id": locale, "source_locale": locale, "text": "09:25 P.M., 64,700 won."}
              for locale in ("en-US", "ko-KR", "es-US")]

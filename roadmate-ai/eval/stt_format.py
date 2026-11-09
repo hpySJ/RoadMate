@@ -3,12 +3,16 @@ import argparse
 import hashlib
 import json
 import re
+import sys
 import unicodedata
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from validation import space_english_number_boundaries  # noqa: E402
+
 DATASETS = ("general.jsonl", "general_es.jsonl", "naturalness.dev.jsonl")
-STT_FORMAT_VERSION = "stt-format-v2"
+STT_FORMAT_VERSION = "stt-format-v3"
 APOSTROPHES = frozenset("'’‘＇")
 _CLOCK = re.compile(r"(?<![\w:.,])(?P<hour>0?[1-9]|1[0-2]):(?P<minute>[0-5][0-9])\s*(?P<meridiem>[ap])\.?\s*m\.?(?!\w)")
 _GROUPED_INTEGER = r"[1-9][0-9]{0,2}(?:,[0-9]{3})+"
@@ -20,6 +24,7 @@ RULES = [
     "Preserve apostrophes, including contractions; replace other sentence punctuation with spaces.",
     "English only: valid 12-hour H:MM with am/pm becomes HMM a m or HMM p m.",
     "English only: comma-grouped integers in currency context become N thousand M; omit a zero remainder and retain the currency.",
+    "English only: split letter/digit boundaries in scale-anchored number phrases; preserve unknown identifier prefixes and all words/digits (including one, 1 and red).",
     "Preserve other numeric internal punctuation, numeric minus signs, leading decimal separators and percent units.",
     "Do not apply English time/amount conversions to Korean or Spanish; retain their numeric formats and units.",
     "Never replace won with one, 1 or red; observed recognition errors are not deterministic formatting rules.",
@@ -31,6 +36,7 @@ OBSERVATIONS = {
     "environment": {"emulator": "Pleos v2.1.0", "recognizer": "ON_DEVICE", "input": "TTS recorded audio injection"},
     "independently_reproduced": False,
     "english": {"lowercase": True, "sentence_punctuation": False, "apostrophe_retained": "don't",
+                "joined_fragments": ["just30 thousand1", "is87 thousand500red one"],
                 "examples": [{"input": "7:40 a.m.", "observed": ["740 a m"]},
                              {"input": "30,000 won", "observed": ["30 thousand one", "30 thousand1"]},
                              {"input": "87,500 won", "observed": ["87 thousand500red one"]}]},
@@ -47,6 +53,7 @@ def _thousands(amount: str) -> str:
 def normalize_source(text: str, locale="en-US") -> str:
     text = text.lower()
     if locale.split("-", 1)[0] == "en":
+        text = space_english_number_boundaries(text)
         text = _CLOCK.sub(lambda m: f"{int(m['hour'])}{m['minute']} {m['meridiem']} m", text)
         text = _MONEY_SUFFIX.sub(lambda m: f"{_thousands(m['amount'])} {m['unit']}", text)
         text = _MONEY_PREFIX.sub(lambda m: f"{m['unit']} {_thousands(m['amount'])}", text)

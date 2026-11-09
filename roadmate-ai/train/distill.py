@@ -8,6 +8,7 @@ import asyncio
 import csv
 import hashlib
 import json
+import logging
 import os
 import random
 import sys
@@ -381,6 +382,7 @@ async def generate(args):
     hashes = server_prompt_hashes(ROOT)
     teacher = Teacher(client, settings.manifest, hashes, args.teacher)
     try:
+        await client.prepare_runtime()
         identity = await client.runtime_identity()
         async with httpx.AsyncClient(timeout=300) as http:
             ready = await http.get(args.url.rstrip("/") + "/health/ready")
@@ -470,6 +472,8 @@ async def generate(args):
 
 
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="stage", required=True)
     gen = sub.add_parser("generate")

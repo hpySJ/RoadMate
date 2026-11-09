@@ -5,6 +5,10 @@ if (-not (Test-Path $Py)) { throw ".venv missing: run scripts\setup_ai_env.ps1" 
 # .env는 config.py가 읽는다(서버·smoke·평가 공통)
 $env:MODEL_BACKEND = if ($Mock) { "mock" } else { "llama" }
 $env:PYTHONIOENCODING = "utf-8"
+if (-not $Mock) {
+    & $Py (Join-Path $Root "runtime_identity.py")
+    if ($LASTEXITCODE -ne 0) { throw "model runtime preparation failed" }
+}
 
 # 백엔드 연동: 백엔드(8080)는 http://127.0.0.1:8000 으로 호출, 시연은 reload 없이 worker 1개
 $a = @("-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", $Port, "--workers", "1")

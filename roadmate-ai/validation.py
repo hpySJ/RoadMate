@@ -394,6 +394,18 @@ def spanish_times(text: str):
 
 # 검증: 30 thousand won, 30 mil wones처럼 숫자 뒤 단위 말은 숫자에 곱하고, 같은 말을 다시 세지 않게 위치를 돌려준다
 SCALES = {"en": {"k": 1e3, "thousand": 1e3, "million": 1e6, "mil": 1e6}, "es": {"mil": 1e3, "millon": 1e6, "millones": 1e6}}
+_EN_JOINED_SCALED_NUMBER = re.compile(
+    r"(?<![\w.,])(?:(?:is|are|was|were|just|only|about|around|roughly|approximately|exactly|nearly|over|under"
+    r"|at|by|for|costs?|pay|paid|charges?|charged)(?=\d))?"
+    r"\d+(?:,\d{3})*(?:\.\d+)?\s*(?:hundred|thousand|million)"
+    r"(?:\s*(?:and\s+)?\d+(?:[.,]\d+)?[a-z]*)?(?!\w)", re.I)
+
+
+def space_english_number_boundaries(text: str) -> str:
+    """Scale로 확인되는 영어 숫자 구간만 분리하며 글자·숫자·통화는 추정하거나 지우지 않는다."""
+    # shortcut: 식별자와 구분할 수 없는 임의 접두사는 보존한다. 실제 STT 근거가 더 모이면 범위를 검토한다.
+    return _EN_JOINED_SCALED_NUMBER.sub(
+        lambda m: re.sub(r"(?<=[A-Za-z])(?=\d)|(?<=\d)(?=[A-Za-z])", " ", m.group()), text)
 
 
 def _digit_nums(text: str, lang: str, out: list) -> list[tuple[int, int]]:
@@ -425,7 +437,9 @@ def _digit_nums(text: str, lang: str, out: list) -> list[tuple[int, int]]:
 
 def extract_numbers(text: str, locale: str) -> list[Num]:
     lang = LANG_KEY[locale]
-    if lang == "es":
+    if lang == "en":
+        text = space_english_number_boundaries(text)
+    elif lang == "es":
         text = _es_prep(fold(text))
     out: list[Num] = []
     spans: list[tuple[int, int]] = []
