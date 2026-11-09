@@ -246,6 +246,7 @@ def main():
     ready = response.json()
     if response.status_code != 200 or not ready.get("ready"):
         raise SystemExit("model is not ready; evaluation not started")
+    client.timeout = httpx.Timeout(max(60, 2 * float(ready.get("runtime_config", {}).get("model_timeout_s", 8)) + 10), connect=2)
     if (ready.get("backend") == "mock" or ready.get("model_id") == "mock") and not a.allow_mock:
         raise SystemExit("mock is not a translation quality evaluation; use --allow-mock only for contract checks")
     if ready.get("artifact_hashes") != artifact_hashes():

@@ -18,15 +18,7 @@ bash scripts/run.sh start                    # 모델 서버 → AI 서버 → s
 bash scripts/run.sh stop
 ```
 
-학습 쪽도 같습니다. 서버를 끈 뒤 실행합니다.
-
-```bash
-bash scripts/run.sh setup-train
-.venv-train/bin/python train/prepare_data.py --allow-draft --tokenizer Qwen/Qwen3-4B-Instruct-2507
-.venv-train/bin/python train/train_qlora.py --smoke
-bash scripts/run.sh setup-convert
-.venv/bin/python train/convert_adapter.py --adapter train/runs/lora-v1/smoke/adapter --apply --allow-smoke
-```
+선생 비교·증류는 아래 8장의 scripts/lora.sh를 사용합니다. 아래 DLPC 명령은 로컬 검증 중 실행하지 않았습니다.
 
 Windows 명령과의 대응은 이렇습니다. 나머지 Python 명령은 `.venv\Scripts\python.exe`를 `.venv/bin/python`으로, `\`를 `/`로 바꿔 그대로 씁니다.
 
@@ -130,7 +122,7 @@ POST /internal/v1/translate
 ```json
 {"request_id":"req-001","session_id":"sess-001","session_epoch":3,"turn_id":1,
  "status":"ok","translated_text":"휘발유로 가득 넣어 주세요.","clarification_question":null,
- "engine_bundle":"roadmate-ko-en-q4-v1","model_id":"roadmate-qwen4b-q4",
+ "engine_bundle":"roadmate-ko-en-q4-8b-v1","model_id":"roadmate-qwen8b-q4",
  "prompt_version":"translate-v9","glossary_version":"rental-ko-en-es-v11","latency_ms":850}
 ```
 - `source_locale`/`target_locale`: `ko-KR`, `en-US`, `es-US`, `es-MX` 중 한쪽은 반드시 `ko-KR`(한↔영, 한↔스). Pleos STT·TTS locale 값을 그대로 쓴다 / `scenario`: `gas_station`, `parking`, `rental_counter`, `accident`, `general`
@@ -256,12 +248,6 @@ JSON 계약 → 목표 언어 문자 → 설명문 섞임 → 길이 → 숫자�
 
 느리거나 VRAM이 부족할 때: GPU 사용 확인(시작 로그 offload) → ctx·parallel·출력 상한 확인 → 불필요한 프로세스 종료 → `.\scripts\start_model.ps1 -GpuLayers 30`처럼 레이어 수를 줄이고 지연 재측정 → 그래도 부족하면 모델 PC와 에뮬레이터 PC 분리.
 
-Q5_K_M 비교:
-```powershell
-.\.venv\Scripts\python.exe scripts\download_model.py --file Qwen3-4B-Instruct-2507-Q5_K_M.gguf --sha256 5bde5e9d883622acb02bf77fe7dcbc56a8b9a9ad4be78a72ca23a532658b4ecb
-```
-`models/manifest.json`의 `gguf_file`, `gguf_sha256`, `gguf_size`, `engine_bundle`(예: `roadmate-ko-en-q5-v1`)을 바꾸고 재시작 → dev 평가. 두 모델을 동시에 띄우지 않는다.
-
 ### 7.3 선택된 모델과 평가
 
 DLPC 34bfd43 실행 및 Claude 블라인드 검토(사용자 제공, **AI 검토·참고**)에 따라 기본 모델을 8b-q4로 선택했다. 좋음/어색함/나쁨은 4B 64/30/6%, 8B 71/27/2%였고, 뜻 오류는 각각 16/268과 5/269였다. 8B 목적지 20/20, general p95 약 511ms가 보고됐다. 원본 결과를 이 PC에서 재실행한 수치는 아니다.
@@ -276,77 +262,77 @@ MODEL_PROFILE=8b-q4 .venv/bin/python eval/evaluate.py --file eval/general.jsonl 
 
 다른 서버가 실행 중이면 먼저 그 작업을 마친다. 4B Q4/Q8 대안은 MODEL_PROFILE만 바꾸며, 원본 결과와 로그를 보존한다. 잠근 시험은 튜닝에 사용하지 않는다.
 
-## 8. 학습(QLoRA)과 배포
+## 8. 8B LoRA 증류 준비
 
-1차 기본안은 **학습 없이 기준 Q4 + 프롬프트·용어집**으로 제출한다. QLoRA는 검수 데이터·GPU 시간이 확보될 때만 수행하고, 배포본이 기준보다 낫고 중요 정보 오류가 늘지 않을 때만 채택한다. 학습 중에는 에뮬레이터·llama-server를 끈다.
+학습 정답은 고정 Qwen 선생 모델의 **수정하지 않은 출력**만 사용한다. 사람·Claude·Codex 번역, 기존 seed·사람이 고친 review_data 산출물은 본학습에 넣지 않는다. AI 검토는 참고 판정이며 사람 검수로 표시하지 않는다.
 
-### 8.1 환경
-```powershell
-.\scripts\setup_train_env.ps1      # .venv-train: torch 2.14.1+cu126, transformers 5.22.1, peft 0.21.2, trl 1.17.1, bitsandbytes 0.50.2
-.\scripts\setup_convert_env.ps1    # .venv-convert: llama.cpp b12076 변환기 요구사항(transformers 4.57.6 고정이라 분리)
-```
-마지막 줄에 `cuda True`, GPU 이름, `bf16 True`가 보여야 한다.
+### 8.1 설치·용량
 
-### 8.2 데이터 작성
-`train/data/*.jsonl` 한 줄에 사례 하나:
-```json
-{"group_id":"fuel_10k_diesel","task":"translate","source_locale":"en-US","target_locale":"ko-KR","scenario":"gas_station",
- "text":"Just 10,000 won of diesel, please.",
- "output":{"status":"ok","translated_text":"경유로 만 원어치만 넣어 주세요.","clarification_question":null},
- "review_status":"approved","source":"authored"}
-```
-- 목적지: `"task":"destination"`, `output`은 `intent, query_original, query_ko_candidate, region_hint, category_hint, needs_confirmation`.
-- 같은 원문·역번역·금액/장소 치환 변형은 같은 `group_id`.
-- 사람이 원문·정답을 대조한 것만 `"review_status":"approved"`. 로컬 모델 초안을 그대로 정답으로 쓰지 않는다. 개인정보 제거.
-- 목표: 검수 1,000~1,500건(번역 1,200 · 목적지 200 · 모호/확인 100), 한↔영·한↔스 균형.
-- `train/data/seed.draft.jsonl`은 형식·스모크 시험용 초안 26건이다.
+    bash scripts/run.sh setup
+    bash scripts/run.sh setup-train
+    bash scripts/run.sh setup-convert
 
-검수 자료는 손으로 다 쓰지 않고 아래 순서로 만든다. 학습 목표는 숫자·부정·연료를 지키면서 자연스러운 한국어로 옮기는 것이다.
-```bash
-python train/sources/make_pool.py                  # 원문 묶음 train/sources/pool.jsonl (평가셋과 겹치는 문장은 자동 제외)
-bash scripts/run.sh start              # 다듬기 없이 초안을 뽑고 사람이 의미·자연스러움을 고친다
-.venv/bin/python train/review_data.py draft --name batch1
-# train/data/drafts/batch1.review.csv를 엑셀로 열어 어색한 문장은 fixed에 고쳐 쓰고, 맞으면 approve에 y
-.venv/bin/python train/review_data.py import --name batch1 --reviewer 이름
-```
-- 서버가 막은 문장은 초안 없이 CSV에 남는다. 사람이 fixed에 직접 번역해 승인한다.
-- `import`는 approve가 y인 줄만, 검사기를 통과해야 `train/data/batch1.approved.jsonl`로 가져온다. 통과 못 한 줄이 있으면 목록을 보여 주고 멈춘다.
-- 원문을 늘릴 때는 `make_pool.py`의 목록에 문장이나 틀(금액·시각·연료·방향 슬롯)을 추가한다. 같은 틀의 변형은 같은 group_id로 묶여 학습·검증 분할이 섞이지 않는다.
-- 초안을 그대로 승인하지 않는다. 어색한 문장을 사람이 고친 자료가 많을수록 학습이 문장을 자연스럽게 만드는 데 도움이 된다.
+| 파일 | 디스크 크기 | 용도 |
+|---|---:|---|
+| Qwen3-8B HF 원본 | 약 16GB | NF4 학습 |
+| 8B Q4_K_M GGUF | 5.03GB | 기본·어댑터 비교 |
+| 14B Q4_K_M GGUF | 9.00GB | 선생 비교·생성 |
+| 32B Q4_K_M GGUF | 19.76GB | 프로필 정의만, 자동 실행·다운로드 안 함 |
+| 환경·캐시·체크포인트 | 추가 수~수십 GB | 설치·체크포인트 수에 따라 변동 |
 
-### 8.3 준비 → 스모크 → 본학습
-```powershell
-.\.venv-train\Scripts\python.exe train\prepare_data.py --tokenizer Qwen/Qwen3-4B-Instruct-2507
-.\.venv-train\Scripts\python.exe train\train_qlora.py --smoke
-.\.venv-train\Scripts\python.exe train\train_qlora.py
-```
-- `prepare_data.py`: approved만 사용, 모든 정답을 서버 검증기로 검사, eval·few-shot과 겹치면 중단, **서버와 같은 프롬프트 빌더(`prompting.py`)로 prompt 생성**, 토큰 길이 > `max_length`면 중단(정답 잘림 방지), group_id 해시로 80/10/10 분할(자료를 추가해도 기존 그룹의 분할이 바뀌지 않음), `train/out/*_manifest.json` 기록.
-- `train_qlora.py`는 `dataset_manifest.json`의 해시를 검사하고, `--allow-draft`로 만든 자료면 `--smoke` 외에는 중단한다.
-  스모크 시험만 할 때는 `--allow-draft`로 seed 초안을 쓴다.
-- `--smoke`: optimizer step 2회, completion 마스크 검사(정답 JSON+`<|im_end|>`만 학습), 어댑터 저장, 생성 1회. `train/runs/lora-v1/smoke/run_meta.json`에서 `peak_vram_gib` 확인.
-- 설정은 `train/training_config.json`(NF4 + double quant, LoRA r8/α16/dropout 0.05, q_proj·v_proj, 배치 1×누적 16, lr 1e-4 cosine, warmup 5%, epoch 1, max_length 1536, gradient checkpointing). few-shot 포함 번역 프롬프트가 약 1,250토큰(translate-v3 추정)이라 max_length를 1536으로 둔다. `prepare_data.py --tokenizer`가 실제 길이를 재고 넘으면 중단한다.
-- 학습 loss 감소만으로 고르지 않는다. 숫자·부정·연료 오류가 늘면 채택하지 않는다.
+여유 디스크 50~70GB 이상을 계획한다. 파일 크기는 VRAM 요구량과 다르다. 14B는 8GB GPU에 전체 적재되지 않으므로 아래는 GPU_LAYERS=20으로 일부만 GPU에 올린다. 레이어 수·제한 시간 60초는 실측 전 시작값이다. CPU/RAM에 따라 조정하며 8B 학습도 8GB VRAM에서 OOM 가능성이 있다.
 
-### 8.4 효과 비교(같은 검증 자료)
-```powershell
-.\.venv-train\Scripts\python.exe train\eval_hf.py --split validation                                        # NF4 기준
-.\.venv-train\Scripts\python.exe train\eval_hf.py --split validation --adapter train\runs\lora-v1\adapter   # NF4 + LoRA
-```
-결과는 실행마다 `train/runs/eval_hf/<split>-<어댑터>-<시각>/`에 `results.jsonl`과 `meta.json`(기준 모델·revision·어댑터·데이터 manifest·통계)으로 따로 남는다.
+[공식 14B](https://huggingface.co/Qwen/Qwen3-14B-GGUF/tree/530227a7d994db8eca5ab5ced2fb692b614357fd), [공식 32B](https://huggingface.co/Qwen/Qwen3-32B-GGUF/tree/938a7432affaec9157f883a87164e2646ae17555)의 revision·SHA256·크기를 manifest에 고정했다. 생각 모드를 끄며 실제 응답에 생각 내용이 나오면 거절한다.
 
-### 8.5 GGUF 어댑터로 배포
-```powershell
-.\.venv\Scripts\python.exe train\convert_adapter.py --adapter train\runs\lora-v1\adapter --apply
-.\scripts\stop_all.ps1; .\scripts\start_all.ps1
-.\.venv\Scripts\python.exe eval\evaluate.py --file eval\dev.jsonl --label q4-lora-v1
-```
-- 고정 revision의 base config로 `convert_lora_to_gguf.py` 실행 → `models/adapters/roadmate-lora-v1-f16.gguf`, SHA256을 manifest에 기록, `engine_bundle`이 `roadmate-ko-en-q4-lora-v1`로 바뀐다(백엔드도 같은 bundle 이름으로 호출).
-- `start_model.ps1`이 manifest의 adapter를 보고 `--lora`를 붙인다. `/health/ready`가 어댑터 로딩을 확인한다.
-- 채택 판단은 **기준 Q4 vs Q4+LoRA를 dev·검증 분할로** 한다. 잠근 시험은 결정 후 한 번만.
-- 되돌리기: `.\.venv\Scripts\python.exe train\convert_adapter.py --remove` 후 재시작.
-- 변환 전 어댑터 옆 `run_meta.json`의 학습 원본(repo·revision)이 manifest 본체와 다르면 중단한다.
-- **본학습 전에** 작은 스모크 어댑터로 이 변환·로딩을 먼저 끝까지 확인한다(아래 검증 상태 참고). 스모크·초안 어댑터 등록은 `--allow-smoke`를 붙여야 하며, 확인 후 `--remove`로 되돌린다.
-  `.\.venv\Scripts\python.exe train\convert_adapter.py --adapter train\runs\lora-v1\smoke\adapter --apply --allow-smoke`
+### 8.2 단계별 명령
+
+각 --out은 새 폴더여야 한다. 시간은 **실측값이 아닌 계획용 추정**이며 다운로드·검토 시간은 별도다.
+
+| 단계 | 예상 시간 |
+|---|---|
+| teacher-check | 10~60분 이상 |
+| generate | 1~6시간 이상 |
+| train-eval | 4~24시간 이상 |
+
+단계별 명령 한 줄:
+
+    GPU_LAYERS=20 MODEL_TIMEOUT_S=60 bash scripts/lora.sh teacher-check --out train/runs/teacher-01
+    GPU_LAYERS=20 MODEL_TIMEOUT_S=60 bash scripts/lora.sh generate --out train/runs/distill-01
+    bash scripts/lora.sh train-eval --data train/runs/distill-01 --out train/runs/lora-01
+
+CPU offload, 실제 토큰 수, 필터 통과율에 따라 시간·자료 수가 달라진다. 각 단계는 설정·로그·산출물·stage_summary.md를 한 폴더에 남기고 요약을 출력한다. 홈의 roadmate-review-*.tgz에는 리뷰 CSV/MD만 포함하고 key·설정·평가 원본은 넣지 않는다. 비교 리뷰는 Claude용·Codex용을 분리한다. 기존 PID·사용 중인 포트를 발견하면 시작하지 않고 자신이 시작한 프로세스만 종료한다.
+
+teacher-check는 8B·14B로 general·general_es·naturalness.dev를 평가한다. FAIL·502·첫 시도 오언어·재시도·번역투·p50/p95와 블라인드 리뷰를 남긴다. **14B가 더 좋은 선생인지 검토한 뒤 generate로 진행한다.** 예시의 8B도 같은 offload·제한 시간을 쓰므로 기존 GPU 전체 적재 지연과 구분한다. 32B는 자동 대안으로 실행하지 않는다.
+
+### 8.3 원문·정답·AI 표본 검토
+
+정답 없는 원문 풀은 en-US·es-US·es-MX ↔ ko-KR 6개 locale 방향과 주유·주차·대여/반납·사고·길 묻기 5개 상황, 목적지 사례를 포함한다. 숫자·시각·금액·연료·부정·좌우·수수 방향을 독립 조합하고 같은 틀은 같은 group_id로 묶는다. 선생 모델의 상황별 발화도 추가하며 생성 요청·응답·모델 해시를 기록한다.
+
+원문과 출력 모두 평가셋·few-shot 정확/근사 중복을 제외한다. locked는 봉인된 중복 배제에만 쓰고 추론·점수·튜닝에 쓰지 않는다. 문자·슬롯 비교가 모든 의미상 중복을 보장하지는 않는다. 서버와 같은 프롬프트의 선생 원본 출력에 안전 검사·번역투 필터를 적용한다. 통과분을 단계 폴더의 distill.draft.jsonl과 최신 사본 train/data/distill.draft.jsonl에 저장한다. 이전 사본·원본 응답·해시·필터 결과도 보존한다.
+
+무작위 최대 150행의 sample.review.csv를 AI에게 전달한다. key는 전달하지 않는다. ai_verdict·ai_issue·notes만 채우고 원문·출력을 고치지 않는다. 실제 검토한 AI 모델을 기록한다.
+
+    .venv/bin/python train/distill.py review --draft train/runs/distill-01/distill.draft.jsonl --review train/runs/distill-01/sample.review.csv --key train/runs/distill-01/sample.key.json --out train/runs/distill-01/sample.evidence.json --reviewer '<실제로 검토한 AI 모델>'
+
+표본 누락·나쁨·해시 불일치는 학습을 막는다. 나쁜 정답을 사람이 고쳐 넣지 말고 선생·생성 단계부터 검토한다. 상태는 auto_filtered_ai_sample_reviewed, human_reviewed=false다. 본학습은 이 증거와 Qwen 원본 출력 해시를 재확인한다. 아직 실제 선생 정답·표본 검토를 만들지 않았다.
+
+### 8.4 학습·채택
+
+고정 HF 8B에 NF4 double quantization, r16/alpha32, q/k/v/o/gate/up/down, 2 epoch를 적용한다. group_id 단위 80/10/10 분할과 max_length 4096을 사용하고 넘는 정답은 자르지 않고 중단한다. enable_thinking=False로 prompt/completion을 먼저 렌더링하며 정답 JSON에만 loss를 준다. 첫 배치 마스킹도 확인한다. [TRL 형식 문서](https://huggingface.co/docs/trl/sft_trainer#train-on-completion-only)를 따른다.
+
+GGUF 어댑터와 .gguf.json 출처 파일을 만들며 기본 manifest를 수정하지 않는다. train-eval은 8B 기본·8B+LoRA를 같은 세 개발셋으로 비교한다. 독립 검토 뒤 다음을 general·general_es·naturalness.dev 각각에 적용한다.
+
+    .venv/bin/python eval/export_review.py --merge train/runs/lora-01/reviews/claude/review_pair01-general.csv train/runs/lora-01/reviews/codex/review_pair01-general.csv --key train/runs/lora-01/private/review_pair01-general.key.json --out-dir train/runs/lora-01/merged --label pair01-general
+
+불일치는 병합 CSV의 final에 사용자가 A/B별 판정을 적는다. 양쪽 AI 판정이 필요하며 누락을 좋음으로 세지 않는다. 세 파일 검토 후 GPU 없이 판정만 마무리한다.
+
+    bash scripts/lora.sh train-eval --finish train/runs/lora-01 --reviews train/runs/lora-01/merged
+
+조건은 같은 행에서 **나쁨 비증가·어색함 감소**, 각 평가셋 FAIL·502·목적지 실패 비증가, HTTP p95 증가 300ms 이하다. decision.json/.md에 pending/passed/rejected를 기록한다. 실패한 어댑터는 rejected로 표시해 로드를 막고 증거만 보존한다. 통과도 자동 배포하지 않는다.
+
+    MODEL_PROFILE=8b-q4 bash scripts/run.sh start --lora /절대경로/adapter.gguf
+
+후속 평가에도 같은 LORA_ADAPTER 절대 경로를 전달한다. 기본 복귀는 종료 후 LORA_ADAPTER= bash scripts/run.sh start로 실행한다. 실제 14B 품질·VRAM, 학습·변환·적재·LoRA 효과는 DLPC 확인 항목이다.
 
 ## 9. 문제 해결
 
@@ -392,6 +378,6 @@ MODEL_PROFILE=8b-q4 python scripts/check_prompt_budget.py \
 실행 PC에서 남은 확인:
 
 1. 실제 Qwen Q4의 한↔영·한↔스 의미 보존·자연스러움·지연. 개발 평가로 설정 확정 후 잠근 시험은 `--final`로 실행한다.
-2. 승인 학습 자료 1000건 이상과 GPU가 준비되면 기존 QLoRA 경로 실행, 기본 모델과 같은 자료로 비교. 초안 본학습 금지.
+2. 8장의 선생 비교 → 생성·AI 표본 검토 → 학습 비교 순서로 진행한다. 실측 전에는 어댑터를 채택하지 않는다.
 3. Pleos STT/TTS·기어·속도·방향지시등·NaviHelper·FusedLocation 입력을 실제 SDK에서 연결하고 fixture와 동등성 확인.
 4. 에뮬레이터와 모델 서버를 30분 함께 실행해 메모리·VRAM·취소·언어 전환을 확인.

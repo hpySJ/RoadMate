@@ -1,4 +1,4 @@
-"""학습: Qwen3-4B-Instruct-2507 NF4 QLoRA (Transformers + PEFT + TRL, completion-only loss).
+"""학습: Qwen3-8B NF4 QLoRA (Transformers + PEFT + TRL, completion-only loss).
 
 본학습 전 스모크: .venv-train\\Scripts\\python.exe train\\train_qlora.py --smoke
 본학습:         .venv-train\\Scripts\\python.exe train\\train_qlora.py
@@ -8,6 +8,7 @@ import argparse
 import hashlib
 import json
 import platform
+import re
 import sys
 import time
 from pathlib import Path
@@ -16,7 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import prompting as P  # noqa: E402
-from data_boundary import server_prompt_hashes  # noqa: E402
+from train.data_boundary import server_prompt_hashes  # noqa: E402
+from config import load_manifest  # noqa: E402
 
 
 def check_lengths(ds, tok, max_length: int) -> None:
@@ -24,10 +26,49 @@ def check_lengths(ds, tok, max_length: int) -> None:
         if not len(ds[split]):
             raise SystemExit(f"{split} split is empty: re-run train/prepare_data.py")
         for i, row in enumerate(ds[split], 1):
-            text = tok.apply_chat_template(row["prompt"] + row["completion"], tokenize=False)
+            rendered = render_training_row(row, tok)
+            text = rendered["prompt"] + rendered["completion"]
             n = len(tok(text, add_special_tokens=False, truncation=False)["input_ids"])
             if n > max_length:
                 raise SystemExit(f"{split}:{i} has {n} tokens > max_length={max_length}: completion would be truncated")
+
+
+def render_training_row(row, tok) -> dict:
+    """Pre-render strings so TRL cannot silently choose its own thinking template."""
+    prompt = tok.apply_chat_template(row["prompt"], tokenize=False, add_generation_prompt=True, enable_thinking=False)
+    full = tok.apply_chat_template(row["prompt"] + row["completion"], tokenize=False, enable_thinking=False)
+    if not full.startswith(prompt):
+        raise SystemExit("chat template does not preserve the generation prefix")
+    completion = full[len(prompt):]
+    if not completion.strip() or "<think>" in completion or "</think>" in completion:
+        raise SystemExit("training completion must be nonthinking JSON")
+    return {"prompt": prompt, "completion": completion}
+
+
+def check_teacher_evidence(manifest: dict) -> None:
+    teacher = load_manifest(ROOT / "models" / "manifest.qwen3-14b.json")["model"]
+    if (manifest.get("target_source") != "qwen_teacher"
+            or manifest.get("review_status") != "auto_filtered_ai_sample_reviewed"
+            or manifest.get("human_reviewed") is not False
+            or manifest.get("teacher_model") != teacher
+            or not re.fullmatch(r"[0-9a-f]{64}", str(manifest.get("ai_review_sha256", "")))):
+        raise SystemExit("full training requires Qwen teacher targets and recorded AI sample review")
+
+
+def check_groups(data_dir: Path, manifest: dict) -> None:
+    if manifest.get("enable_thinking") is not False:
+        raise SystemExit("prepared dataset missing enable_thinking=False: re-run prepare_data.py")
+    groups = {}
+    for split in ("train", "validation", "test"):
+        for line in (data_dir / f"{split}.jsonl").read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            group = json.loads(line).get("meta", {}).get("group_id")
+            if not isinstance(group, str) or not group:
+                raise SystemExit("prepared dataset missing group_id")
+            if group in groups and groups[group] != split:
+                raise SystemExit("group_id crosses training/validation/test splits")
+            groups[group] = split
 
 
 def load_model(cfg: dict, use_4bit: bool):
@@ -76,6 +117,8 @@ def main():
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=str(ROOT / "train" / "training_config.json"))
+    ap.add_argument("--data-dir", type=Path)
+    ap.add_argument("--output-dir", type=Path)
     ap.add_argument("--smoke", action="store_true", help="optimizer step 2회 + 저장·생성 확인")
     ap.add_argument("--base-model", default=None, help="config의 base_model 대신 사용(검증용)")
     ap.add_argument("--no-4bit", action="store_true", help="양자화 없이 로딩(CPU 검증용)")
@@ -85,11 +128,17 @@ def main():
     cfg = json.loads(Path(a.config).read_text(encoding="utf-8"))
     if a.base_model:
         cfg["base_model"], cfg["base_revision"] = a.base_model, None
+    if a.data_dir:
+        cfg["data_dir"] = str(a.data_dir.resolve())
+    if a.output_dir:
+        cfg["output_dir"] = str(a.output_dir.resolve())
+    if cfg.get("enable_thinking") is not False:
+        raise SystemExit("training requires enable_thinking=False")
     use_4bit = cfg["load_in_4bit"] and not a.no_4bit
     out_dir = ROOT / cfg["output_dir"] / ("smoke" if a.smoke else "")
     data_dir = ROOT / cfg["data_dir"]
 
-    # 검증: 본학습은 검수(approved) 자료만, prepare_data.py 이후 바뀐 파일이 없는지 manifest 해시로 확인
+    # 검증: prepare_data가 승인한 자료와 해시만 사용한다(자동 검토와 사람 검수는 별도 상태).
     dm_path = data_dir / "dataset_manifest.json"
     if not dm_path.exists():
         raise SystemExit(f"{dm_path} missing: run train/prepare_data.py first")
@@ -105,6 +154,12 @@ def main():
     if dm.get("prompt_hashes") != server_prompt_hashes(ROOT):
         raise SystemExit("prompt input hashes changed: re-run train/prepare_data.py")
 
+    if not a.smoke:
+        check_teacher_evidence(dm)
+    check_groups(data_dir, dm)
+    if out_dir.exists():
+        raise SystemExit(f"output directory already exists: {out_dir}")
+
     # 검수·무결성 확인 전에는 학습 의존성이나 모델을 불러오지 않는다.
     import torch
     from datasets import load_dataset
@@ -118,6 +173,8 @@ def main():
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     check_lengths(ds, tok, cfg["max_length"])
+    template_sha = hashlib.sha256(tok.chat_template.encode()).hexdigest()
+    ds = ds.map(lambda row: render_training_row(row, tok))
     model, dtype = load_model(cfg, use_4bit)
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())
@@ -173,14 +230,18 @@ def main():
     model.eval()
     model.config.use_cache = True
     row = load_dataset("json", data_files=files["validation"])["train"][0]
-    text = tok.apply_chat_template(row["prompt"], add_generation_prompt=True, tokenize=False)
+    text = tok.apply_chat_template(row["prompt"], add_generation_prompt=True, tokenize=False, enable_thinking=False)
     enc = tok(text, return_tensors="pt", add_special_tokens=False).to(model.device)
     with torch.no_grad():
         gen = model.generate(**enc, max_new_tokens=64, do_sample=False)
     sample = tok.decode(gen[0, enc["input_ids"].shape[1]:], skip_special_tokens=True)
 
     meta = {
-        "config": cfg, "smoke": a.smoke, "dataset": dm, "use_4bit": use_4bit, "dtype": str(dtype),
+        "config": cfg, "smoke": a.smoke, "dataset": dm,
+        "dataset_sha256": hashlib.sha256(dm_path.read_bytes()).hexdigest(),
+        "chat_template_sha256": template_sha, "enable_thinking": False,
+        "adapter_sha256": hashlib.sha256((adapter_dir / "adapter_model.safetensors").read_bytes()).hexdigest(),
+        "use_4bit": use_4bit, "dtype": str(dtype),
         "trainable_params": trainable, "total_params": total, "mask": mask,
         "train_seconds": round(secs, 1), "global_steps": result.global_step, "train_loss": result.training_loss,
         "peak_vram_gib": round(torch.cuda.max_memory_allocated() / 2**30, 2) if cuda else None,

@@ -80,7 +80,8 @@ class LlamaClient:
         if timeout_s <= 0:
             raise ModelTimeout("no time left")
         try:
-            r = await asyncio.wait_for(self.http.post(f"{self.base_url}/chat/completions", json=body), timeout_s)
+            r = await asyncio.wait_for(self.http.post(f"{self.base_url}/chat/completions", json=body,
+                timeout=httpx.Timeout(timeout_s, connect=min(2.0, timeout_s))), timeout_s)
         except asyncio.TimeoutError as e:
             raise ModelTimeout("model call exceeded deadline") from e
         except httpx.TransportError as e:

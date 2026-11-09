@@ -39,6 +39,8 @@ def main() -> int:
     print("ready:", ready.status_code, ready.json())
     if ready.status_code != 200:
         return 1
+    model_timeout = ready.json().get("runtime_config", {}).get("model_timeout_s", Settings.from_env().model_timeout_s)
+    c.timeout = httpx.Timeout(max(60, 2 * float(model_timeout) + 10), connect=2)
     if ready.json().get("model_profile") != Settings.from_env().model_profile:
         print("SMOKE FAIL: server MODEL_PROFILE differs from local selection")
         return 1

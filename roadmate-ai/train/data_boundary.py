@@ -71,6 +71,38 @@ def protected_templates(root: Path) -> set[str]:
     return keys
 
 
+def overlaps(text: str, locale: str, protected: set[str]) -> bool:
+    """Exclude exact/slot and near duplicates without exposing protected sentences."""
+    candidate = fingerprint(text, locale)
+    if candidate in protected:
+        return True
+    language, _, value = candidate.partition(":")
+    if len(value) < 12:
+        return False
+    for item in protected:
+        lang, _, other = item.partition(":")
+        if lang != language or len(other) < 12:
+            continue
+        matcher = SequenceMatcher(None, value, other, autojunk=False)
+        if matcher.real_quick_ratio() >= .9 and matcher.quick_ratio() >= .9 and matcher.ratio() >= .9:
+            return True
+    return False
+
+
+def record_overlaps(record: dict, protected: set[str]) -> list[str]:
+    issues = ["boundary_source"] if overlaps(record["text"], record["source_locale"], protected) else []
+    output = record.get("output", {})
+    if record["task"] == "translate":
+        texts = [(output.get("translated_text"), record["target_locale"]),
+                 (output.get("clarification_question"), record["source_locale"])]
+    else:
+        texts = [(output.get("query_original"), record["source_locale"]),
+                 (output.get("query_ko_candidate"), "ko-KR")]
+    if any(text and overlaps(text, locale, protected) for text, locale in texts):
+        issues.append("boundary_output")
+    return issues
+
+
 def server_prompt_hashes(root: Path) -> dict[str, str]:
     paths = ["prompting.py", "validation.py"]
     paths += [p.relative_to(root).as_posix() for folder in ("prompts", "packs")

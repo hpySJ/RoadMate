@@ -1,0 +1,38 @@
+{
+  "engine_bundle": "roadmate-ko-en-q4-14b-v1",
+  "model": {
+    "alias": "roadmate-qwen14b-q4",
+    "base_repo": "Qwen/Qwen3-14B",
+    "base_revision": "40c069824f4251a91eefaf281ebe4c544efd3e18",
+    "gguf_repo": "Qwen/Qwen3-14B-GGUF",
+    "gguf_revision": "530227a7d994db8eca5ab5ced2fb692b614357fd",
+    "gguf_file": "Qwen3-14B-Q4_K_M.gguf",
+    "gguf_sha256": "500a8806e85ee9c83f3ae08420295592451379b4f8cf2d0f41c15dffeb6b81f0",
+    "gguf_size": 9001752960,
+    "license": "apache-2.0"
+  },
+  "adapter": null,
+  "runtime": {
+    "llama_cpp_tag": "b12076",
+    "llama_cpp_backend": "cuda-12.4",
+    "port": 8081,
+    "ctx": 4096,
+    "parallel": 1,
+    "n_predict": 256,
+    "n_gpu_layers": 99,
+    "batch": 256,
+    "ubatch": 128,
+    "cache_ram_mib": 0,
+    "chat_template_kwargs": {
+      "enable_thinking": false
+    }
+  },
+  "versions": {
+    "translate_prompt": "translate-v11",
+    "destination_prompt": "destination-v5",
+    "glossary": "rental-ko-en-es-v12",
+    "rules": "rules-v5",
+    "poi": "poi-jeju-demo-v3",
+    "eval": "eval-ko-en-es-v5"
+  }
+}

@@ -5,13 +5,11 @@
 최종 배포 품질은 GGUF+LoRA로 llama-server를 띄운 뒤 eval\\evaluate.py로 측정한다.
 """
 import argparse
+import hashlib
 import json
 import sys
 import time
 from pathlib import Path
-
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -33,6 +31,11 @@ def main():
     if a.base_model:
         cfg["base_model"], cfg["base_revision"] = a.base_model, None
 
+    if cfg.get("enable_thinking") is not False:
+        raise SystemExit("HF evaluation requires enable_thinking=False")
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+
     cuda = torch.cuda.is_available()
     dtype = (torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16) if cuda else torch.float32
     kw = {"revision": cfg.get("base_revision"), "dtype": dtype}
@@ -52,7 +55,7 @@ def main():
     stats = {"n": 0, "json_ok": 0, "status_match": 0, "exact": 0, "validator_pass": 0}
     results = []
     for r in rows:
-        text = tok.apply_chat_template(r["prompt"], add_generation_prompt=True, tokenize=False)
+        text = tok.apply_chat_template(r["prompt"], add_generation_prompt=True, tokenize=False, enable_thinking=False)
         enc = tok(text, return_tensors="pt", add_special_tokens=False).to(model.device)
         with torch.no_grad():
             g = model.generate(**enc, max_new_tokens=256, do_sample=False)
@@ -87,7 +90,9 @@ def main():
         for x in results:
             f.write(json.dumps(x, ensure_ascii=False) + "\n")
     dm = ROOT / cfg["data_dir"] / "dataset_manifest.json"
-    meta = {"split": a.split, "base_model": cfg["base_model"], "base_revision": cfg.get("base_revision"),
+    meta = {"split": a.split, "enable_thinking": False,
+            "chat_template_sha256": hashlib.sha256(tok.chat_template.encode()).hexdigest(),
+            "base_model": cfg["base_model"], "base_revision": cfg.get("base_revision"),
             "adapter": str(Path(a.adapter).resolve()) if a.adapter else None, "use_4bit": cuda and not a.no_4bit,
             "dataset": json.loads(dm.read_text(encoding="utf-8")) if dm.exists() else None, "stats": stats}
     (out_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")

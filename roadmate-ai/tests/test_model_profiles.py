@@ -85,17 +85,14 @@ def test_profile_selection_loads_dotenv_without_overriding_shell(monkeypatch):
     assert model_profile() == "8b-q4"
 
 
-@pytest.mark.parametrize("name", ["4b-q8", "8b-q4"])
-def test_comparison_profile_cannot_rewrite_baseline_adapter(name, tmp_path, monkeypatch):
+def test_adapter_converter_has_no_base_manifest_mutation_options(monkeypatch):
     from train import convert_adapter
-    manifest = tmp_path / "manifest.json"
-    manifest.write_text('{"adapter":"preserve"}', encoding="utf-8")
-    monkeypatch.setattr(convert_adapter, "MANIFEST", manifest)
-    monkeypatch.setenv("MODEL_PROFILE", name)
+    manifest = ROOT / "models" / "manifest.qwen3-8b.json"
+    before = manifest.read_bytes()
     monkeypatch.setattr(sys, "argv", ["convert_adapter.py", "--remove"])
-    with pytest.raises(SystemExit, match="requires MODEL_PROFILE=4b-q4"):
+    with pytest.raises(SystemExit):
         convert_adapter.main()
-    assert manifest.read_text(encoding="utf-8") == '{"adapter":"preserve"}'
+    assert manifest.read_bytes() == before
 
 
 @pytest.mark.parametrize("profile", [None, ROOT / "models" / "manifest.json", PROFILE_Q8, PROFILE_8B])

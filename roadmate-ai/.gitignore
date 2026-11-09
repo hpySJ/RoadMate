@@ -25,3 +25,6 @@ train/base-config/
 
 # 비밀값
 .env
+
+# 실제 선생 출력은 실행 산출물
+train/data/distill.draft.jsonl

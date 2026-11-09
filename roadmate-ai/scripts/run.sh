@@ -2,7 +2,7 @@
 # 기본 MODEL_PROFILE=8b-q4. 대안은 MODEL_PROFILE=4b-q4 또는 4b-q8.
 # Linux(DLPC 등)용 설치·실행. Windows는 같은 폴더의 .ps1 스크립트를 쓴다.
 #   bash scripts/run.sh setup            .venv + llama.cpp(CUDA 12.8) + 모델 다운로드 + 환경 확인
-#   bash scripts/run.sh start [--mock]   llama-server(8081) → AI 서버(8000) 백그라운드 실행 → smoke 시험
+#   bash scripts/run.sh start [--mock | --lora FILE]   llama-server(8081) → AI 서버(8000) 백그라운드 실행 → smoke 시험
 #   bash scripts/run.sh stop             AI 서버 → 모델 서버 종료
 #   bash scripts/run.sh model            llama-server 포그라운드 실행(디버깅)
 #   bash scripts/run.sh ai [--mock]      AI 서버 포그라운드 실행(디버깅)
@@ -88,7 +88,10 @@ model_args() {
         -ngl "${GPU_LAYERS:-$(mf runtime.n_gpu_layers)}" -b "$(mf runtime.batch)" -ub "$(mf runtime.ubatch)"
         --cache-ram "$(mf runtime.cache_ram_mib)" --jinja --host 127.0.0.1 --port "$(mf runtime.port)")
     adapter="$(mf adapter.file)"
-    if [ -n "$adapter" ]; then ARGS+=(--lora "$ROOT/$adapter"); fi
+    if [ -n "$adapter" ]; then
+        [[ $adapter = /* ]] || adapter="$ROOT/$adapter"
+        ARGS+=(--lora "$adapter")
+    fi
 }
 
 ai_cmd() {  # $1 = --mock 또는 빈 값
@@ -149,7 +152,29 @@ stop_all() {
     done
 }
 
-case "${1:-}" in
+COMMAND="${1:-}"
+[ "$#" -eq 0 ] || shift
+MODE=""
+LORA_OPTION=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --mock) MODE=--mock; shift ;;
+        --lora)
+            LORA_OPTION=1
+            [ "$#" -ge 2 ] || die "--lora requires a GGUF adapter path"
+            export LORA_ADAPTER
+            LORA_ADAPTER="$("$BASE_PY" -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve(strict=True))' "$2")"
+            shift 2
+            ;;
+        *) die "unknown option: $1" ;;
+    esac
+done
+if [ -n "$MODE" ] && [ -n "${LORA_ADAPTER:-}" ]; then die "--mock cannot use a LoRA adapter"; fi
+if [ -n "$MODE$LORA_OPTION" ] && [[ ! $COMMAND =~ ^(start|model|ai)$ ]]; then
+    die "--mock/--lora applies to start, model or ai only"
+fi
+
+case "$COMMAND" in
     setup)
         new_venv .venv
         "$PY" -m pip install -r requirements.lock.txt
@@ -158,13 +183,13 @@ case "${1:-}" in
         "$PY" scripts/check_env.py
         ;;
     start)
-        if [ "${2:-}" != --mock ]; then
+        if [ "$MODE" != --mock ]; then
             model_args
             llama_env
             start_bg llama "$(mf runtime.port)" llama-server "$SERVER" "${ARGS[@]}"
             wait_http "http://127.0.0.1:$(mf runtime.port)/health" 300 llama
         fi
-        ai_cmd "${2:-}"
+        ai_cmd "$MODE"
         start_bg ai "${AI_PORT:-8000}" uvicorn "${ARGS[@]}"
         wait_http "http://127.0.0.1:${AI_PORT:-8000}/health/live" 60 ai
         "$PY" scripts/smoke.py
@@ -178,7 +203,7 @@ case "${1:-}" in
         exec "$SERVER" "${ARGS[@]}"
         ;;
     ai)
-        ai_cmd "${2:-}"
+        ai_cmd "$MODE"
         exec "${ARGS[@]}"
         ;;
     setup-train)

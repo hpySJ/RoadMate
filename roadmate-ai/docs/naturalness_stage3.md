@@ -1,5 +1,7 @@
 # 수정 및 자연스러움 검토 체계 — 2026-11-09
 
+> 과거 구현 기록입니다. 아래 실험 옵션과 naturalness_ab.sh는 8B 전환 시 삭제했습니다. 현재 실행은 [guide.md 8장](guide.md#8-8b-lora-증류-준비)을 따릅니다.
+
 POLISH_KO=0을 유지한다. TWO_STEP_KO, NATURAL_STYLE_KO, FIELD_GLOSSARY는 모두 기본값 0이며 서로 독립적이다. 이번 결과는 로컬 코드 검증 결과이며 실제 모델 번역 품질 개선을 의미하지 않는다.
 
 ## A 재현 전후

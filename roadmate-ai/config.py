@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-MODEL_PROFILES = {"4b-q4": "manifest.json", "4b-q8": "manifest.qwen3-4b-q8.json", "8b-q4": "manifest.qwen3-8b.json"}
+MODEL_PROFILES = {"4b-q4": "manifest.json", "4b-q8": "manifest.qwen3-4b-q8.json", "8b-q4": "manifest.qwen3-8b.json",
+                  "14b-q4": "manifest.qwen3-14b.json", "32b-q4": "manifest.qwen3-32b.json"}
 
 
 def artifact_hashes() -> dict[str, str]:
@@ -40,7 +41,36 @@ def manifest_path() -> Path:
 
 
 def load_manifest(path: Path | None = None) -> dict:
-    return json.loads((path or manifest_path()).read_text(encoding="utf-8"))
+    manifest = json.loads((path or manifest_path()).read_text(encoding="utf-8"))
+    # Explicit paths inspect immutable base profiles; the environment selects a per-run adapter.
+    adapter = os.environ.get("LORA_ADAPTER") if path is None else None
+    if not adapter:
+        return manifest
+    from runtime_identity import digest
+    file = Path(adapter).resolve(strict=True)
+    sidecar = json.loads(Path(str(file) + ".json").read_text(encoding="utf-8"))
+    expected = {key: manifest["model"][key] for key in ("base_repo", "base_revision", "gguf_sha256")}
+    if sidecar.get("base") != expected:
+        raise ValueError("LoRA base model/revision/hash does not match MODEL_PROFILE")
+    if sidecar.get("adoption_status") == "rejected":
+        raise ValueError("LoRA adapter rejected by paired evaluation")
+    if sidecar.get("smoke") or sidecar.get("allow_draft", True):
+        raise ValueError("smoke/draft LoRA cannot be served")
+    if not all(re.fullmatch(r"[0-9a-f]{64}", str(sidecar.get(key, "")))
+               for key in ("sha256", "dataset_sha256", "training_meta_sha256", "ai_review_sha256")):
+        raise ValueError("LoRA sidecar has incomplete training/data provenance")
+    if (sidecar.get("target_source") != "qwen_teacher"
+            or sidecar.get("review_status") != "auto_filtered_ai_sample_reviewed"):
+        raise ValueError("LoRA requires teacher targets with recorded AI sample review")
+    if sidecar["sha256"] != digest(file):
+        raise ValueError("LoRA adapter SHA256 mismatch")
+    if sidecar.get("enable_thinking") is not False:
+        raise ValueError("LoRA was not trained with enable_thinking=False")
+    manifest["adapter"] = {"file": str(file), "sha256": sidecar["sha256"],
+                           "base_revision": expected["base_revision"],
+                           "dataset_sha256": sidecar["dataset_sha256"]}
+    manifest["engine_bundle"] += "-lora-" + sidecar["sha256"][:12]
+    return manifest
 
 
 @dataclass(frozen=True)

@@ -13,7 +13,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "train"))
-from data_boundary import fingerprint, protected_templates  # noqa: E402
+from data_boundary import fingerprint, overlaps, protected_templates  # noqa: E402
+from sources.source_templates import generated_sources  # noqa: E402
 
 # (scenario, 문장) — 영어 화자(외국인 운전자)
 EN = [
@@ -168,6 +169,17 @@ def main():
         seen.add(norm(text))
         rows.append({"id": f"pool-{len(rows) + 1:04d}", "group_id": group, "source_locale": src,
                      "target_locale": "ko-KR" if src == "en-US" else "en-US", "scenario": scenario, "text": text})
+    seen_directions = {(r["source_locale"], r["target_locale"], norm(r["text"])) for r in rows}
+    for record in generated_sources():
+        key = (record["source_locale"], record.get("target_locale"), norm(record["text"]))
+        if overlaps(record["text"], record["source_locale"], blocked) or key in seen_directions:
+            dropped += 1
+            continue
+        seen_directions.add(key)
+        rows.append({"id": f"pool-{len(rows) + 1:04d}", **record})
+    # Legacy sources receive the same sealed near-duplicate check as newly authored templates.
+    rows = [dict(r, task=r.get("task", "translate"), source_origin=r.get("source_origin", "authored_source"))
+            for r in rows if not overlaps(r["text"], r["source_locale"], blocked)]
     out = ROOT / "train" / "sources" / "pool.jsonl"
     out.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8", newline="\n")
     print(f"{len(rows)} sentences ({dropped} dropped: already in eval, few-shot or train/data) -> {out}")

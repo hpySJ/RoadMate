@@ -98,6 +98,7 @@ def test_training_excludes_all_evaluation_files(monkeypatch, tmp_path, capsys, e
         (tmp_path / "prompts" / f"{name}.examples.json").write_text("[]", encoding="utf-8")
     monkeypatch.setattr(make_pool, "ROOT", tmp_path)
     monkeypatch.setattr(make_pool, "KO", [("general", text)])
+    monkeypatch.setattr(make_pool, "generated_sources", lambda: iter(()))
     for name in ("EN", "EN_T", "KO_T"):
         monkeypatch.setattr(make_pool, name, [])
     make_pool.main()
@@ -134,7 +135,8 @@ def test_prepare_rejects_unusable_training_data(tmp_path, case, message):
     source, output = tmp_path / "input.jsonl", tmp_path / "out"
     source.write_text(json.dumps(rec, ensure_ascii=False) + "\n", encoding="utf-8")
     result = subprocess.run([sys.executable, "-B", str(ROOT / "train/prepare_data.py"),
-                             "--inputs", str(source), "--out", str(output)], capture_output=True)
+                             "--inputs", str(source), "--out", str(output),
+                             *(["--allow-draft"] if case == "validation_only" else [])], capture_output=True)
     assert result.returncode != 0 and message.encode() in result.stdout + result.stderr
     assert not output.exists()
 
@@ -221,9 +223,10 @@ def test_prompt_hashes_detect_content_edits_without_version_bump(tmp_path, path)
                                            ("validation_long", "validation:1 has 7 tokens")])
 def test_training_checks_full_chat_length_without_truncation(case, message):
     class Tokenizer:
-        def apply_chat_template(self, messages, *, tokenize):
-            assert tokenize is False
-            return " ".join(f"<{m['role']}> {m['content']} </{m['role']}>" for m in messages)
+        def apply_chat_template(self, messages, *, tokenize, enable_thinking, add_generation_prompt=False):
+            assert tokenize is False and enable_thinking is False
+            text = " ".join(f"<{m['role']}> {m['content']} </{m['role']}>" for m in messages)
+            return text + " " if add_generation_prompt else text
 
         def __call__(self, text, *, add_special_tokens, truncation):
             assert add_special_tokens is False and truncation is False

@@ -1,4 +1,4 @@
-﻿# QWEN 구현: llama-server로 Qwen3-4B-Instruct-2507 Q4_K_M(+선택 LoRA) 실행
+﻿# QWEN 구현: llama-server로 선택 프로필 Q4/Q8(+선택 LoRA) 실행
 param([switch]$Background, [int]$GpuLayers = -1)
 . "$PSScriptRoot\_common.ps1"
 $m = Read-Manifest
@@ -16,7 +16,10 @@ $a = @(
     "-ngl", $ngl, "-b", $r.batch, "-ub", $r.ubatch, "--cache-ram", $r.cache_ram_mib,
     "--jinja", "--host", "127.0.0.1", "--port", $r.port
 )
-if ($m.adapter) { $a += @("--lora", (Join-Path $Root $m.adapter.file)) }
+if ($m.adapter) {
+    $adapterFile = if ([System.IO.Path]::IsPathRooted($m.adapter.file)) { $m.adapter.file } else { Join-Path $Root $m.adapter.file }
+    $a += @("--lora", $adapterFile)
+}
 
 $p = Start-Bg "llama" $exe $a $r.port
 Wait-Http "http://127.0.0.1:$($r.port)/health" 300 $p

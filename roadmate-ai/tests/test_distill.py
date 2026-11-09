@@ -1,0 +1,215 @@
+import asyncio
+import csv
+import json
+import subprocess
+import sys
+from collections import Counter
+from pathlib import Path
+
+import httpx
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "train"))
+
+import data_boundary as B
+import distill as D
+import prepare_data
+from inference import LlamaClient
+from sources.source_templates import DIRECTIONS, SCENARIOS
+
+
+def manifest():
+    return {"model": {"base_repo": "Qwen/Qwen3-14B", "base_revision": "b" * 40,
+                      "alias": "synthetic-teacher", "gguf_sha256": "a" * 64, "license": "apache-2.0"},
+            "adapter": None, "runtime": {"chat_template_kwargs": {"enable_thinking": False}}}
+
+
+def record(index=0):
+    # Synthetic unit-test answers never become repository training labels.
+    row = {"id": f"synthetic-{index}", "group_id": f"synthetic-group-{index}", "task": "translate",
+           "source_locale": "en-US", "target_locale": "ko-KR", "scenario": "general",
+           "text": "Could you stamp this luggage label?", "source": "teacher_distillation", "review_status": D.PENDING,
+           "prompt_version": D.P.prompt("translate")[0],
+           "output": {"status": "ok", "translated_text": "이 수하물 표에 도장을 찍어 주실 수 있나요?",
+                      "clarification_question": None}, "filters": {"passed": True, "issues": []}}
+    model = manifest()
+    raw = json.dumps({"model": model["model"]["alias"], "choices": [{"finish_reason": "stop",
+        "message": {"content": json.dumps(row["output"], ensure_ascii=False)}}]}, ensure_ascii=False)
+    row["teacher"] = {"model": model["model"], "manifest_sha256": D.digest(model),
+                      "runtime": {"model_sha256": "a" * 64, "adapter_sha256": None,
+                                  "chat_template_kwargs": {"enable_thinking": False}},
+                      "prompt_hashes": {"fixture": "synthetic"}, "messages_sha256": D.digest(D.messages_for(row)),
+                      "raw_response": raw, "raw_response_sha256": D.digest(raw.encode())}
+    return row
+
+
+def save_draft(path, rows):
+    path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
+
+
+def fill_review(path):
+    with path.open(encoding="utf-8-sig", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    for row in rows:
+        row["ai_verdict"] = "좋음"
+    with path.open("w", encoding="utf-8-sig", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=D.FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+    return rows
+
+
+def test_pool_has_all_directions_scenarios_and_no_targets():
+    rows = D.read_jsonl(ROOT / "train/sources/pool.jsonl")
+    translations = [r for r in rows if r["task"] == "translate"]
+    counts = Counter((r["source_locale"], r["target_locale"], r["scenario"]) for r in translations)
+    assert 2000 <= len(rows) <= 3000
+    assert set(counts) == {(source, target, scenario) for source, target in DIRECTIONS for scenario in SCENARIOS}
+    assert min(counts.values()) >= 60
+    assert any(r["task"] == "destination" for r in rows)
+    assert all("output" not in r and "ko_natural" not in r for r in rows)
+    assert len({(r["source_locale"], r.get("target_locale"), r["text"].casefold()) for r in rows}) == len(rows)
+
+
+def test_boundary_rejects_both_source_and_output_and_near_duplicates():
+    row = record()
+    protected = {B.fingerprint(row["text"], "en-US"), B.fingerprint(row["output"]["translated_text"], "ko-KR")}
+    assert B.record_overlaps(row, protected) == ["boundary_source", "boundary_output"]
+    assert B.overlaps("Could you stamp that luggage label?", "en-US", protected)
+    assert not B.overlaps("The kettle is unplugged.", "en-US", protected)
+
+
+@pytest.mark.parametrize("change", ["output", "raw", "model", "prompt", "human"])
+def test_targets_must_be_unedited_verified_teacher_output(change):
+    row = record()
+    assert D.verify_teacher_record(row, manifest(), {"fixture": "synthetic"}) == []
+    if change == "output":
+        row["output"]["translated_text"] = "다른 번역입니다."
+    elif change == "raw":
+        row["teacher"]["raw_response"] += " "
+    elif change == "model":
+        row["teacher"]["runtime"]["model_sha256"] = "c" * 64
+    elif change == "prompt":
+        row["teacher"]["prompt_hashes"] = {}
+    else:
+        row["source"] = "human_fixed"
+        row["review_status"] = "approved"
+    assert D.verify_teacher_record(row, manifest(), {"fixture": "synthetic"})
+
+
+def test_filters_keep_safety_and_translationese_requirements():
+    row = record()
+    assert D.filter_issues(row, set()) == []
+    row["output"]["translated_text"] = "나는 이 수하물 표에 도장을 찍어 줄 수 있나요?"
+    assert "translationese:first_person_pronoun" in D.filter_issues(row, set())
+    row["output"]["translated_text"] = "이 수하물 표에는 도장을 찍지 마세요."
+    assert "negation_mismatch" in D.filter_issues(row, set())
+
+
+def test_review_evidence_is_blind_and_bound_to_immutable_random_sample(tmp_path):
+    rows = [record(i) for i in range(160)]
+    draft = tmp_path / "distill.draft.jsonl"
+    save_draft(draft, rows)
+    D.export_sample(draft, rows, tmp_path, 42)
+    csv_path = tmp_path / "sample.review.csv"
+    assert "synthetic-teacher" not in csv_path.read_text(encoding="utf-8-sig")
+    assert "gguf_sha256" not in (tmp_path / "sample.review.md").read_text(encoding="utf-8")
+    filled = fill_review(csv_path)
+    assert len(filled) == 150
+    evidence_path = tmp_path / "sample.evidence.json"
+    D.record_review(draft, csv_path, tmp_path / "sample.key.json", evidence_path, "synthetic-ai-reviewer")
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert evidence["status"] == D.REVIEWED and evidence["human_reviewed"] is False
+    D.verify_ai_review(draft, rows, evidence)
+    evidence["sample"][0]["record_sha256"] = "tampered"
+    with pytest.raises(ValueError, match="complete random sample"):
+        D.verify_ai_review(draft, rows, evidence)
+    draft.write_text(draft.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="different draft"):
+        D.verify_ai_review(draft, rows, evidence)
+
+
+@pytest.mark.parametrize("change", ["translation", "bad", "blank"])
+def test_review_cannot_change_targets_or_skip_bad_sample(tmp_path, change):
+    draft = tmp_path / "distill.draft.jsonl"
+    save_draft(draft, [record()])
+    D.export_sample(draft, [record()], tmp_path, 42)
+    path = tmp_path / "sample.review.csv"
+    rows = fill_review(path)
+    if change == "translation":
+        rows[0]["output"] = "검토자가 쓴 새 번역"
+    else:
+        rows[0]["ai_verdict"] = "나쁨" if change == "bad" else ""
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=D.FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+    with pytest.raises(ValueError):
+        D.record_review(draft, path, tmp_path / "sample.key.json", tmp_path / "evidence.json", "AI reviewer")
+
+
+def test_teacher_captures_raw_response_and_rejects_wrong_response_model(monkeypatch):
+    async def identity(self):
+        return record()["teacher"]["runtime"]
+    monkeypatch.setattr(LlamaClient, "runtime_identity", identity)
+
+    async def run(alias):
+        client = LlamaClient("http://127.0.0.1:8081/v1", manifest()["model"]["alias"], manifest())
+        await client.http.aclose()
+        response = json.loads(record()["teacher"]["raw_response"])
+        response["model"] = alias
+        client.http = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=response)))
+        teacher = D.Teacher(client, manifest(), {"fixture": "synthetic"})
+        try:
+            output, provenance = await teacher.call(D.messages_for(record()), D.P.TRANSLATE_SCHEMA, 256, {})
+            assert output == record()["output"]
+            assert provenance["raw_response_sha256"] == D.digest(provenance["raw_response"].encode())
+        finally:
+            await client.aclose()
+    asyncio.run(run("synthetic-teacher"))
+    with pytest.raises(ValueError, match="alias mismatch"):
+        asyncio.run(run("different-model"))
+
+
+def test_prepare_rejects_legacy_human_approval_as_training_target(tmp_path):
+    row = record()
+    row.update(source="human_fixed", review_status="approved")
+    source = tmp_path / "legacy.jsonl"
+    save_draft(source, [row])
+    result = subprocess.run([sys.executable, str(ROOT / "train/prepare_data.py"), "--inputs", str(source),
+                             "--out", str(tmp_path / "prepared")], capture_output=True)
+    assert result.returncode != 0 and b"teacher_only" in result.stdout + result.stderr
+    assert not (tmp_path / "prepared").exists()
+
+
+def test_prepare_verified_teacher_draft_records_ai_review_and_group_split(monkeypatch, tmp_path):
+    pinned = json.loads((ROOT / "models/manifest.qwen3-14b.json").read_text(encoding="utf-8"))
+    rows = [record(0), record(1)]
+    rows[1]["text"] = "The display on this handheld scanner is broken."
+    rows[1]["output"]["translated_text"] = "이 휴대용 스캐너 화면이 고장 났어요."
+    assignments = prepare_data.split_groups([f"fixture-{index}" for index in range(100)], 42)
+    for row, split in zip(rows, ("train", "validation")):
+        row["group_id"] = next(group for group, assigned in assignments.items() if assigned == split)
+        raw = json.dumps({"model": pinned["model"]["alias"], "choices": [{"finish_reason": "stop",
+            "message": {"content": json.dumps(row["output"], ensure_ascii=False)}}]}, ensure_ascii=False)
+        row["teacher"].update(model=pinned["model"], manifest_sha256=D.digest(pinned),
+            prompt_hashes=B.server_prompt_hashes(ROOT), messages_sha256=D.digest(D.messages_for(row)),
+            raw_response=raw, raw_response_sha256=D.digest(raw.encode()))
+        row["teacher"]["runtime"]["model_sha256"] = pinned["model"]["gguf_sha256"]
+    draft = tmp_path / "distill.draft.jsonl"
+    save_draft(draft, rows)
+    D.export_sample(draft, rows, tmp_path, 42)
+    fill_review(tmp_path / "sample.review.csv")
+    evidence = tmp_path / "sample.evidence.json"
+    D.record_review(draft, tmp_path / "sample.review.csv", tmp_path / "sample.key.json", evidence, "synthetic-AI")
+    prepared = tmp_path / "prepared"
+    monkeypatch.setattr(sys, "argv", ["prepare_data.py", "--inputs", str(draft), "--ai-review", str(evidence),
+                                     "--out", str(prepared)])
+    monkeypatch.setattr(sys.stdout, "reconfigure", lambda **kw: None, raising=False)
+    prepare_data.main()
+    meta = json.loads((prepared / "dataset_manifest.json").read_text(encoding="utf-8"))
+    assert meta["review_status"] == D.REVIEWED and meta["target_source"] == "qwen_teacher"
+    assert meta["enable_thinking"] is False and meta["human_reviewed"] is False and meta["allow_draft"] is False
+    assert meta["counts"] == {"train": 1, "validation": 1, "test": 0}
+    assert meta["ai_review_sha256"] == D.digest(evidence.read_bytes())
