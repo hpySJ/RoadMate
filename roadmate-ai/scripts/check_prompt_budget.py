@@ -51,6 +51,9 @@ def main() -> int:
                              ("es-US", "Necesito ayuda con el contrato y el equipaje. ")):
         cases.append({"id": f"max-{source}-ko", "task": "translate", "source_locale": source, "target_locale": "ko-KR",
                       "scenario": "general", "text": (sentence * 12)[:400]})
+    cases.append({"id": "max-es-stt-question-ko", "task": "translate", "source_locale": "es-US",
+                  "target_locale": "ko-KR", "scenario": "general",
+                  "text": ("puede guardar la bolsa junto al mostrador " * 12)[:400]})
     # 400자에 여러 용어가 함께 있는 입력도 측정해 선택 힌트가 늘어나는 경우를 포함한다.
     for source in ("en-US", "es-US"):
         lang = P.LANG_KEY[source]

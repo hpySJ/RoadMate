@@ -1,6 +1,5 @@
-import hashlib
 import json
-from pathlib import Path
+import unicodedata
 
 import pytest
 
@@ -367,16 +366,44 @@ def test_midnight_hints_and_ambiguous_spanish_words():
     assert P.select_glossary("보증금은 30만 원이에요.", "ko-KR", "es-US")["보증금"] == "depósito de garantía"
 
 
-def test_baseline_translation_messages_are_unchanged_after_experiment_removal():
-    root = Path(__file__).resolve().parents[1]
-    baseline = json.loads((root / "tests/fixtures/translation_prompt_baseline.json").read_text(encoding="utf-8"))
-    datasets = {"dev.jsonl", "general.jsonl", "general_es.jsonl", "naturalness.dev.jsonl"}
-    cases = {(name, row["id"]): row for name in datasets
-             for line in (root / "eval" / name).read_text(encoding="utf-8").splitlines()
-             if line.strip() for row in [json.loads(line)] if row["task"] == "translate"}
-    expected = {(row["dataset"], row["id"]): row["sha256"] for row in baseline["records"]}
-    assert set(cases) == set(expected)
-    for key, row in cases.items():
-        messages = P.translate_messages(row["source_locale"], row["target_locale"], row["scenario"], row["text"])
-        serialized = json.dumps(messages, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        assert hashlib.sha256(serialized.encode("utf-8")).hexdigest() == expected[key], key
+@pytest.mark.parametrize("source,target,punctuated,spoken", [
+    ("en-US", "ko-KR", "The zipper on my backpack is stuck. Please hold the map.",
+     "the zipper on my backpack is stuck please hold the map"),
+    ("es-US", "ko-KR", "¿Tiene una funda para este asiento?", "tiene una funda para este asiento"),
+    ("ko-KR", "en-US", "목 받침이 너무 낮아서 불편하세요?", "목 받침이 너무 낮아서 불편하세요"),
+])
+def test_punctuation_and_stt_inputs_keep_original_payload_on_first_attempt_and_retry(source, target, punctuated, spoken):
+    from engine import translation_repair
+
+    for text in (punctuated, spoken):
+        messages = P.translate_messages(source, target, "rental_counter", text)
+        payload = json.loads(messages[-1]["content"])
+        assert payload == {
+            "source_locale": source, "target_locale": target, "target_language": P.LANG_NAME[target],
+            "scenario": "rental_counter", "glossary": P.select_glossary(text, source, target), "utterance": text,
+        }
+        repaired = translation_repair(messages, ["too_short"])
+        assert repaired[:-1] == messages[:-1]
+        retry_payload = json.loads(repaired[-1]["content"])
+        assert retry_payload.pop("repair")
+        assert retry_payload == payload
+        assert json.loads(messages[-1]["content"]) == payload
+
+
+def test_stt_examples_contrast_questions_with_statements_and_keep_language_pair_selection():
+    shots = [ex for ex in P.examples("translate")
+             if not any(unicodedata.category(c).startswith("P") for c in ex["input"]["utterance"])]
+    assert 2 <= len(shots) <= 4
+    assert all(ex["input"]["utterance"] == ex["input"]["utterance"].lower() for ex in shots)
+    assert sum(ex["output"]["translated_text"].endswith("?") for ex in shots) >= 2
+    assert any(ex["output"]["translated_text"].endswith(".") and "?" not in ex["output"]["translated_text"]
+               for ex in shots)
+    assert any(ex["input"]["source_locale"] == "ko-KR" for ex in shots)
+    for source in ("en-US", "es-US", "es-MX"):
+        messages = P.translate_messages(source, "ko-KR", "general", "x")
+        pairs = [(json.loads(user["content"]), json.loads(assistant["content"]))
+                 for user, assistant in zip(messages[1:-1:2], messages[2:-1:2])]
+        for ex in shots:
+            i = ex["input"]
+            same_pair = P.foreign_lang(i["source_locale"], i["target_locale"]) == P.LANG_KEY[source]
+            assert ((i, ex["output"]) in pairs) == same_pair

@@ -78,5 +78,21 @@
   {
     "input": {"source_locale": "en-US", "target_locale": "ko-KR", "scenario": "general", "glossary": {}, "utterance": "Do you want the blue folder or the green folder?"},
     "output": {"status": "ok", "translated_text": "파란색 서류철을 원하세요, 아니면 초록색 서류철을 원하세요?", "clarification_question": null}
+  },
+  {
+    "input": {"source_locale": "es-US", "target_locale": "ko-KR", "scenario": "rental_counter", "glossary": {}, "utterance": "tienen un estuche para guardar los lentes"},
+    "output": {"status": "ok", "translated_text": "안경 보관용 케이스가 있나요?", "clarification_question": null}
+  },
+  {
+    "input": {"source_locale": "ko-KR", "target_locale": "es-US", "scenario": "rental_counter", "glossary": {}, "utterance": "벨트가 어깨를 눌러서 불편하세요"},
+    "output": {"status": "ok", "translated_text": "¿Le molesta que el cinturón le presione el hombro?", "clarification_question": null}
+  },
+  {
+    "input": {"source_locale": "en-US", "target_locale": "ko-KR", "scenario": "general", "glossary": {}, "utterance": "the folded map is in my jacket pocket"},
+    "output": {"status": "ok", "translated_text": "접어 둔 지도는 제 재킷 주머니에 있어요.", "clarification_question": null}
+  },
+  {
+    "input": {"source_locale": "es-MX", "target_locale": "ko-KR", "scenario": "rental_counter", "glossary": {}, "utterance": "dejé el bolso en la recepción tráigamelo por favor"},
+    "output": {"status": "ok", "translated_text": "가방을 접수대에 두고 왔어요. 제게 가져다주세요.", "clarification_question": null}
   }
 ]

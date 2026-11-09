@@ -28,7 +28,7 @@
     }
   },
   "versions": {
-    "translate_prompt": "translate-v11",
+    "translate_prompt": "translate-v12",
     "destination_prompt": "destination-v5",
     "glossary": "rental-ko-en-es-v12",
     "rules": "rules-v5",

@@ -266,8 +266,11 @@ class Engine:
     async def translate(self, req, deadline: float) -> dict:
         if looks_like_other_language(req.text, req.source_locale):
             return {"status": "clarification_required", "translated_text": None,
-                    "clarification_question": WRONG_LANG[req.source_locale]}
+                    "clarification_question": WRONG_LANG[req.source_locale], "spanish_question_restored": False}
         messages = P.translate_messages(req.source_locale, req.target_locale, req.scenario, req.text)
+        question_restored = P.restore_spanish_question(req.text, req.source_locale) != req.text
+        log.info("translation_input %s", json.dumps({"request_id": req.request_id,
+                 "spanish_question_restored": question_restored}))
         structural = self.client.is_mock
         issues: list[str] = []
         out: dict | None = None
@@ -279,13 +282,14 @@ class Engine:
             issues = validate_translation(out, req.text, req.source_locale, req.target_locale, structural)
         except (ModelBadOutput, ModelTruncated) as e:
             issues = [e.code]
-        self._log_attempt(req, 1, issues, out)
+        self._log_attempt(req, 1, issues, out, question_restored)
         if not issues:
-            return out
+            return {**out, "spanish_question_restored": question_restored}
         if set(issues) <= CLARIFY_ISSUES:
             # QWEN 구현: 확인 질문만 잘못 썼으면 다시 생성하지 않고 말한 사람 언어의 고정 문구로 바꾼다(재생할 번역 없음)
             return {"status": "clarification_required", "translated_text": None,
-                    "clarification_question": SAY_AGAIN[req.source_locale]}
+                    "clarification_question": SAY_AGAIN[req.source_locale],
+                    "spanish_question_restored": question_restored}
         # QWEN 구현: 검증 실패 시 이유를 알려 주고 한 번만 결정적(temperature 0)으로 다시 생성
         if deadline - time.monotonic() < MIN_RETRY_S:
             raise ValidationFailed(issues)
@@ -296,21 +300,22 @@ class Engine:
             out = _with_meridiem(out, req)
             out = _normalize_korean_pronouns(out, req)
         except (ModelBadOutput, ModelTruncated) as e:
-            self._log_attempt(req, 2, [e.code], None)
+            self._log_attempt(req, 2, [e.code], None, question_restored)
             raise ValidationFailed(issues + [e.code]) from e
         except ModelError as e:
-            self._log_attempt(req, 2, [e.code], None)
+            self._log_attempt(req, 2, [e.code], None, question_restored)
             raise
         issues = validate_translation(out, req.text, req.source_locale, req.target_locale, structural)
-        self._log_attempt(req, 2, issues, out)
+        self._log_attempt(req, 2, issues, out, question_restored)
         if issues:
             raise ValidationFailed(issues)
-        return out
+        return {**out, "spanish_question_restored": question_restored}
 
-    def _log_attempt(self, req, attempt: int, issues: list[str], out: dict | None):
+    def _log_attempt(self, req, attempt: int, issues: list[str], out: dict | None, question_restored: bool):
         if self.s.log_rejected:
             log.warning("translation_attempt %s", json.dumps({"request_id": req.request_id, "attempt": attempt,
-                        "issues": issues, "output": out}, ensure_ascii=False))
+                        "issues": issues, "output": out, "spanish_question_restored": question_restored},
+                        ensure_ascii=False))
 
     async def parse_destination(self, req, deadline: float) -> dict:
         messages = P.destination_messages(req.source_locale, req.text)

@@ -1,5 +1,7 @@
 import asyncio
 import dataclasses
+import json
+import logging
 import time
 
 import httpx
@@ -84,8 +86,9 @@ def test_app_mock_and_internal_contract_remain_separate(client):
     assert result.status_code == 200
     assert set(result.json()) == {"request_id", "session_id", "session_epoch", "turn_id", "status",
                                   "translated_text", "clarification_question", "engine_bundle", "model_id",
-                                  "prompt_version", "glossary_version", "latency_ms"}
+                                  "prompt_version", "glossary_version", "latency_ms", "spanish_question_restored"}
     assert result.json()["request_id"] == "internal1" and result.json()["status"] == "ok"
+    assert result.json()["spanish_question_restored"] is False
     assert client.post("/internal/v1/translate", json=APP_BODY, headers=headers).status_code == 422
 
 
@@ -124,6 +127,65 @@ def test_app_validation_retry_still_blocks_wrong_fuel():
         result = c.post("/translate", json=APP_BODY)
     assert result.status_code == 502 and result.json()["error_code"] == "output_validation_failed"
     assert fake.calls == 2 and result.json()["request_id"]
+
+
+@pytest.mark.parametrize("path", ["/translate", "/internal/v1/translate"])
+@pytest.mark.parametrize("locale", ["es-US", "es-MX"])
+def test_spanish_question_restoration_keeps_raw_validation_and_app_contract(monkeypatch, caplog, path, locale):
+    import engine
+
+    source = "puede revisar el soporte del teléfono"
+    translated = "휴대폰 거치대를 확인해 주실 수 있나요?"
+    messages, validated_sources = [], []
+    validate = engine.validate_translation
+
+    def record_validation(out, text, *args):
+        validated_sources.append(text)
+        assert "spanish_question_restored" not in out
+        return validate(out, text, *args)
+
+    class RecordingLlama(FakeLlama):
+        async def chat_json(self, prompt, *args, **kwargs):
+            messages.append(prompt)
+            return await super().chat_json(prompt, *args, **kwargs)
+
+    monkeypatch.setattr(engine, "validate_translation", record_validation)
+    fake = RecordingLlama(outputs=[
+        {"status": "ok", "translated_text": "現在 " + translated, "clarification_question": None},
+        {"status": "ok", "translated_text": translated, "clarification_question": None},
+    ])
+    caplog.set_level(logging.INFO, logger="roadmate.ai")
+    settings = dataclasses.replace(SETTINGS, log_rejected=True)
+    payload = ({**APP_BODY, "text": source, "from": locale} if path == "/translate" else
+               {**internal_body(), "text": source, "source_locale": locale})
+    with TestClient(create_app(settings, fake)) as c:
+        result = c.post(path, json=payload, headers={"X-Internal-Token": SETTINGS.internal_token})
+    assert result.status_code == 200, result.text
+    assert fake.calls == 2 and validated_sources == [source, source]
+    assert [json.loads(m[-1]["content"])["utterance"] for m in messages] == [f"¿{source}?"] * 2
+    if path == "/translate":
+        assert result.json() == {"text": translated}
+    else:
+        assert result.json()["spanish_question_restored"] is True
+        assert result.json()["translated_text"] == translated
+    attempts = [json.loads(r.getMessage().removeprefix("translation_attempt ")) for r in caplog.records
+                if r.getMessage().startswith("translation_attempt ")]
+    assert len(attempts) == 2 and all(a["spanish_question_restored"] for a in attempts)
+    assert any(r.getMessage().startswith("translation_input ") for r in caplog.records)
+
+
+def test_restoration_metadata_survives_fixed_clarification():
+    from engine import SAY_AGAIN
+
+    fake = FakeLlama(outputs=[{"status": "clarification_required", "translated_text": None,
+                               "clarification_question": "다시 말씀해 주세요."}])
+    payload = {**internal_body(), "text": "puede revisar el soporte del teléfono", "source_locale": "es-US"}
+    with TestClient(create_app(SETTINGS, fake)) as c:
+        result = c.post("/internal/v1/translate", json=payload,
+                        headers={"X-Internal-Token": SETTINGS.internal_token})
+    assert result.status_code == 200 and fake.calls == 1
+    assert result.json()["clarification_question"] == SAY_AGAIN["es-US"]
+    assert result.json()["spanish_question_restored"] is True
 
 
 def test_app_timeout_and_slot_release_match_internal_route():

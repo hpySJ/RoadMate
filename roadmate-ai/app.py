@@ -21,7 +21,7 @@ from sessions import ModelSlot, TurnRegistry, payload_hash
 from validation import HANGUL
 
 log = logging.getLogger("roadmate.ai")
-API_VERSION = "1.4.1"  # 백엔드 연동: 계약이 바뀌면 올리고 docs/openapi.json 재생성
+API_VERSION = "1.5.0"  # 백엔드 연동: 계약이 바뀌면 올리고 docs/openapi.json 재생성
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -185,7 +185,7 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
             clarification_question=None if ok else out["clarification_question"].strip(),
             engine_bundle=s.engine_bundle, model_id=st["client"].model_id,
             prompt_version=st["engine"].translate_version, glossary_version=st["engine"].glossary_version,
-            latency_ms=latency,
+            latency_ms=latency, spanish_question_restored=out.get("spanish_question_restored", False),
         ).model_dump()
 
     def build_destination(req: DestinationRequest, out: dict, latency: int) -> dict:

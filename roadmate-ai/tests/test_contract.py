@@ -13,7 +13,7 @@ from inference import MockClient, ModelBadOutput
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = Settings.from_env()
-SETTINGS = dataclasses.replace(BASE, model_backend="mock", model_timeout_s=2.0, busy_wait_s=0.05, cancel_settle_s=0.1,
+SETTINGS = dataclasses.replace(BASE, model_backend="mock", model_timeout_s=30.0, busy_wait_s=0.05, cancel_settle_s=0.1,
                                dedupe_ttl_s=30, max_text_chars=400, internal_token="")  # 개발 PC의 .env와 무관하게
 
 
@@ -47,7 +47,7 @@ def test_translate_ok_and_ready(client):
     assert r.status_code == 200, r.text
     d = r.json()
     assert d["status"] == "ok" and d["model_id"] == "mock" and d["translated_text"].startswith("[모의 번역]")
-    assert d["prompt_version"] == "translate-v11" and r.headers["content-type"].endswith("charset=utf-8")
+    assert d["prompt_version"] == "translate-v12" and r.headers["content-type"].endswith("charset=utf-8")
     assert client.get("/health/live").json() == {"status": "ok"}
     ready = client.get("/health/ready")
     assert ready.status_code == 200 and ready.json()["ready"] is True

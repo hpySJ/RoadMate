@@ -2,6 +2,7 @@
 import json
 import math
 import re
+import unicodedata
 from functools import lru_cache
 from pathlib import Path
 
@@ -208,6 +209,21 @@ def _few_shot(name: str, lang: str | None = None) -> list[dict]:
     return msgs
 
 
+_ES_STT_QUESTION_START = re.compile(
+    r"^(?:(?:(?:me|nos|le)\s+)?(?:puede|pueden|podria|podrian)|puedo|podemos|se\s+puede|"
+    r"hay|ya|donde|cuanto|cuanta|cuantos|cuantas|que|como|a\s+que|por\s+que|cual)\b"
+)
+
+
+def restore_spanish_question(text: str, source_locale: str) -> str:
+    if (source_locale not in ("es-US", "es-MX")
+            or any(unicodedata.category(c).startswith("P") for c in text)):
+        return text
+    normalized = " ".join(fold(unicodedata.normalize("NFKC", text)).lower().split())
+    # shortcut: hay/ya 평서도 질문이 된다. 실제 STT 비교에서 오탐이 확인되면 이 접두 규칙을 재검토한다.
+    return f"¿{text}?" if _ES_STT_QUESTION_START.match(normalized) else text
+
+
 def translate_messages(source_locale: str, target_locale: str, scenario: str, text: str) -> list[dict]:
     # QWEN 구현: system + few-shot + 실제 발화(JSON으로 감싸 지시문 주입을 분리)
     _, system = prompt("translate")
@@ -217,7 +233,7 @@ def translate_messages(source_locale: str, target_locale: str, scenario: str, te
         "target_language": LANG_NAME[target_locale],
         "scenario": scenario,
         "glossary": select_glossary(text, source_locale, target_locale),
-        "utterance": text,
+        "utterance": restore_spanish_question(text, source_locale),
     }
     lang = foreign_lang(source_locale, target_locale)
     shots = _few_shot("translate", lang)

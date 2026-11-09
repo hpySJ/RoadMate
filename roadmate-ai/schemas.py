@@ -58,6 +58,7 @@ class TranslateResponse(BaseModel):
     prompt_version: str
     glossary_version: str
     latency_ms: int
+    spanish_question_restored: bool = False
 
 
 class AppTranslateRequest(_Strict):
