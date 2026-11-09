@@ -39,7 +39,7 @@ APK → 백엔드(8080) → AI 서버(8000) → llama-server(8081)
 
 ## 실행 환경
 
-NVIDIA GPU(VRAM 8GB 이상), RAM 16GB, Python 3.11~3.12를 기준으로 만들었습니다. Windows는 `scripts/*.ps1`, Linux(DLPC 등)는 `scripts/run.sh`로 설치하고 실행합니다. 자세한 방법은 [`docs/guide.md`](docs/guide.md)에 있습니다.
+현재 DLPC는 NVIDIA GPU(VRAM 24GB)를 사용합니다. GPU 적재·학습 메모리·처리 속도는 실제 실행에서 확인합니다. Windows는 `scripts/*.ps1`, Linux(DLPC 등)는 `scripts/run.sh`로 설치하고 실행합니다. 자세한 환경·용량 기준은 [`docs/guide.md`](docs/guide.md)에 있습니다.
 
 ## 지금 상태
 

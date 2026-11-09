@@ -8,6 +8,7 @@ import pytest
 
 import config
 from train import convert_adapter, train_qlora
+from train.source_mix import POLICY_VERSION
 
 
 def save(path, data):
@@ -111,6 +112,7 @@ def training_artifacts(tmp_path):
     data.mkdir()
     (data / "train.jsonl").write_text("synthetic data", encoding="utf-8")
     dataset = {"target_source": "qwen_teacher", "review_status": "auto_filtered_ai_sample_reviewed",
+               "source_mix_policy": POLICY_VERSION,
                "human_reviewed": False, "ai_review_sha256": "d" * 64,
                "teacher_model": config.load_manifest(config.ROOT / "models" / "manifest.qwen3-14b.json")["model"],
                "allow_draft": False, "outputs": {"train.jsonl": convert_adapter.sha256(data / "train.jsonl")}}

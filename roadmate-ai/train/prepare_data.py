@@ -17,6 +17,7 @@ import prompting as P  # noqa: E402
 from validation import looks_like_other_language, validate_destination, validate_translation  # noqa: E402
 from data_boundary import fingerprint, protected_templates, record_overlaps, server_prompt_hashes  # noqa: E402
 from distill import PENDING, REVIEWED, filter_issues, verify_ai_review, verify_teacher_record  # noqa: E402
+from train.source_mix import POLICY_VERSION, check_source_mix, source_mix  # noqa: E402
 
 
 def norm(s: str) -> str:
@@ -37,7 +38,8 @@ def build(rec: dict) -> dict:
         prompt = P.translate_messages(rec["source_locale"], rec["target_locale"], rec["scenario"], rec["text"])
     else:
         prompt = P.destination_messages(rec["source_locale"], rec["text"])
-    meta = {k: rec.get(k) for k in ("group_id", "task", "source_locale", "target_locale", "scenario", "text")}
+    meta = {k: rec.get(k) for k in ("group_id", "task", "source_locale", "target_locale", "scenario", "text",
+                                   "source_origin", "source_generation")}
     return {"prompt": prompt, "completion": [{"role": "assistant", "content": P.completion_text(rec["output"])}], "meta": meta}
 
 
@@ -127,6 +129,10 @@ def main():
         sys.exit(f"{len(errors)} invalid records. Fix them before training.")
     if not recs:
         sys.exit("no records (선생 모델 + AI 표본 검토 기록이 필요하며 --allow-draft는 스모크 시험 전용)")
+    try:
+        overall_mix = source_mix(recs) if a.allow_draft else check_source_mix(recs)
+    except ValueError as error:
+        sys.exit(str(error))
 
     rows = [build(r) for r in recs]
     if a.tokenizer:
@@ -147,6 +153,16 @@ def main():
     for split in ("train", "validation"):
         if split not in assign.values():
             sys.exit(f"{split} split is empty ({len(assign)} groups): add more groups or change --seed")
+    parts = {split: [r for r in rows if assign[r["meta"]["group_id"]] == split]
+             for split in ("train", "validation", "test")}
+    by_split_mix = {}
+    for split, part in parts.items():
+        metadata = [row["meta"] for row in part]
+        try:
+            by_split_mix[split] = (check_source_mix(metadata) if part and not a.allow_draft
+                                   else source_mix(metadata))
+        except ValueError as error:
+            sys.exit(f"{split}: {error}")
     if prompt_hashes != server_prompt_hashes(ROOT):
         sys.exit("prompt inputs changed during preparation: run it again")
     if input_hashes != {str(Path(path).resolve()): sha(Path(path)) for path in a.inputs} or (
@@ -155,8 +171,7 @@ def main():
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     counts = {}
-    for split in ("train", "validation", "test"):
-        part = [r for r in rows if assign[r["meta"]["group_id"]] == split]
+    for split, part in parts.items():
         counts[split] = len(part)
         with (out / f"{split}.jsonl").open("w", encoding="utf-8") as f:
             for r in part:
@@ -173,6 +188,8 @@ def main():
         "human_reviewed": False,
         "ai_review_sha256": evidence_hash,
         "teacher_model": teacher["model"] if teacher and not a.allow_draft else None,
+        "source_mix_policy": POLICY_VERSION,
+        "source_mix": {"overall": overall_mix, "by_split": by_split_mix},
         "prompt_versions": {"translate": P.prompt("translate")[0], "destination": P.prompt("destination")[0]},
         "glossary_version": P.glossary()["version"],
         "prompt_hashes": prompt_hashes,

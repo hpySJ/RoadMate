@@ -43,13 +43,13 @@ DLPC에서 알아 둘 점:
 | 항목 | 기준 |
 |---|---|
 | OS | Windows 10/11 64bit |
-| GPU | NVIDIA RTX 4060급 (VRAM 8GB 기준) |
+| GPU | NVIDIA GPU, 현재 DLPC는 VRAM 24GB |
 | 드라이버 | CUDA 12.4 빌드 사용 → NVIDIA 드라이버 551 이상 권장 |
 | RAM | 16GB 이상 |
 | Python | 3.11 (python.org 설치, `py -3.11` 사용 가능해야 함) |
-| 디스크 | 서버 약 5GB, 학습까지 약 25GB(원본 가중치·캐시 포함) |
+| 디스크 | 기본 8B GGUF 약 5GB, 선생 모델·학습 환경까지는 8.1장의 용량 기준 |
 
-추론 시 GPU 사용량 목표: 모델 프로세스 VRAM 5GiB 이하, 에뮬레이터와 동시 실행 시 GPU 여유 1GiB 이상.
+모델 가중치 외에 KV 캐시·계산 버퍼가 VRAM을 사용한다. 시작 로그의 실제 GPU 적재 레이어 수와 실행 중 VRAM 사용량을 확인하고, 에뮬레이터를 함께 쓰면 그 메모리도 별도로 확보한다.
 
 ## 2. 처음 설치
 
@@ -280,35 +280,43 @@ MODEL_PROFILE=8b-q4 .venv/bin/python eval/evaluate.py --file eval/general.jsonl 
 | 32B Q4_K_M GGUF | 19.76GB | 프로필 정의만, 자동 실행·다운로드 안 함 |
 | 환경·캐시·체크포인트 | 추가 수~수십 GB | 설치·체크포인트 수에 따라 변동 |
 
-여유 디스크 50~70GB 이상을 계획한다. 파일 크기는 VRAM 요구량과 다르다. 14B는 8GB GPU에 전체 적재되지 않으므로 아래는 GPU_LAYERS=20으로 일부만 GPU에 올린다. 레이어 수·제한 시간 60초는 실측 전 시작값이다. CPU/RAM에 따라 조정하며 8B 학습도 8GB VRAM에서 OOM 가능성이 있다.
+여유 디스크 50~70GB 이상을 계획한다. 파일 크기는 VRAM 요구량과 다르다. 현재 DLPC는 **VRAM 24GB**이므로 아래 명령은 GPU_LAYERS를 지정하지 않고 manifest의 n_gpu_layers=99로 전체 GPU 적재를 요청한다. 시작 로그의 실제 offload 레이어 수와 실행 중 VRAM 사용량으로 확인한다. 이 PC에서 24GB DLPC의 적재·학습·속도를 실측한 것은 아니다. MODEL_TIMEOUT_S=60은 실행 제한 시간이며 예상 지연이 아니다.
 
 [공식 14B](https://huggingface.co/Qwen/Qwen3-14B-GGUF/tree/530227a7d994db8eca5ab5ced2fb692b614357fd), [공식 32B](https://huggingface.co/Qwen/Qwen3-32B-GGUF/tree/938a7432affaec9157f883a87164e2646ae17555)의 revision·SHA256·크기를 manifest에 고정했다. 생각 모드를 끄며 실제 응답에 생각 내용이 나오면 거절한다.
 
 ### 8.2 단계별 명령
 
-각 --out은 새 폴더여야 한다. 시간은 **실측값이 아닌 계획용 추정**이며 다운로드·검토 시간은 별도다.
+각 --out은 새 폴더여야 한다. 24GB DLPC의 단계별 소요 시간은 **실측 전**이며, 기존 8GB CPU offload 가정의 시간 추정은 사용하지 않는다. 다운로드·검토 시간은 별도다.
 
-| 단계 | 예상 시간 |
+| 단계 | 소요 시간 |
 |---|---|
-| teacher-check | 10~60분 이상 |
-| generate | 1~6시간 이상 |
-| train-eval | 4~24시간 이상 |
+| teacher-check | 24GB DLPC 실측 필요 |
+| generate | 생성 발화 수·실제 토큰 수에 따라 실측 필요 |
+| train-eval | 학습 토큰 수·처리량에 따라 실측 필요 |
 
 단계별 명령 한 줄:
 
-    GPU_LAYERS=20 MODEL_TIMEOUT_S=60 bash scripts/lora.sh teacher-check --out train/runs/teacher-01
-    GPU_LAYERS=20 MODEL_TIMEOUT_S=60 bash scripts/lora.sh generate --out train/runs/distill-01
+    MODEL_TIMEOUT_S=60 bash scripts/lora.sh teacher-check --out train/runs/teacher-01
+    MODEL_TIMEOUT_S=60 bash scripts/lora.sh generate --out train/runs/distill-01
     bash scripts/lora.sh train-eval --data train/runs/distill-01 --out train/runs/lora-01
 
-CPU offload, 실제 토큰 수, 필터 통과율에 따라 시간·자료 수가 달라진다. 각 단계는 설정·로그·산출물·stage_summary.md를 한 폴더에 남기고 요약을 출력한다. 홈의 roadmate-review-*.tgz에는 리뷰 CSV/MD만 포함하고 key·설정·평가 원본은 넣지 않는다. 비교 리뷰는 Claude용·Codex용을 분리한다. 기존 PID·사용 중인 포트를 발견하면 시작하지 않고 자신이 시작한 프로세스만 종료한다.
+이전에 GPU_LAYERS를 export했다면 실행 전에 unset GPU_LAYERS로 해제한다. 실제 토큰 수와 필터 통과율에 따라 시간·자료 수가 달라진다. 각 단계는 설정·로그·산출물·stage_summary.md를 한 폴더에 남기고 요약과 경과 시간을 출력한다. 홈의 roadmate-review-*.tgz에는 리뷰 CSV/MD만 포함하고 key·설정·평가 원본은 넣지 않는다. 비교 리뷰는 Claude용·Codex용을 분리한다. 기존 PID·사용 중인 포트를 발견하면 시작하지 않고 자신이 시작한 프로세스만 종료한다.
 
-teacher-check는 8B·14B로 general·general_es·naturalness.dev를 평가한다. FAIL·502·첫 시도 오언어·재시도·번역투·p50/p95와 블라인드 리뷰를 남긴다. **14B가 더 좋은 선생인지 검토한 뒤 generate로 진행한다.** 예시의 8B도 같은 offload·제한 시간을 쓰므로 기존 GPU 전체 적재 지연과 구분한다. 32B는 자동 대안으로 실행하지 않는다.
+teacher-check는 8B·14B로 general·general_es·naturalness.dev를 평가한다. FAIL·502·첫 시도 오언어·재시도·번역투·p50/p95와 블라인드 리뷰를 남긴다. **14B가 더 좋은 선생인지 검토한 뒤 generate로 진행한다.** 두 모델 모두 전체 GPU 적재를 요청하고 같은 제한 시간을 사용한다. 실제 적재 방식이 다르면 로그에 남기고 지연 비교에 구분해 표시한다. 32B는 자동 대안으로 실행하지 않는다.
 
 ### 8.3 원문·정답·AI 표본 검토
 
-정답 없는 원문 풀은 en-US·es-US·es-MX ↔ ko-KR 6개 locale 방향과 주유·주차·대여/반납·사고·길 묻기 5개 상황, 목적지 사례를 포함한다. 숫자·시각·금액·연료·부정·좌우·수수 방향을 독립 조합하고 같은 틀은 같은 group_id로 묶는다. 선생 모델의 상황별 발화도 추가하며 생성 요청·응답·모델 해시를 기록한다.
+정적 원문 풀은 **115건의 보조 자료**(번역 107·목적지 8)만 남겼다. 숫자·낱말을 바꿔 늘렸던 2,400건은 삭제했고, 보조 자료도 그룹·locale 방향별 최대 2건이다. 정답은 저장하지 않는다.
+
+주된 원문은 선생 모델이 새로 쓰는 구어 발화다. 기본 목표는 4개 원문 locale × 5개 상황 × 80개로 **중복 제거 후 원문 1,600개**이며, 한국어 원문의 세 목표 locale을 포함하면 **번역 요청 2,400행**이다. 같은 원문을 다른 목표 언어로 옮긴 행은 원문 다양성에 중복 계산하지 않는다. 보조 115건까지 포함하면 필터 전 최대 2,515행이다. 실제 번역 정답은 이 원문을 서버와 같은 프롬프트로 선생 모델에 다시 요청해 얻는다.
+
+한 번에 최대 10개씩 요청하며, 짧은 부탁·질문·상태 설명·확인·정정·가벼운 머뭇거림을 섞고 배치별 주제 초점·seed를 바꾼다. 의도를 설명하는 글말이나 숫자만 바꾼 문장은 요구하지 않는다. 생성문끼리도 숫자 슬롯·지역 locale·근사 문자열 중복을 제거한다. 두 배의 고정 제안 예산 안에서 목표량을 채우지 못하면 기록을 남기고 중단하며 템플릿으로 메우지 않는다. 의미가 비슷하지만 표현이 크게 다른 중복과 실제 구어성은 표본 검토가 필요하다.
+
+group_id는 상황 전체가 아니라 독립 생성 배치별로 부여한다. 같은 원문의 여러 목표 언어는 같은 그룹을 유지한다. source_generation.jsonl에 생성 프롬프트·seed·원본 응답·모델 해시·채택/거절 이유를 기록하고 source_summary.json에 고유 원문·그룹 수를 남긴다. 생성 원문의 원본 응답도 준비 단계에서 대조하므로 출처 이름만 바꿔 선생 발화로 셀 수 없다.
 
 원문과 출력 모두 평가셋·few-shot 정확/근사 중복을 제외한다. locked는 봉인된 중복 배제에만 쓰고 추론·점수·튜닝에 쓰지 않는다. 문자·슬롯 비교가 모든 의미상 중복을 보장하지는 않는다. 서버와 같은 프롬프트의 선생 원본 출력에 안전 검사·번역투 필터를 적용한다. 통과분을 단계 폴더의 distill.draft.jsonl과 최신 사본 train/data/distill.draft.jsonl에 저장한다. 이전 사본·원본 응답·해시·필터 결과도 보존한다.
+
+안전 필터를 거친 뒤에도 선생 생성 원문 비율은 **80% 이상**이어야 한다. 보조 자료가 과해지면 보조 행을 제한하며 그 기록도 보존한다. prepare_data와 본학습에서 전체 및 train/validation/test 각 비어 있지 않은 분할의 비율을 다시 검사한다. summary.json·dataset_manifest.json에 필터 전후 비율, 출처별 행 수, 고유 원문 구조·그룹 수가 남는다. 이 비율은 자료 구성 규칙이며 자연스러움 향상의 측정 결과가 아니다.
 
 무작위 최대 150행의 sample.review.csv를 AI에게 전달한다. key는 전달하지 않는다. ai_verdict·ai_issue·notes만 채우고 원문·출력을 고치지 않는다. 실제 검토한 AI 모델을 기록한다.
 

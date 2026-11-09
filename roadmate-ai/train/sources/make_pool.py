@@ -1,7 +1,7 @@
-"""학습: 초안을 뽑을 원문 묶음(train/sources/pool.jsonl)을 만든다. 정답은 없다(review_data.py로 초안·검수).
+"""증류의 작은 안전·목적지 보조 원문 묶음을 만든다. 정답은 없다.
 
 사용: python train/sources/make_pool.py
-문장을 늘릴 때는 아래 목록에 추가한다. 같은 틀에서 숫자·연료·방향만 바꾼 변형은 같은 group_id로 묶인다.
+구어 원문의 본체는 선생 모델이 생성한다. 아래 보조 자료는 그룹·방향마다 최대 2건만 남긴다.
 같은 뜻의 영어·한국어 틀은 같은 group 이름을 쓴다(학습·검증 분할이 갈라지지 않게).
 dev·test·general 평가셋, few-shot, 이미 train/data에 있는 문장은 자동으로 뺀다.
 """
@@ -9,6 +9,7 @@ import hashlib
 import itertools
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -158,17 +159,18 @@ def main():
     # 학습: 그룹 ID는 목록 순번이 아니라 문장 내용으로 정한다(앞에 문장을 끼워도 기존 그룹이 바뀌지 않음)
     gid = lambda t: "p_" + hashlib.sha1(norm(t).encode()).hexdigest()[:10]  # noqa: E731
     rows, dropped = [], 0
-    items = ([(gid(t), sc, t, "en-US") for sc, t in EN]
-             + [(gid(t), sc, t, "ko-KR") for sc, t in KO]
-             + [(g, sc, t, "en-US") for g, sc, t in expand(EN_T)]
-             + [(g, sc, t, "ko-KR") for g, sc, t in expand(KO_T)])
-    for group, scenario, text, src in items:
+    items = ([(gid(t), sc, t, "en-US", "authored_source") for sc, t in EN]
+             + [(gid(t), sc, t, "ko-KR", "authored_source") for sc, t in KO]
+             + [(g, sc, t, "en-US", "authored_source_template") for g, sc, t in expand(EN_T)]
+             + [(g, sc, t, "ko-KR", "authored_source_template") for g, sc, t in expand(KO_T)])
+    for group, scenario, text, src, origin in items:
         if fingerprint(text, src) in blocked or norm(text) in seen:
             dropped += 1
             continue
         seen.add(norm(text))
         rows.append({"id": f"pool-{len(rows) + 1:04d}", "group_id": group, "source_locale": src,
-                     "target_locale": "ko-KR" if src == "en-US" else "en-US", "scenario": scenario, "text": text})
+                     "target_locale": "ko-KR" if src == "en-US" else "en-US", "scenario": scenario, "text": text,
+                     "source_origin": origin})
     seen_directions = {(r["source_locale"], r["target_locale"], norm(r["text"])) for r in rows}
     for record in generated_sources():
         key = (record["source_locale"], record.get("target_locale"), norm(record["text"]))
@@ -178,11 +180,18 @@ def main():
         seen_directions.add(key)
         rows.append({"id": f"pool-{len(rows) + 1:04d}", **record})
     # Legacy sources receive the same sealed near-duplicate check as newly authored templates.
-    rows = [dict(r, task=r.get("task", "translate"), source_origin=r.get("source_origin", "authored_source"))
-            for r in rows if not overlaps(r["text"], r["source_locale"], blocked)]
+    limited, counts = [], Counter()
+    for row in rows:
+        key = (row["group_id"], row["source_locale"], row.get("target_locale"))
+        if overlaps(row["text"], row["source_locale"], blocked) or counts[key] >= 2:
+            dropped += 1
+            continue
+        counts[key] += 1
+        limited.append(dict(row, task=row.get("task", "translate")))
+    rows = limited
     out = ROOT / "train" / "sources" / "pool.jsonl"
     out.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8", newline="\n")
-    print(f"{len(rows)} sentences ({dropped} dropped: already in eval, few-shot or train/data) -> {out}")
+    print(f"{len(rows)} supplement sources ({dropped} dropped: boundary, duplicate or group cap) -> {out}")
 
 
 if __name__ == "__main__":

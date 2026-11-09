@@ -60,14 +60,17 @@ def fill_review(path):
     return rows
 
 
-def test_pool_has_all_directions_scenarios_and_no_targets():
+def test_pool_is_a_bounded_safety_supplement_without_targets():
     rows = D.read_jsonl(ROOT / "train/sources/pool.jsonl")
     translations = [r for r in rows if r["task"] == "translate"]
-    counts = Counter((r["source_locale"], r["target_locale"], r["scenario"]) for r in translations)
-    assert 2000 <= len(rows) <= 3000
-    assert set(counts) == {(source, target, scenario) for source, target in DIRECTIONS for scenario in SCENARIOS}
-    assert min(counts.values()) >= 60
-    assert any(r["task"] == "destination" for r in rows)
+    counts = Counter((r["group_id"], r["source_locale"], r.get("target_locale")) for r in rows)
+    assert 0 < len(rows) <= 300
+    assert max(counts.values()) <= 2
+    assert {r["scenario"] for r in translations} == set(SCENARIOS)
+    destinations = Counter(r["source_locale"] for r in rows if r["task"] == "destination")
+    assert set(destinations) == {"en-US", "es-US", "es-MX", "ko-KR"}
+    assert max(destinations.values()) <= 2
+    assert not any(r["group_id"].startswith("distill_") for r in translations)
     assert all("output" not in r and "ko_natural" not in r for r in rows)
     assert len({(r["source_locale"], r.get("target_locale"), r["text"].casefold()) for r in rows}) == len(rows)
 
@@ -197,6 +200,13 @@ def test_prepare_verified_teacher_draft_records_ai_review_and_group_split(monkey
             prompt_hashes=B.server_prompt_hashes(ROOT), messages_sha256=D.digest(D.messages_for(row)),
             raw_response=raw, raw_response_sha256=D.digest(raw.encode()))
         row["teacher"]["runtime"]["model_sha256"] = pinned["model"]["gguf_sha256"]
+        row["source_origin"] = "teacher_generated"
+        messages = D.source_messages(row["source_locale"], row["scenario"], 1, 0)
+        source_raw = json.dumps({"model": pinned["model"]["alias"], "choices": [{"finish_reason": "stop",
+            "message": {"content": json.dumps({"utterances": [row["text"]]})}}]})
+        row["source_generation"] = {"version": D.SOURCE_VERSION, "index": 0, "messages": messages,
+            "teacher": {**row["teacher"], "messages_sha256": D.digest(messages),
+                        "raw_response": source_raw, "raw_response_sha256": D.digest(source_raw.encode())}}
     draft = tmp_path / "distill.draft.jsonl"
     save_draft(draft, rows)
     D.export_sample(draft, rows, tmp_path, 42)

@@ -8,7 +8,7 @@
 | `4b-q8` | 같은 4B의 Q8_0 | 4,280,405,600 | 양자화 차이 |
 | `8b-q4` | Qwen3-8B Q4_K_M | 5,027,783,488 | 선택된 기본 모델 |
 
-8B와 4B Instruct-2507은 학습 버전·thinking 지원도 달라 순수한 파라미터 수 실험으로 해석하지 않는다. 8B 파일이 약 5GB여도 KV 캐시·계산 버퍼가 추가되므로 8GB GPU 적재·OOM·지연은 DLPC에서 확인해야 한다. 세 프로필은 context 4096, slot 1, batch 256, ubatch 128과 같은 코드·자료·샘플링·요청 예산을 쓴다. 실패한 실험 옵션은 제거했다.
+8B와 4B Instruct-2507은 학습 버전·thinking 지원도 달라 순수한 파라미터 수 실험으로 해석하지 않는다. 현재 DLPC는 VRAM 24GB이며 GPU_LAYERS를 지정하지 않고 manifest 기본값 99로 전체 GPU 적재를 요청한다. 가중치 외에 KV 캐시·계산 버퍼가 추가되므로 실제 GPU 적재·메모리·지연은 실행 로그와 측정값으로 확인한다. 세 프로필은 context 4096, slot 1, batch 256, ubatch 128과 같은 코드·자료·샘플링·요청 예산을 쓴다. 실패한 실험 옵션은 제거했다.
 
 Q8은 [고정 Unsloth 파일](https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/blob/a06e946bb6b655725eafa393f4a9745d460374c9/Qwen3-4B-Instruct-2507-Q8_0.gguf)의 SHA256 `391c1e410fd9f4cf2de2b510273b56a84c19ce18f4fa3bfb3774031dac4ef068`, 8B는 [고정 공식 Qwen 파일](https://huggingface.co/Qwen/Qwen3-8B-GGUF/blob/7c41481f57cb95916b40956ab2f0b139b296d974/Qwen3-8B-Q4_K_M.gguf)의 SHA256 `d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785`를 manifest에 기록했다. 다운로드 뒤 실제 파일 해시를 대조한다.
 

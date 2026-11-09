@@ -25,11 +25,26 @@ from data_boundary import fingerprint, overlaps, protected_templates, record_ove
 from eval.evaluate import translationese_stats
 from inference import LlamaClient, ModelError
 from sources.source_templates import DIRECTIONS, SCENARIOS
+from source_mix import check_source_mix, source_mix
 from validation import looks_like_other_language, validate_destination, validate_translation
 
 PENDING = "auto_filtered_pending_ai_sample_review"
 REVIEWED = "auto_filtered_ai_sample_reviewed"
-SOURCE_VERSION = "distill-source-v1"
+SOURCE_VERSION = "distill-source-v2"
+SOURCE_BATCH_SIZE = 10
+SOURCE_LOCALES = ("en-US", "es-US", "es-MX", "ko-KR")
+SOURCE_TOPICS = {
+    "gas_station": ["pump controls", "payment", "fuel choice", "receipts", "staff assistance", "small spills"],
+    "parking": ["entry barrier", "payment machine", "finding a space", "lost ticket", "loading bags", "exit"],
+    "rental_counter": ["pickup", "return", "vehicle condition", "documents", "extra equipment", "changing plans"],
+    "accident": ["calling for help", "exchanging details", "describing damage", "witnesses", "waiting safely", "paperwork"],
+    "general": ["road signs", "junctions", "finding an entrance", "asking for directions", "a missed turn", "road access"],
+}
+SOURCE_FORMS = ("brief request", "simple question", "short factual statement", "polite correction",
+                "checking what was heard", "casual follow-up with clear references", "small hesitation or self-correction",
+                "ordinary practical question")
+SOURCE_FOCUS = ("ordinary interaction", "who gives or receives something", "negation", "request versus question",
+                "numbers or quantities", "time", "money", "fuel or left/right where relevant")
 FIELDS = ["sample_id", "task", "direction", "source", "output", "ai_verdict", "ai_issue", "notes"]
 
 
@@ -130,6 +145,29 @@ def verify_teacher_record(row: dict, manifest: dict, prompt_hashes: dict) -> lis
             return ["teacher_provenance_mismatch"]
     except (KeyError, TypeError, ValueError):
         return ["teacher_provenance_missing_or_invalid"]
+    return verify_source_record(row, manifest, prompt_hashes)
+
+
+def verify_source_record(row, manifest, prompt_hashes):
+    if row.get("source_origin") != "teacher_generated":
+        return []
+    try:
+        source = row["source_generation"]
+        evidence = source["teacher"]
+        spec = json.loads(source["messages"][-1]["content"])
+        utterances = raw_output(evidence["raw_response"], manifest["model"]["alias"])["utterances"]
+        if (source["version"] != SOURCE_VERSION or evidence["model"] != manifest["model"]
+                or evidence["manifest_sha256"] != digest(manifest) or evidence["prompt_hashes"] != prompt_hashes
+                or evidence["runtime"]["model_sha256"] != manifest["model"]["gguf_sha256"]
+                or evidence["runtime"].get("adapter_sha256") is not None
+                or evidence["runtime"].get("chat_template_kwargs") != {"enable_thinking": False}
+                or evidence["messages_sha256"] != digest(source["messages"])
+                or evidence["raw_response_sha256"] != digest(evidence["raw_response"].encode())
+                or spec["locale"] != row["source_locale"] or spec["scenario"] != row["scenario"]
+                or utterances[source["index"]] != row["text"]):
+            return ["source_generation_provenance_mismatch"]
+    except (KeyError, TypeError, ValueError, IndexError):
+        return ["source_generation_provenance_missing_or_invalid"]
     return []
 
 
@@ -208,41 +246,92 @@ def verify_ai_review(draft: Path, rows: list[dict], evidence: dict):
         raise ValueError("AI sample evidence does not match the complete random sample")
 
 
-async def source_augmentation(teacher: Teacher, out: Path, protected: set[str], count: int) -> list[dict]:
-    rows = []
-    schema = {"type": "object", "properties": {"utterances": {"type": "array", "items": {"type": "string"},
-              "minItems": count, "maxItems": count}}, "required": ["utterances"], "additionalProperties": False}
+def source_messages(locale, scenario, count, batch):
+    return [{"role": "system", "content":
+        "Create independent, everyday spoken turns for a rental-car assistant. Do not translate. "
+        "Write what someone actually says, not a description of their intention or a written explanation. "
+        "Prefer short, plain speech, contractions where natural, varied openings and sentence lengths. "
+        "Occasional hesitation or fragments are fine when the object and meaning remain clear without hidden context. "
+        "Each item must involve a different concrete situation and wording; never make number/name/word swaps "
+        "of one sentence or paraphrase the same request repeatedly. Use no examples, quotations or benchmark material. "
+        "Use only the requested locale: polite -요 speech in Korean, everyday usted in Latin American Spanish, "
+        "plain conversational English. Do not force every item to contain a number or a negation. Return JSON only."},
+        {"role": "user", "content": P._dump({"locale": locale, "scenario": scenario, "count": count,
+            "speaker": "local employee" if locale == "ko-KR" else "visiting driver",
+            "topics": SOURCE_TOPICS[scenario], "turn_form": SOURCE_FORMS[batch % len(SOURCE_FORMS)],
+            "focus": SOURCE_FOCUS[(batch + SCENARIOS.index(scenario)) % len(SOURCE_FOCUS)],
+            "independent_batch": batch})}]
+
+
+async def source_augmentation(teacher: Teacher, out: Path, protected: set[str], count: int, seed=42) -> list[dict]:
+    rows, seen, rejected = [], set(), Counter()
+    # Dedup before target expansion: regional aliases and numeric swaps do not buy diversity.
+    # shortcut: fingerprints/lexical similarity miss semantic paraphrases; inspect the blinded source sample too.
     with (out / "source_generation.jsonl").open("x", encoding="utf-8") as log:
-        for locale in ("en-US", "es-US", "es-MX", "ko-KR"):
+        for locale_index, locale in enumerate(SOURCE_LOCALES):
             for scenario in SCENARIOS:
-                messages = [{"role": "system", "content":
-                    "Create independent spoken source utterances for a rental-car assistant. Do not translate. "
-                    "Use no example sentences, quotations or memorized benchmark material. Write varied questions, "
-                    "requests and statements involving transfer direction, negation, numbers, times, money, fuel or sides. "
-                    "Use plausible local interactions and only the requested language. Return JSON only."},
-                    {"role": "user", "content": P._dump({"locale": locale, "scenario": scenario,
-                        "count": count, "speaker": "local employee" if locale == "ko-KR" else "visiting driver"})}]
-                output, provenance = await teacher.call(messages, schema, 1024,
-                    {"temperature": .7, "top_p": .8, "top_k": 20, "min_p": 0, "seed": 42})
-                log.write(json.dumps({"version": SOURCE_VERSION, "messages": messages, "teacher": provenance,
-                                      "output": output}, ensure_ascii=False) + "\n")
-                utterances = output.get("utterances")
-                if not isinstance(utterances, list) or len(utterances) != count:
-                    raise ValueError("teacher source generation returned the wrong count")
-                for text in utterances:
-                    if (not isinstance(text, str) or not 5 <= len(text) <= 400
-                            or looks_like_other_language(text, locale) or overlaps(text, locale, protected)):
-                        continue
-                    for source, target in DIRECTIONS:
-                        if source == locale:
-                            rows.append({"id": "teacher-source-" + digest([locale, target, text])[:16],
-                                "group_id": f"teacher-source-{scenario}", "task": "translate", "source_locale": locale,
-                                "target_locale": target, "scenario": scenario, "text": text,
-                                "source_origin": "teacher_generated", "source_generation": {
-                                    "version": SOURCE_VERSION, "messages_sha256": digest(messages),
-                                    "raw_response_sha256": provenance["raw_response_sha256"],
-                                    "model_sha256": provenance["model"]["gguf_sha256"]}})
+                accepted = 0
+                # Fixed two-times proposal budget; exhaustion stops instead of padding with templates.
+                max_batches = 2 * ((count + SOURCE_BATCH_SIZE - 1) // SOURCE_BATCH_SIZE)
+                for batch in range(max_batches):
+                    size = min(SOURCE_BATCH_SIZE, count - accepted)
+                    messages = source_messages(locale, scenario, size, batch)
+                    schema = {"type": "object", "properties": {"utterances": {"type": "array", "items": {"type": "string"},
+                              "minItems": size, "maxItems": size}}, "required": ["utterances"], "additionalProperties": False}
+                    sampling = {"temperature": .7, "top_p": .8, "top_k": 20, "min_p": 0,
+                                "seed": seed + locale_index * 10000 + SCENARIOS.index(scenario) * 1000 + batch}
+                    output, provenance = await teacher.call(messages, schema, 1024, sampling)
+                    utterances = output.get("utterances")
+                    if not isinstance(utterances, list) or len(utterances) != size:
+                        raise ValueError("teacher source generation returned the wrong count")
+                    decisions = []
+                    for index, text in enumerate(utterances):
+                        reason = None
+                        if not isinstance(text, str) or not 5 <= len(text) <= 400 or looks_like_other_language(text, locale):
+                            reason = "invalid_source"
+                        elif overlaps(text, locale, protected):
+                            reason = "boundary_source"
+                        elif overlaps(text, locale, seen):
+                            reason = "duplicate_generated_source"
+                        decisions.append(reason or "accepted")
+                        if reason:
+                            rejected[reason] += 1
+                            continue
+                        seen.add(fingerprint(text, locale))
+                        accepted += 1
+                        for source, target in DIRECTIONS:
+                            if source == locale:
+                                rows.append({"id": "teacher-source-" + digest([locale, target, text])[:16],
+                                    "group_id": f"teacher-source-{SOURCE_VERSION}-{locale}-{scenario}-{batch}",
+                                    "task": "translate", "source_locale": locale, "target_locale": target,
+                                    "scenario": scenario, "text": text, "source_origin": "teacher_generated",
+                                    "source_generation": {"version": SOURCE_VERSION, "messages": messages,
+                                                          "teacher": provenance, "index": index}})
+                    log.write(json.dumps({"version": SOURCE_VERSION, "messages": messages, "sampling": sampling,
+                        "teacher": provenance, "output": output, "decisions": decisions}, ensure_ascii=False) + "\n")
+                    log.flush()
+                    print(f"sources {locale}/{scenario}: {accepted}/{count}", flush=True)
+                    if accepted == count:
+                        break
+                if accepted < count:
+                    raise ValueError(f"insufficient diverse sources for {locale}/{scenario}: {accepted}/{count}; "
+                                     "inspect source_generation.jsonl; templates were not substituted")
+    write_json(out / "source_summary.json", {"version": SOURCE_VERSION, "requested_per_locale_scenario": count,
+               "unique_sources": len(seen), "translation_rows": len(rows), "rejections": dict(rejected),
+               "groups": len({r["group_id"] for r in rows})})
     return rows
+
+
+def balanced_sources(rows, seed):
+    """Retain teacher originals; bound supplemental rows before and after safety filtering."""
+    teacher = [r for r in rows if r.get("source_origin") == "teacher_generated"]
+    extra = [r for r in rows if r.get("source_origin") != "teacher_generated"]
+    random.Random(seed).shuffle(extra)
+    # Keep destination rehearsal when supplementary rows need trimming.
+    extra.sort(key=lambda r: r.get("task") != "destination")
+    selected = teacher + extra[:len(teacher) // 4]
+    check_source_mix(selected)
+    return selected
 
 
 async def generate(args):
@@ -252,7 +341,7 @@ async def generate(args):
         raise ValueError("set MODEL_PROFILE=14b-q4 and MODEL_BACKEND=llama")
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    for name in ("distill.draft.jsonl", "distill.rejected.jsonl", "source_generation.jsonl", "pool.jsonl",
+    for name in ("distill.draft.jsonl", "distill.rejected.jsonl", "source_generation.jsonl", "source_summary.json", "pool.jsonl",
                  "sample.review.csv", "sample.review.md", "sample.key.json", "summary.json", "summary.md"):
         if (out / name).exists():
             raise FileExistsError(out / name)
@@ -269,9 +358,9 @@ async def generate(args):
                 or health.get("model_runtime") != identity or health.get("artifact_hashes") != artifact_hashes()):
             raise ValueError("AI ready identity/artifacts differ from the verified teacher runtime")
         protected = protected_templates(ROOT)
-        pool = read_jsonl(Path(args.pool))
-        if args.source_count:
-            pool += await source_augmentation(teacher, out, protected, args.source_count)
+        pool = await source_augmentation(teacher, out, protected, args.source_count, args.seed)
+        pool += read_jsonl(Path(args.pool))
+        pool = balanced_sources(pool, args.seed)
         pool = pool[:args.limit] if args.limit else pool
         selected, seen, groups = [], set(), {}
         for row in pool:
@@ -312,8 +401,16 @@ async def generate(args):
                 print(f"[{index + 1}/{len(selected)}] accepted={len(accepted)} rejected={index + 1 - len(accepted)}", flush=True)
         if hashes != server_prompt_hashes(ROOT):
             raise ValueError("server prompt artifacts changed during generation")
-        if not accepted:
-            raise ValueError("teacher produced no eligible training records")
+        before_mix = source_mix(accepted)
+        retained = balanced_sources(accepted, args.seed)
+        retained_ids = {r["id"] for r in retained}
+        with (out / "distill.rejected.jsonl").open("a", encoding="utf-8") as rejected:
+            for record in accepted:
+                if record["id"] not in retained_ids:
+                    rejected.write(json.dumps({**record, "selection_rejection": "supplemental_share_cap"}, ensure_ascii=False) + "\n")
+                    reasons.update(["supplemental_share_cap"])
+        accepted = retained
+        (out / "distill.draft.jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in accepted), encoding="utf-8")
         export_sample(out / "distill.draft.jsonl", accepted, out, args.seed)
         summary = {"source_rows": len(selected), "accepted": len(accepted), "rejected": len(selected) - len(accepted),
                    "source_pool_sha256": digest(Path(args.pool).read_bytes()),
@@ -322,11 +419,15 @@ async def generate(args):
                    "rejection_reasons": dict(reasons), "draft_sha256": digest((out / "distill.draft.jsonl").read_bytes()),
                    "teacher_model": settings.manifest["model"], "runtime": identity, "prompt_hashes": hashes,
                    "review_status": PENDING, "ai_sample_size": min(150, len(accepted)),
+                   "source_mix_before_translation": source_mix(selected), "source_mix_after_safety": before_mix,
+                   "source_mix_final": check_source_mix(accepted),
                    "tasks": dict(Counter(r["task"] for r in accepted)),
                    "directions": dict(Counter(f"{r['source_locale']}->{r.get('target_locale', 'destination')}" for r in accepted))}
         write_json(out / "summary.json", summary)
         (out / "summary.md").write_text("# Distillation generation\n\n" +
             f"Sources: {len(selected)}; accepted: {len(accepted)}; rejected: {len(selected) - len(accepted)}.\n\n" +
+            f"Teacher-authored source share: {source_mix(accepted)['teacher_share']:.1%}; " +
+            f"unique source fingerprints: {source_mix(accepted)['unique_sources']}; groups: {source_mix(accepted)['groups']}.\n\n" +
             "AI 검토(참고) 대기: sample.review.csv. 학습 정답은 원본 선생 모델 출력이며 수정 번역은 가져오지 않습니다.\n",
             encoding="utf-8")
         print(json.dumps(summary, ensure_ascii=False, indent=2))
@@ -343,7 +444,7 @@ def main():
     gen.add_argument("--url", default=os.environ.get("AI_URL", "http://127.0.0.1:8000"))
     gen.add_argument("--model-url")
     gen.add_argument("--limit", type=int, default=0, help="smoke subset only")
-    gen.add_argument("--source-count", type=int, default=5, help="teacher-authored utterances per locale/scenario")
+    gen.add_argument("--source-count", type=int, default=80, help="unique teacher utterances per locale/scenario, in batches of at most 10")
     gen.add_argument("--seed", type=int, default=42)
     review = sub.add_parser("review")
     for name in ("draft", "review", "key", "out"):
@@ -351,8 +452,8 @@ def main():
     review.add_argument("--reviewer", required=True, help="AI reviewer model/name; not a human approval")
     args = parser.parse_args()
     if args.stage == "generate":
-        if not 0 <= args.source_count <= 10 or args.limit < 0:
-            parser.error("source-count must be 0..10 and limit must be nonnegative")
+        if args.source_count <= 0 or args.limit < 0:
+            parser.error("source-count must be positive and limit must be nonnegative")
         asyncio.run(generate(args))
     else:
         record_review(args.draft, args.review, args.key, args.out, args.reviewer)

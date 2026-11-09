@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT))
 import prompting as P  # noqa: E402
 from train.data_boundary import server_prompt_hashes  # noqa: E402
 from config import load_manifest  # noqa: E402
+from train.source_mix import POLICY_VERSION, check_source_mix, source_mix  # noqa: E402
 
 
 def check_lengths(ds, tok, max_length: int) -> None:
@@ -51,6 +52,7 @@ def check_teacher_evidence(manifest: dict) -> None:
             or manifest.get("review_status") != "auto_filtered_ai_sample_reviewed"
             or manifest.get("human_reviewed") is not False
             or manifest.get("teacher_model") != teacher
+            or manifest.get("source_mix_policy") != POLICY_VERSION
             or not re.fullmatch(r"[0-9a-f]{64}", str(manifest.get("ai_review_sha256", "")))):
         raise SystemExit("full training requires Qwen teacher targets and recorded AI sample review")
 
@@ -58,17 +60,33 @@ def check_teacher_evidence(manifest: dict) -> None:
 def check_groups(data_dir: Path, manifest: dict) -> None:
     if manifest.get("enable_thinking") is not False:
         raise SystemExit("prepared dataset missing enable_thinking=False: re-run prepare_data.py")
-    groups = {}
+    groups, metadata, by_split_mix = {}, [], {}
     for split in ("train", "validation", "test"):
+        part = []
         for line in (data_dir / f"{split}.jsonl").read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
-            group = json.loads(line).get("meta", {}).get("group_id")
+            row = json.loads(line).get("meta", {})
+            group = row.get("group_id")
             if not isinstance(group, str) or not group:
                 raise SystemExit("prepared dataset missing group_id")
             if group in groups and groups[group] != split:
                 raise SystemExit("group_id crosses training/validation/test splits")
             groups[group] = split
+            part.append(row)
+        metadata += part
+        by_split_mix[split] = part
+    if not manifest.get("allow_draft", False):
+        if manifest.get("source_mix_policy") != POLICY_VERSION:
+            raise SystemExit("source mix policy missing or outdated: re-run prepare_data.py")
+        try:
+            measured = {"overall": check_source_mix(metadata), "by_split": {
+                split: check_source_mix(part) if part else source_mix(part)
+                for split, part in by_split_mix.items()}}
+        except (KeyError, ValueError) as error:
+            raise SystemExit(f"invalid source mix: {error}") from error
+        if measured != manifest.get("source_mix"):
+            raise SystemExit("source mix differs from dataset manifest: re-run prepare_data.py")
 
 
 def load_model(cfg: dict, use_4bit: bool):
