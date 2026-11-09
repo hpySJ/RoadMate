@@ -14,5 +14,13 @@
   {
     "input": {"source_locale": "es-MX", "utterance": "Llévenos a la playa de Hamdeok, por favor."},
     "output": {"intent": "set_destination", "query_original": "playa de Hamdeok", "query_ko_candidate": "함덕해수욕장", "region_hint": null, "category_hint": "beach", "needs_confirmation": false}
+  },
+  {
+    "input": {"source_locale": "ko-KR", "utterance": "오설록 티뮤지엄까지 가려면 어느 길로 가야 하나요?"},
+    "output": {"intent": "set_destination", "query_original": "오설록 티뮤지엄", "query_ko_candidate": "오설록 티뮤지엄", "region_hint": null, "category_hint": "attraction", "needs_confirmation": false}
+  },
+  {
+    "input": {"source_locale": "es-MX", "utterance": "Me gustaría visitar el mercado Dongmun."},
+    "output": {"intent": "set_destination", "query_original": "mercado Dongmun", "query_ko_candidate": "동문재래시장", "region_hint": null, "category_hint": "market", "needs_confirmation": false}
   }
 ]

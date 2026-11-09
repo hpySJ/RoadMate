@@ -102,6 +102,23 @@ def test_wrong_language_skips_model():
         assert d["status"] == "clarification_required" and mock.calls == 0
 
 
+@pytest.mark.parametrize("locale", ["en-US", "es-US", "es-MX"])
+@pytest.mark.parametrize("text", [
+    "Bonjour, je voudrais de l'essence s'il vous plaît.",
+    "Nous sommes perdus, pouvez-vous nous aider ?",
+])
+def test_unsupported_french_clarifies_without_model(locale, text):
+    from engine import WRONG_LANG
+    fake = FakeLlama()
+    with TestClient(create_app(SETTINGS, fake)) as c:
+        r = c.post("/internal/v1/translate", json=body(source_locale=locale, text=text))
+    assert r.status_code == 200
+    assert r.json()["status"] == "clarification_required"
+    assert r.json()["translated_text"] is None
+    assert r.json()["clarification_question"] == WRONG_LANG[locale]
+    assert fake.calls == 0
+
+
 def test_validation_retry_then_success():
     fake = FakeLlama(outputs=[ok("경유 가득 넣어 주세요."), ok("휘발유 가득 넣어 주세요.")])
     with TestClient(create_app(SETTINGS, fake)) as c:
@@ -518,6 +535,8 @@ def test_destination_found_from_utterance_when_query_is_wrong():
 
 @pytest.mark.parametrize("queries,utterance,top", [
     (["성산", "the sunrise at Seongsan"], "I want to see the sunrise at Seongsan.", "seongsan-ilchulbong"),
+    ([], "만장굴 어떻게 가?", "manjanggul"),
+    ([], "Quiero ver el amanecer en Seongsan.", "seongsan-ilchulbong"),
     (["우도에 들어가는 배를 타는 곳"], "우도 들어가는 배 타는 곳으로 가자", "seongsanpo-ferry"),
     (["중문 바다"], "중문 바다 쪽으로 가자", "jungmun-saekdal-beach"),
     (["해변", "a beach"], "Take me to a beach.", None),

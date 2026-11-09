@@ -7,12 +7,15 @@ from prompting import LANG_KEY, _find_terms, concept_spans, fold, glossary, matc
 HANGUL = re.compile(r"[가-힣]")
 LATIN = re.compile(r"[A-Za-z]")
 HAN_KANA = re.compile(r"[぀-ヿ一-鿿]")
-# 검증: 영어·스페인어는 같은 로마자라 자주 쓰는 기능어로 구분한다(겹치는 no, a, me는 뺌)
+# 검증: 로마자 언어는 기능어로 구분한다. 프랑스어는 별도의 고유한 기능어 근거가 있어야 판정한다.
 FUNC_WORDS = {
     "en": {"the", "is", "are", "you", "your", "please", "it", "to", "of", "and", "my", "this", "that", "can", "i",
            "we", "what", "where", "with", "for", "have", "do", "does", "was", "there", "here", "car"},
     "es": {"el", "la", "los", "las", "de", "del", "que", "y", "es", "por", "favor", "usted", "su", "una", "un", "se",
            "en", "con", "para", "esta", "donde", "aqui", "puede", "mi", "lo", "le", "al", "hay", "muy", "carro"},
+    "fr": {"je", "vous", "nous", "il", "ils", "elle", "elles", "est", "sont", "suis", "sommes", "etes", "ce", "cet",
+           "cette", "ces", "dans", "pour", "avec", "sans", "mais", "ne", "pas", "une", "leur", "leurs", "notre", "votre",
+           "qui", "quoi", "ou", "et", "du", "au", "aux", "le", "la", "de", "en", "un", "que", "se"},
 }
 
 
@@ -21,7 +24,7 @@ def script_counts(text: str) -> tuple[int, int]:
 
 
 def latin_lang(text: str) -> str | None:
-    """로마자 문장이 영어인지 스페인어인지. 확실하지 않으면 None(짧은 문장, 고유명사)."""
+    """en/es/fr 중 근거가 충분한 언어. 확실하지 않으면 None(짧은 문장, 고유명사)."""
     # 지명 안의 de/del 같은 기능어는 주변 문장의 언어를 나타내지 않는다.
     names = [name for p in places() for name in [p["name_en"], p["name_es"], *p.get("aliases", [])]
              if not HANGUL.search(name)]
@@ -29,6 +32,13 @@ def latin_lang(text: str) -> str | None:
     text = _mask(text, [(s, e) for s, e, _ in _find_terms(text, names, "en")])
     words = re.findall(r"[a-z]+", fold(text).lower())
     en, es = (sum(w in FUNC_WORDS[k] for w in words) for k in ("en", "es"))
+    fr_only = set(words) & (FUNC_WORDS["fr"] - FUNC_WORDS["en"] - FUNC_WORDS["es"])
+    # shortcut: 전부 대문자인 프랑스어는 약어와 구별하지 않는다. 대문자 STT가 필요하면 언어 판별을 보강한다.
+    if (len(fr_only) >= 2 and sum(w in FUNC_WORDS["fr"] for w in words) > 2 * max(en, es)
+            and any(not w.isupper() and w.lower() in {"je", "vous", "nous", "il", "ils", "elle", "elles", "est",
+                                                     "sont", "suis", "sommes", "etes", "ne"}
+                    for w in re.findall(r"[A-Za-z]+", fold(text)))):
+        return "fr"
     if en >= 2 and en > 2 * es:
         return "en"
     if es >= 2 and es > 2 * en:
@@ -47,7 +57,7 @@ def looks_like_other_language(text: str, locale: str) -> bool:
     # 검증: 버튼 방향과 실제 발화 언어가 반대인 경우
     h, l = script_counts(text)
     if locale != "ko-KR":
-        return h > max(2, l)
+        return h > max(2, l) or h == 0 and latin_lang(text) == "fr"
     return h == 0 and l >= 3
 
 

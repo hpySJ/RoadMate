@@ -37,6 +37,54 @@ def test_language_detection_masks_only_registered_proper_names():
     assert "negation_mismatch" in v("시동이 안 걸려요.", "ko-KR", "The engine starts.", "en-US")
 
 
+@pytest.mark.parametrize("source", [
+    "Je voudrais louer une voiture pour demain.",
+    "Où est la gare ?", "Vous êtes où ?",
+    "Je suis au Pico del Amanecer de Seongsan.",
+])
+def test_confident_french_is_unsupported_for_latin_locales(source):
+    from validation import in_locale_script, latin_lang, looks_like_other_language
+    assert latin_lang(source) == "fr"
+    for locale in ("en-US", "es-US", "es-MX"):
+        assert looks_like_other_language(source, locale)
+        assert not in_locale_script(source, locale)
+        assert "wrong_language" in v("위치를 알려 주세요.", "ko-KR", source, locale)
+
+
+@pytest.mark.parametrize("source,locale", [
+    ("Please take me to Pico del Amanecer de Seongsan.", "en-US"),
+    ("Where is the car?", "en-US"),
+    ("¿Me puede llevar al Pico del Amanecer de Seongsan?", "es-US"),
+    ("Le voy a dar la llave de la habitación.", "es-MX"),
+    ("¿Le parece que esta es la entrada?", "es-US"),
+    ("Meet at Notre Dame du Lac.", "en-US"),
+    ("Llegamos a Notre Dame du Lac.", "es-US"),
+    ("Return at 6 EST or 5 ET.", "en-US"),
+])
+def test_supported_sentences_stay_in_their_language(source, locale):
+    from validation import in_locale_script, looks_like_other_language
+    assert not looks_like_other_language(source, locale)
+    assert in_locale_script(source, locale)
+
+
+@pytest.mark.parametrize("source", [
+    "Pico del Amanecer de Seongsan", "Jeju", "De la Cruz", "Le Mans", "Bonjour.", "Merci.",
+    "Je.", "Vous, vous.", "De la.", "Please.", "Por favor.",
+])
+def test_short_or_named_latin_input_is_not_assumed_to_be_french(source):
+    from validation import latin_lang, looks_like_other_language
+    assert latin_lang(source) != "fr"
+    for locale in ("en-US", "es-US", "es-MX"):
+        assert not looks_like_other_language(source, locale)
+
+
+@pytest.mark.parametrize("locale", ["en-US", "es-US", "es-MX"])
+def test_french_clarification_is_not_accepted_for_supported_latin_locale(locale):
+    out = {"status": "clarification_required", "translated_text": None,
+           "clarification_question": "Pouvez-vous répéter, s'il vous plaît ?"}
+    assert validate_translation(out, "Hello", locale, "ko-KR") == ["clarification_wrong_language"]
+
+
 @pytest.mark.parametrize("locale", ["es-US", "es-MX"])
 @pytest.mark.parametrize("verb", ["toma", "tome", "tomará"])
 def test_spanish_tomar_fuel_polarity(locale, verb):

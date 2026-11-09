@@ -113,7 +113,7 @@ def test_destination_cases_reference_known_pois(c):
 
 def test_wrong_language_cases_detected_by_code():
     for c in DEV + TEST:
-        if c["group_id"] in ("wrong_lang_ko_in_en", "wrong_lang_en_in_ko", "t_wrong_lang"):
+        if c["group_id"] in ("wrong_lang_ko_in_en", "wrong_lang_en_in_ko", "t_wrong_lang", "unsupported_french"):
             assert looks_like_other_language(c["text"], c["source_locale"])
 
 
