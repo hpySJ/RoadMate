@@ -100,7 +100,7 @@ def test_prepare_stops_before_output_when_a_group_split_is_template_only(tmp_pat
     evidence = tmp_path / "evidence.json"
     evidence.write_text("{}", encoding="utf-8")
     out = tmp_path / "prepared"
-    monkeypatch.setattr(prepare, "protected_templates", lambda root: set())
+    monkeypatch.setattr(prepare, "protected_templates", lambda root, **kwargs: set())
     monkeypatch.setattr(prepare, "record_overlaps", lambda row, protected: [])
     monkeypatch.setattr(prepare, "verify_teacher_record", lambda *args: [])
     monkeypatch.setattr(prepare, "verify_ai_review", lambda *args: None)

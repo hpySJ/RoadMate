@@ -141,7 +141,8 @@ def test_finish_only_calls_review_gate(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("teacher", ["14b-q4", "32b-q4"])
-def test_train_commands_keep_adapter_identity_for_comparison(tmp_path, monkeypatch, teacher):
+@pytest.mark.parametrize("ratio", [0, .5, .75])
+def test_train_commands_keep_adapter_identity_for_comparison(tmp_path, monkeypatch, teacher, ratio):
     (tmp_path / "train").mkdir()
     cfg = {"base_model": "Qwen/Qwen3-8B", "base_revision": "pinned", "max_length": 4096}
     (tmp_path / "train" / "training_config.json").write_text(json.dumps(cfg))
@@ -155,6 +156,7 @@ def test_train_commands_keep_adapter_identity_for_comparison(tmp_path, monkeypat
     for name in ("distill.draft.jsonl", "sample.evidence.json"):
         (data / name).write_text("{}")
     pipeline, calls = L.Pipeline(tmp_path, out, "train-eval", teacher), []
+    pipeline.stt_copies_ratio = ratio
     monkeypatch.setattr(pipeline, "run", lambda command, name, env=None: calls.append((name, command, env)))
     monkeypatch.setattr(pipeline, "evaluate", lambda *args: calls.append(("evaluate", args)))
     monkeypatch.setattr(pipeline, "compare", lambda *args: calls.append(("compare", args)))
@@ -163,12 +165,59 @@ def test_train_commands_keep_adapter_identity_for_comparison(tmp_path, monkeypat
     assert prepare[prepare.index("--ai-review") + 1] == data / "sample.evidence.json"
     assert prepare[prepare.index("--tokenizer-revision") + 1] == "pinned"
     assert prepare[prepare.index("--teacher") + 1] == teacher
+    assert prepare[prepare.index("--stt-copies-ratio") + 1] == str(ratio)
     train = next(c[1] for c in calls if c[0] == "train")
     assert train[train.index("--teacher") + 1] == teacher
     assert json.loads((out / "training_config.json").read_text())["teacher_profile"] == teacher
     assert ("evaluate", ("8b-q4", "baseline")) in calls
     assert ("evaluate", ("8b-q4", "candidate", out / "adapter.gguf")) in calls
     assert next(c[2] for c in calls if c[0] == "convert")["MODEL_PROFILE"] == "8b-q4"
+    pipeline.summary()
+    assert json.loads((out / "stage_summary.json").read_text())["stt_copies_ratio"] == ratio
+    assert f"requested STT copies ratio: {ratio}" in (out / "stage_summary.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("value,expected", [(None, .5), ("0", 0), ("1", 1)])
+def test_train_eval_cli_records_stt_ratio_before_preparation(tmp_path, monkeypatch, value, expected):
+    calls = []
+    class FakePipeline:
+        def __init__(self, root, out, stage, teacher):
+            self.python = root / "python"
+        def ports(self, profiles):
+            return []
+        def disk_preflight(self, profiles, **kwargs):
+            pass
+        def train_eval(self, data):
+            calls.append((data, self.stt_copies_ratio))
+        def summary(self):
+            pass
+    (tmp_path / "python").touch()
+    monkeypatch.setattr(L, "ROOT", tmp_path)
+    monkeypatch.setattr(L, "Pipeline", FakePipeline)
+    monkeypatch.setattr(L, "ensure_idle", lambda *args: None)
+    out, data = tmp_path / "stage", tmp_path / "data"
+    args = ["train-eval", "--out", str(out), "--data", str(data)]
+    if value is not None:
+        args += ["--stt-copies-ratio", value]
+    assert L.main(args) == 0
+    assert calls == [(data.resolve(), expected)]
+    assert json.loads((out / "stage.json").read_text())["stt_copies_ratio"] == expected
+
+
+@pytest.mark.parametrize("value", ["-0.1", "1.01", "nan", "inf", "-inf", "not-a-number"])
+def test_invalid_stt_ratio_fails_before_creating_stage(tmp_path, value):
+    out = tmp_path / "stage"
+    with pytest.raises(SystemExit) as error:
+        L.main(["train-eval", "--data", str(tmp_path / "data"), "--out", str(out), f"--stt-copies-ratio={value}"])
+    assert error.value.code == 2
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("args", [["teacher-check"], ["generate"], ["train-eval", "--finish", "stage", "--reviews", "reviews"]])
+def test_stt_ratio_is_only_a_preparation_option(args):
+    with pytest.raises(SystemExit) as error:
+        L.main([*args, "--stt-copies-ratio", "0"])
+    assert error.value.code == 2
 
 
 def test_start_failure_still_cleans_only_owned_processes(tmp_path, monkeypatch):

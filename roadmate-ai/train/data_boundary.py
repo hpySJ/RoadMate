@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT))
 
 import prompting as P  # noqa: E402
 from validation import EN_WORD_RE, ES_WORD_RE, KO_COUNTER, NATIVE_RE, KO_ORD  # noqa: E402
+from eval.stt_format import normalize_source  # noqa: E402
 
 
 @lru_cache(maxsize=8192)
@@ -47,27 +48,44 @@ def fingerprint(text: str, locale: str) -> str:
     return lang + ":" + re.sub(r"[\s.,!?¿¡:;\"'’‘“”()…-]+", "", text)
 
 
-def prompt_templates(root: Path) -> set[str]:
-    keys = set()
-    for path in (root / "prompts").glob("*.examples.json"):
-        for ex in json.loads(path.read_text(encoding="utf-8")):
-            i, o = ex["input"], ex["output"]
-            keys.add(fingerprint(i.get("utterance") or i["source"], i["source_locale"]))
-            translated = o.get("translated_text") or o.get("text")
-            if translated:
-                keys.add(fingerprint(translated, i.get("target_locale", "ko-KR")))
+def _template_keys(text: str, locale: str, include_stt: bool) -> set[str]:
+    keys = {fingerprint(text, locale)}
+    if include_stt:
+        keys.add(fingerprint(normalize_source(text, locale), locale))
     return keys
 
 
-def protected_templates(root: Path) -> set[str]:
-    keys = prompt_templates(root)
+def prompt_templates(root: Path, *, include_locked: bool = True, include_stt: bool = False) -> set[str]:
+    keys = set()
+    for path in (root / "prompts").glob("*.examples.json"):
+        if not include_locked:
+            if path.name.casefold().startswith("test.locked"):
+                continue
+            if path.resolve(strict=True) != root.resolve() / "prompts" / path.name:
+                raise ValueError(f"protected prompt path was redirected: {path.name}")
+        for ex in json.loads(path.read_text(encoding="utf-8")):
+            i, o = ex["input"], ex["output"]
+            keys.update(_template_keys(i.get("utterance") or i["source"], i["source_locale"], include_stt))
+            translated = o.get("translated_text") or o.get("text")
+            if translated:
+                keys.update(_template_keys(translated, i.get("target_locale", "ko-KR"), include_stt))
+    return keys
+
+
+def protected_templates(root: Path, *, include_locked: bool = True, include_stt: bool = False) -> set[str]:
+    keys = prompt_templates(root, include_locked=include_locked, include_stt=include_stt)
     for path in (root / "eval").glob("*.jsonl"):
+        if not include_locked:
+            if path.name.casefold().startswith("test.locked"):
+                continue
+            if path.resolve(strict=True) != root.resolve() / "eval" / path.name:
+                raise ValueError(f"protected evaluation path was redirected: {path.name}")
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 rec = json.loads(line)
-                keys.add(fingerprint(rec["text"], rec["source_locale"]))
+                keys.update(_template_keys(rec["text"], rec["source_locale"], include_stt))
                 if rec.get("reference"):
-                    keys.add(fingerprint(rec["reference"], rec["target_locale"]))
+                    keys.update(_template_keys(rec["reference"], rec["target_locale"], include_stt))
     return keys
 
 

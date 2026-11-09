@@ -8,6 +8,7 @@ import glob
 import hashlib
 import json
 import sys
+from collections import Counter, defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +20,7 @@ from validation import looks_like_other_language, validate_destination, validate
 from data_boundary import fingerprint, protected_templates, record_overlaps, server_prompt_hashes  # noqa: E402
 from distill import PENDING, REVIEWED, filter_issues, verify_ai_review, verify_teacher_record  # noqa: E402
 from train.source_mix import POLICY_VERSION, check_source_mix, source_mix  # noqa: E402
+from eval import stt_format as STT  # noqa: E402
 
 
 def norm(s: str) -> str:
@@ -41,6 +43,8 @@ def build(rec: dict) -> dict:
         prompt = P.destination_messages(rec["source_locale"], rec["text"])
     meta = {k: rec.get(k) for k in ("group_id", "task", "source_locale", "target_locale", "scenario", "text",
                                    "source_origin", "source_generation")}
+    if "stt_copy" in rec:
+        meta["stt_copy"] = rec["stt_copy"]
     return {"prompt": prompt, "completion": [{"role": "assistant", "content": P.completion_text(rec["output"])}], "meta": meta}
 
 
@@ -72,6 +76,70 @@ def split_groups(groups: list[str], seed: int) -> dict[str, str]:
     return {g: "validation" if bucket(g) < 10 else "test" if bucket(g) < 20 else "train" for g in groups}
 
 
+def copies_ratio(value: str) -> float:
+    ratio = float(value)
+    if not 0 <= ratio <= 1:
+        raise argparse.ArgumentTypeError("--stt-copies-ratio must be finite and between 0 and 1")
+    return ratio
+
+
+def augment_stt(recs: list[dict], ratio: float, seed: int, blocked: set[str], assign: dict[str, str],
+                *, strict_mix: bool = True) -> tuple[list[dict], dict]:
+    """원본 증거를 검증한 뒤 입력만 증강한다. 사본을 새 선생 응답으로 검증하지 않는다."""
+    if not 0 <= ratio <= 1:
+        raise ValueError("STT copies ratio must be finite and between 0 and 1")
+    transform_hash = sha(Path(STT.__file__))
+    strata = defaultdict(list)
+    by_split = Counter({split: 0 for split in ("train", "validation", "test")})
+    teacher, supplemental, owners = Counter(), Counter(), defaultdict(set)
+    for rec in recs:
+        split = assign[rec["group_id"]]
+        (teacher if rec.get("source_origin") == "teacher_generated" else supplemental)[split] += 1
+        owners[fingerprint(rec["text"], rec["source_locale"])].add(rec["group_id"])
+        if rec["task"] == "translate":
+            strata[split, rec.get("source_origin") or "unspecified"].append(rec)
+    def rank(rec):
+        identity = {key: rec.get(key) for key in ("id", "group_id", "source_locale", "target_locale", "scenario", "text", "output")}
+        return hashlib.sha256(f"{seed}:".encode() + json.dumps(identity, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    selected = [rec for key in sorted(strata) for rec in sorted(strata[key], key=rank)[:int(len(strata[key]) * ratio)]]
+    copies, skipped = [], Counter()
+    # 선생 사본을 먼저 반영한 뒤 보조 사본의 상한을 계산한다.
+    for rec in sorted(selected, key=lambda rec: (rec.get("source_origin") != "teacher_generated", rank(rec))):
+        text = STT.normalize_source(rec["text"], rec["source_locale"])
+        if text == rec["text"]:
+            skipped["unchanged"] += 1
+            continue
+        copy = {**rec, "text": text, "stt_copy": {"parent_id": rec.get("id"), "parent_text": rec["text"],
+                                                "format_version": STT.STT_FORMAT_VERSION}}
+        if record_overlaps(copy, blocked):
+            skipped["boundary"] += 1
+            continue
+        if check(copy):
+            skipped["validation"] += 1
+            continue
+        key = fingerprint(text, rec["source_locale"])
+        if owners[key] - {rec["group_id"]}:
+            skipped["duplicate_group"] += 1
+            continue
+        split = assign[rec["group_id"]]
+        is_teacher = rec.get("source_origin") == "teacher_generated"
+        if strict_mix and not is_teacher and (supplemental[split] + 1) * 4 > teacher[split]:
+            skipped["source_mix"] += 1
+            continue
+        (teacher if is_teacher else supplemental)[split] += 1
+        owners[key].add(rec["group_id"])
+        copies.append(copy)
+        by_split[split] += 1
+    translations = sum(map(len, strata.values()))
+    summary = {"requested_ratio": ratio, "seed": seed, "format_version": STT.STT_FORMAT_VERSION,
+               "transform_sha256": transform_hash, "original_translation_rows": translations,
+               "selected_rows": len(selected), "added_rows": len(copies),
+               "realized_ratio": len(copies) / translations if translations else 0,
+               "copy_share": len(copies) / (len(recs) + len(copies)) if recs else 0,
+               "by_split": dict(by_split), "skipped": dict(sorted(skipped.items()))}
+    return recs + copies, summary
+
+
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
@@ -85,9 +153,11 @@ def main():
     ap.add_argument("--tokenizer-revision", default=config.get("base_revision"))
     ap.add_argument("--max-length", type=int, default=json.loads((ROOT / "train" / "training_config.json").read_text())["max_length"])
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--stt-copies-ratio", type=copies_ratio, default=0.5,
+                    help="번역 입력 STT 사본의 선택 비율(0..1, 기본 0.5; 0은 끔)")
     a = ap.parse_args()
 
-    blocked = protected_templates(ROOT)
+    blocked = protected_templates(ROOT, include_locked=False, include_stt=True)
     prompt_hashes = server_prompt_hashes(ROOT) if (ROOT / "prompting.py").exists() else {}
     teacher_path = ROOT / "models" / MODEL_PROFILES[a.teacher]
     teacher = load_manifest(teacher_path) if teacher_path.exists() else None
@@ -131,7 +201,21 @@ def main():
         sys.exit(f"{len(errors)} invalid records. Fix them before training.")
     if not recs:
         sys.exit("no records (선생 모델 + AI 표본 검토 기록이 필요하며 --allow-draft는 스모크 시험 전용)")
+    assign = split_groups(list({r["group_id"] for r in recs}), a.seed)
+    for split in ("train", "validation"):
+        if split not in assign.values():
+            sys.exit(f"{split} split is empty ({len(assign)} groups): add more groups or change --seed")
     try:
+        if not a.allow_draft:
+            check_source_mix(recs)
+            for split in ("train", "validation", "test"):
+                original_part = [rec for rec in recs if assign[rec["group_id"]] == split]
+                if original_part:
+                    try:
+                        check_source_mix(original_part)
+                    except ValueError as error:
+                        sys.exit(f"{split}: {error}")
+        recs, stt_copies = augment_stt(recs, a.stt_copies_ratio, a.seed, blocked, assign, strict_mix=not a.allow_draft)
         overall_mix = source_mix(recs) if a.allow_draft else check_source_mix(recs)
     except ValueError as error:
         sys.exit(str(error))
@@ -151,10 +235,6 @@ def main():
         if too_long:
             sys.exit(f"{len(too_long)} rows exceed max_length (정답 잘림 방지): {too_long[:10]}")
 
-    assign = split_groups(list({r["meta"]["group_id"] for r in rows}), a.seed)
-    for split in ("train", "validation"):
-        if split not in assign.values():
-            sys.exit(f"{split} split is empty ({len(assign)} groups): add more groups or change --seed")
     parts = {split: [r for r in rows if assign[r["meta"]["group_id"]] == split]
              for split in ("train", "validation", "test")}
     by_split_mix = {}
@@ -167,6 +247,8 @@ def main():
             sys.exit(f"{split}: {error}")
     if prompt_hashes != server_prompt_hashes(ROOT):
         sys.exit("prompt inputs changed during preparation: run it again")
+    if stt_copies["transform_sha256"] != sha(Path(STT.__file__)):
+        sys.exit("STT rules changed during preparation: run it again")
     if input_hashes != {str(Path(path).resolve()): sha(Path(path)) for path in a.inputs} or (
             a.ai_review and evidence_hash != sha(a.ai_review)):
         sys.exit("training inputs or AI review evidence changed during preparation: run it again")
@@ -193,6 +275,7 @@ def main():
         "teacher_model": teacher["model"] if teacher and not a.allow_draft else None,
         "source_mix_policy": POLICY_VERSION,
         "source_mix": {"overall": overall_mix, "by_split": by_split_mix},
+        "stt_copies": stt_copies,
         "prompt_versions": {"translate": P.prompt("translate")[0], "destination": P.prompt("destination")[0]},
         "glossary_version": P.glossary()["version"],
         "prompt_hashes": prompt_hashes,
@@ -201,6 +284,8 @@ def main():
         "outputs": {f"{s}.jsonl": sha(out / f"{s}.jsonl") for s in counts},
     }, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"records={len(rows)} groups={len(assign)} split={counts} -> {out}")
+    print(f"STT copies={stt_copies['added_rows']}/{stt_copies['original_translation_rows']} "
+          f"ratio={stt_copies['realized_ratio']:.3f} requested={a.stt_copies_ratio} skipped={stt_copies['skipped']}")
 
 
 if __name__ == "__main__":

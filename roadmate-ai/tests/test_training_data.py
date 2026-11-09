@@ -86,7 +86,7 @@ def test_seed_variants_share_pool_template_groups():
 
 
 @pytest.mark.parametrize("eval_name", ["general_es.jsonl", "naturalness.dev.jsonl", "test.locked.jsonl", "test.locked.v2.jsonl"])
-def test_training_excludes_all_evaluation_files(monkeypatch, tmp_path, capsys, eval_name):
+def test_generation_boundaries_and_prepare_nonlocked_boundaries(monkeypatch, tmp_path, capsys, eval_name):
     from sources import make_pool
 
     for directory in ("eval", "prompts", "train/data", "train/sources"):
@@ -103,6 +103,8 @@ def test_training_excludes_all_evaluation_files(monkeypatch, tmp_path, capsys, e
         monkeypatch.setattr(make_pool, name, [])
     make_pool.main()
     assert prepare_data.load_jsonl(tmp_path / "train/sources/pool.jsonl") == []
+    if eval_name.startswith("test.locked"):
+        return  # 생성의 기존 봉인 경계는 유지한다. C단계의 locked 미열람은 별도 합성 시험으로 고정한다.
     rec = {"group_id": "eval-leak", "task": "translate", "source_locale": "ko-KR", "target_locale": "en-US",
            "scenario": "general", "text": text, "review_status": "approved",
            "output": {"status": "ok", "translated_text": "This sentence is for evaluation.", "clarification_question": None}}

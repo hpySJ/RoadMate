@@ -271,7 +271,7 @@ def test_prepare_verified_teacher_draft_records_ai_review_and_group_split(monkey
     D.record_review(draft, tmp_path / "sample.review.csv", tmp_path / "sample.key.json", evidence, "synthetic-AI")
     prepared = tmp_path / "prepared"
     monkeypatch.setattr(sys, "argv", ["prepare_data.py", "--inputs", str(draft), "--ai-review", str(evidence),
-                                     "--out", str(prepared), "--teacher", (
+                                     "--out", str(prepared), "--stt-copies-ratio", "1", "--teacher", (
         "32b-q4" if teacher_profile == "14b-q4" else "14b-q4") if change == "different_teacher" else teacher_profile])
     monkeypatch.setattr(sys.stdout, "reconfigure", lambda **kw: None, raising=False)
     if change:
@@ -283,7 +283,15 @@ def test_prepare_verified_teacher_draft_records_ai_review_and_group_split(monkey
     meta = json.loads((prepared / "dataset_manifest.json").read_text(encoding="utf-8"))
     assert meta["review_status"] == D.REVIEWED and meta["target_source"] == "qwen_teacher"
     assert meta["enable_thinking"] is False and meta["human_reviewed"] is False and meta["allow_draft"] is False
-    assert meta["counts"] == {"train": 1, "validation": 1, "test": 0}
+    assert meta["counts"] == {"train": 2, "validation": 2, "test": 0}
+    assert meta["stt_copies"]["added_rows"] == 2 and meta["stt_copies"]["copy_share"] == .5
+    for split in ("train", "validation"):
+        original, copy = prepare_data.load_jsonl(prepared / f"{split}.jsonl")
+        assert original["completion"] == copy["completion"]
+        assert original["meta"]["group_id"] == copy["meta"]["group_id"]
+        assert copy["meta"]["stt_copy"]["parent_text"] == original["meta"]["text"]
+    from train.train_qlora import check_groups
+    check_groups(prepared, meta)
     assert meta["ai_review_sha256"] == D.digest(evidence.read_bytes())
     assert meta["teacher_profile"] == teacher_profile and meta["teacher_model"] == pinned["model"]
 

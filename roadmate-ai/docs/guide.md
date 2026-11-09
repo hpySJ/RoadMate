@@ -392,6 +392,21 @@ group_id는 상황 전체가 아니라 독립 생성 배치별로 부여한다. 
 
 ### 8.4 학습·채택
 
+`prepare_data.py`는 C단계에서 번역 입력의 STT 형식 사본을 기본 50% 비율로 선택해 추가한다. `eval/stt_format.py`의 관찰 규칙을 사용하며 기본 seed는 기존 분할과 같은 42다. split·source_origin별 번역 행을 seed 해시 순서로 정렬하고 각 묶음에서 `floor(행 수 × 비율)`개를 선택하므로 입력 파일 순서가 표본을 바꾸지 않는다. 소규모 묶음의 내림과 제외 조건 때문에 실제 추가 비율은 50%보다 낮을 수 있다. 목적지 행은 복사하지 않는다.
+
+원본의 선생 출력·AI 표본 검수 증거를 먼저 검증한 뒤 사본의 `text`만 바꾸어 서버와 같은 빌더로 prompt를 만든다. completion은 원본과 같고 group_id·source_origin·source_generation도 유지한다. `meta.stt_copy`에 부모 ID·원문·변환 버전을 기록하여 새 선생 응답과 구분한다. 사본은 원본과 같은 train/validation/test 분할에만 들어간다.
+
+C단계의 원본·사본 경계 검사에서는 **test.locked*를 열지 않는다**. 나머지 평가셋·few-shot의 원문/출력과 그 STT 변형을 정확·근사 중복에서 제외한다. 변환 결과가 동일하거나 안전 검사·경계 검사에 실패한 사본, 다른 group의 틀과 충돌하는 사본은 추가하지 않는다. 원본 자료의 전체·분할별 선생 비율 80% 검사를 먼저 통과해야 하며, 사본 추가 후에도 같은 검사를 수행한다. 보조 자료 사본이 이 기준을 깨면 보조 사본 수를 제한한다. 원본 정답이나 검사기를 변경하지 않는다.
+
+`dataset_manifest.json`의 `stt_copies`에 요청 비율·seed·변환 버전/파일 SHA256·원본 번역 행 수·선택/추가 건수·분할별 추가 건수·제외 사유를 남긴다. `realized_ratio`는 추가 사본/원본 번역 행, `copy_share`는 최종 전체 자료 중 사본 비율이다. 모든 번역 행이 변환되어 50% 사본을 추가하면 최종 번역 자료에서 사본은 약 33.3%다. 사본도 토큰 길이 검사에 포함한다.
+
+준비만 실행하거나 전체 C단계에 비율을 전달할 수 있다. 아래 경로는 실제 검수 완료 자료와 아직 없는 출력 폴더로 바꾼다. `--stt-copies-ratio 0`이면 사본을 추가하지 않는다.
+
+```bash
+.venv-train/bin/python train/prepare_data.py --teacher 32b-q4 --inputs train/runs/distill-02/distill.draft.jsonl --ai-review train/runs/distill-02/sample.evidence.json --out train/out-stt-01 --stt-copies-ratio 0.5
+bash scripts/lora.sh train-eval --teacher 32b-q4 --data train/runs/distill-02 --out train/runs/lora-stt-01 --stt-copies-ratio 0.5
+```
+
 고정 HF 8B에 NF4 double quantization, r16/alpha32, q/k/v/o/gate/up/down, 2 epoch를 적용한다. group_id 단위 80/10/10 분할과 max_length 4096을 사용하고 넘는 정답은 자르지 않고 중단한다. enable_thinking=False로 prompt/completion을 먼저 렌더링하며 정답 JSON에만 loss를 준다. 첫 배치 마스킹도 확인한다. [TRL 형식 문서](https://huggingface.co/docs/trl/sft_trainer#train-on-completion-only)를 따른다.
 
 GGUF 어댑터와 .gguf.json 출처 파일을 만들며 기본 manifest를 수정하지 않는다. train-eval은 8B 기본·8B+LoRA를 같은 세 개발셋으로 비교한다. 독립 검토 뒤 다음을 general·general_es·naturalness.dev 각각에 적용한다.
@@ -435,7 +450,7 @@ GGUF 어댑터와 .gguf.json 출처 파일을 만들며 기본 manifest를 수�
 
 ## 11. 검증 상태
 
-현재 버전은 14B 토크나이저 테스트를 포함한 `python scripts/verify_mvp.py --local`로 API·번역 검증·학습 경계·STT 형식 비교·런타임 해시·GPU 적재 확인·Windows 시작 경로·개인화 회귀 1,755건과 주행 시나리오를 통과했다. 결과는 `run/verify-5a1ebbaadb/`에 기록한다. 해시·GPU 테스트는 합성 파일·응답으로, Windows 시작 테스트는 합성 실행 명령을 연결한 실제 PowerShell 스크립트로 확인했다. 14B 검사에는 8.3절의 `SOURCE_TOKENIZER_DIR` 설정을 사용했으며, 설정이 없으면 해당 4건은 건너뛴다. 이 명령은 실제 모델 번역이나 SDK 기기 시험이 아니다.
+현재 버전은 14B 토크나이저 테스트를 포함한 `python scripts/verify_mvp.py --local`로 API·번역 검증·학습 경계·STT 형식 비교/학습 사본·런타임 해시·GPU 적재 확인·Windows 시작 경로·개인화 회귀 1,797건과 주행 시나리오를 통과했다. 결과는 `run/verify-a6c01a83b9/`에 기록한다. STT 학습 사본·해시·GPU 테스트는 합성 자료·응답으로, Windows 시작 테스트는 합성 실행 명령을 연결한 실제 PowerShell 스크립트로 확인했다. 14B 검사에는 8.3절의 `SOURCE_TOKENIZER_DIR` 설정을 사용했으며, 설정이 없으면 해당 4건은 건너뛴다. 이 명령은 실제 모델 번역이나 SDK 기기 시험이 아니다.
 
 실제 모델 품질의 완료 기준과 실행 순서는 [mvp_acceptance.md](mvp_acceptance.md)에 있다. 평가기는 mock을 기본 거절하고, 실제 서버의 코드·팩 해시와 실행 설정을 기록한다. 자연스러움과 의미 보존은 review.csv에 별도로 검토해야 한다. 기존 버전의 모델 평가 수치를 이번 버전의 성적으로 쓰지 않는다.
 

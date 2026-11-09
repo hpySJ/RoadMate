@@ -141,6 +141,7 @@ class Pipeline:
     def __init__(self, root, out, stage, teacher="14b-q4"):
         self.root, self.out, self.stage = root, out, stage
         self.teacher = teacher
+        self.stt_copies_ratio = .5 if stage == "train-eval" else None
         self.python = root / ".venv" / "bin" / "python"
         self.env = {**os.environ, "LOG_REJECTED": "1", "MODEL_BACKEND": "llama", "MODEL_PROFILE": "8b-q4",
                     "PYTHONIOENCODING": "utf-8"}
@@ -385,7 +386,8 @@ class Pipeline:
         prepared = self.out / "prepared"
         self.run([train_python, "train/prepare_data.py", "--inputs", draft, "--ai-review", evidence, "--out", prepared,
                   "--tokenizer", config["base_model"], "--tokenizer-revision", config["base_revision"],
-                  "--max-length", str(config["max_length"]), "--teacher", self.teacher], "prepare")
+                  "--max-length", str(config["max_length"]), "--teacher", self.teacher,
+                  "--stt-copies-ratio", str(self.stt_copies_ratio)], "prepare")
         self.run([train_python, "train/train_qlora.py", "--config", snapshot, "--data-dir", prepared,
                   "--output-dir", self.out / "training", "--teacher", self.teacher], "train")
         adapter = self.out / "adapter.gguf"
@@ -401,6 +403,8 @@ class Pipeline:
                  f"- teacher: {self.teacher}",
                  f"- status: {'failed' if error else 'AI 검토 대기 (참고)'}",
                  f"- elapsed seconds: {time.monotonic() - self.started:.1f}"]
+        if self.stage == "train-eval":
+            lines.append(f"- requested STT copies ratio: {self.stt_copies_ratio}")
         if error:
             lines.append(f"- error: {error}")
         if self.archive:
@@ -432,6 +436,7 @@ class Pipeline:
         path = self.out / "stage_summary.md"
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         (self.out / "stage_summary.json").write_text(json.dumps({"stage": self.stage, "teacher": self.teacher,
+            **({"stt_copies_ratio": self.stt_copies_ratio} if self.stage == "train-eval" else {}),
             "error": error, "disk_checks": self.disk_checks, "offload_checks": self.offload_checks},
             ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print("\n".join(lines), flush=True)
@@ -444,9 +449,13 @@ def main(argv=None):
     parser.add_argument("--teacher", choices=TEACHER_PROFILES, default="14b-q4")
     parser.add_argument("--out", type=Path)
     parser.add_argument("--data", type=Path, help="Completed generate folder with sample.evidence.json")
+    parser.add_argument("--stt-copies-ratio", type=float, help="train-eval only: STT input copies ratio, default 0.5; 0 disables")
     parser.add_argument("--finish", type=Path, help="Existing train-eval folder; review decision only, no model execution")
     parser.add_argument("--reviews", type=Path, help="Merged review_pair01-*.csv directory, used with --finish")
     args = parser.parse_args(argv)
+    if args.stt_copies_ratio is not None and (
+            args.stage != "train-eval" or args.finish or not 0 <= args.stt_copies_ratio <= 1):
+        parser.error("--stt-copies-ratio must be finite and in [0, 1], for train-eval preparation only")
     if args.finish:
         if args.stage != "train-eval" or args.out or args.data or not args.reviews:
             parser.error("Use train-eval --finish STAGE_DIR --reviews MERGED_REVIEW_DIR")
@@ -457,6 +466,8 @@ def main(argv=None):
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     out = (args.out or ROOT / "train" / "runs" / f"{args.stage}-{stamp}-{uuid.uuid4().hex[:6]}").resolve()
     pipeline = Pipeline(ROOT, out, args.stage, args.teacher)
+    if args.stage == "train-eval":
+        pipeline.stt_copies_ratio = .5 if args.stt_copies_ratio is None else args.stt_copies_ratio
     created = False
     try:
         if out.exists():
@@ -472,6 +483,7 @@ def main(argv=None):
             shutil.copytree(ROOT / "logs", out / "logs-before")
         (out / "stage.json").write_text(json.dumps({"stage": args.stage, "created_utc": stamp, "profiles": profiles,
                                                     "teacher": args.teacher,
+                                                    **({"stt_copies_ratio": pipeline.stt_copies_ratio} if args.stage == "train-eval" else {}),
                                                     "gpu_layers_override": os.environ.get("GPU_LAYERS"),
                                                     "data": str(args.data.resolve()) if args.data else None}, indent=2) + "\n", encoding="utf-8")
         if args.stage == "teacher-check":
