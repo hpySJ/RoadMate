@@ -1,4 +1,3 @@
-"""로컬 회귀검사 또는 실제 모델 품질까지 검증. --local은 모델 검증 완료를 뜻하지 않는다."""
 import argparse
 import json
 import os
@@ -12,9 +11,10 @@ sys.path.insert(0, str(ROOT))
 from config import artifact_hashes  # noqa: E402
 
 
+# 검증
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description="로컬 회귀검사 또는 실제 모델 품질까지 검증. --local은 모델 검증 완료를 뜻하지 않는다.")
     ap.add_argument("--local", action="store_true", help="GPU 없이 코드·계약·페르소나만 검증")
     ap.add_argument("--runs", nargs="+", default=[], help="실제 모델 평가와 검토가 끝난 결과 폴더 5개")
     args = ap.parse_args()

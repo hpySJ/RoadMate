@@ -1,4 +1,4 @@
-"""Synthetic STT cases; evaluation sentences are not fixtures here."""
+# 테스트
 import pytest
 
 from validation import extract_numbers, fuel_polarity, neg_level, space_english_number_boundaries, validate_translation

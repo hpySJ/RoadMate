@@ -1,69 +1,66 @@
-# roadmate-ai
+# RoadMate AI
 
-로드메이트 코리아의 AI 파트입니다. 정차 중 통역(한국어↔영어, 한국어↔스페인어), 목적지 말 알아듣기, 주행 안내 규칙을 맡습니다.
+정차 중 한국어↔영어·스페인어 통역용 로컬 AI 서버. 외부 AI API 없이 llama.cpp와 FastAPI로 실행함. 목적지 후보 검색과 주행 안내 규칙 포함.
 
-외부 AI API는 쓰지 않습니다. 기본 모델은 Qwen3-8B(Q4_K_M, 생각 모드 끔)이며, llama.cpp 앞의 FastAPI 서버가 백엔드 요청을 받습니다. `MODEL_PROFILE=4b-q4` 또는 `4b-q8`로 4B 대안을 선택할 수 있습니다.
+최종 설정은 **Qwen3-8B Q4_K_M + translate-v11 + 스페인어 ¿? 복원 규칙**. 복원 대상에 `cuándo`·`quién`·`quiénes` 포함. LoRA 실험은 종료했으며 어댑터 없이 실행함. 결과·한계는 [제출 요약](docs/submission_summary.md) 참고.
 
+```text
+Android → AI /translate (127.0.0.1:8000) → llama-server (127.0.0.1:8081)
 ```
-APK → 백엔드(8080) → AI 서버(8000) → llama-server(8081)
+
+## 설치·실행
+
+AI 저장소 루트에서 실행. Windows는 Python 3.11과 PowerShell 필요함. 모델 없이 API 계약 확인 가능.
+
+```powershell
+.\scripts\setup_ai_env.ps1
+.\scripts\start_all.ps1 -Mock
+.\scripts\stop_all.ps1
 ```
 
-위 구성은 연동 계약이며 팀 백엔드의 구현·배치는 아직 확인하지 못했습니다. 앱 통역 연결에 앞서 시연용 GPU PC와 백엔드 사용 여부를 정해야 합니다. 같은 PC의 에뮬레이터는 `10.0.2.2`로 호스트에 접근할 수 있습니다. 필요한 앱 설정과 직접 연결 시 책임은 [`docs/pleos_sdk.md`](docs/pleos_sdk.md)의 6장을 따릅니다.
+실제 번역은 NVIDIA GPU PC에 모델 설치 후 실행.
 
-주행 안내(스쿨존, 우회전, 정차 잠금)는 모델 없이 규칙으로 동작합니다. `guidance.py`는 앱에 이식할 기준입니다. 팀 Android `895bb08`에는 Kotlin 안내·기어·속도·TTS·큐가 구현돼 있지만, 정차 신선도와 안내 조건·횟수 기록 정책이 아직 이 기준과 다릅니다.
+```powershell
+.\scripts\setup_llama.ps1
+.\.venv\Scripts\python.exe scripts\download_model.py
+.\scripts\start_all.ps1
+```
 
-## 폴더 구성
+Linux는 `bash scripts/run.sh setup`, `bash scripts/run.sh start`, `bash scripts/run.sh stop` 사용. 모델 로딩 후 `/health/ready` 200 확인 필요함. 설치 조건·모델 프로필·최종 평가 명령·LoRA 종료 기록은 [사용 안내](docs/guide.md) 참고.
+
+## API
+
+| API | 용도 |
+|---|---|
+| `POST /translate` | 앱 통역: `{"text","from","to","situation"}` → `{"text"}` |
+| `POST /internal/v1/translate` | 요청 ID·세션·epoch를 사용하는 내부 통역 |
+| `POST /internal/v1/parse-destination` | 목적지 검색어와 데모 장소 후보 |
+| `POST /internal/v1/cancel` | 내부 세션 취소 |
+| `GET /health/ready` | 모델·AI 준비 상태 |
+
+통역 언어는 `ko-KR` ↔ `en-US`·`es-US`·`es-MX`. 앱 상황 값 `rental`은 `rental_counter`로 매핑함. 재질문 응답은 `text`를 생략하고 `clarification`, `clarification_locale`을 반환함. 현재 앱은 문장 카드로 대체함. 전체 계약은 [OpenAPI](docs/openapi.json) 참고.
+
+팀 Android `9945ab18`의 요청 형식 확인함. 실제 APK의 네트워크 권한·서버 URL 설정과 Pleos STT→HTTP→TTS 검증은 앱 측 확인 필요함. 앱 전체 제한은 3초, AI 기본 제한은 8초. 연결 시연에서는 `MODEL_TIMEOUT_S=2.5` 설정 후 실제 응답 시간 측정 필요함.
+
+## 구성
 
 | 위치 | 내용 |
 |---|---|
-| `app.py`, `engine.py`, `inference.py`, `sessions.py`, `schemas.py` | AI 서버 |
-| `prompting.py`, `prompts/` | 프롬프트. 서버와 학습이 같이 씁니다 |
-| `validation.py` | 번역 결과 검사(숫자, 시간, 통화, 부정, 연료, 좌우) |
-| `guidance.py`, `packs/` | 주행 안내 규칙, 용어집, 안내 문구, 데모 장소 |
-| `models/manifest.json` | 모델 파일, 버전, 실행 옵션 |
-| `eval/` | 평가셋(dev 100건, 범용 general 180건, 스페인어 general_es 100건, 최종 test v2 44건, 퇴역 test 60건 보존)과 평가 스크립트 |
-| `train/` | 검수 학습 자료 만들기(초안·검수·가져오기), QLoRA 학습, 어댑터 변환 |
-| `scripts/` | 설치·실행·종료 스크립트 |
-| `docs/` | API 계약(`openapi.json`), 사용 안내(`guide.md`), Pleos SDK 연결(`pleos_sdk.md`) |
-| `tests/` | 모델 없이 돌아가는 테스트 |
+| `app.py`, `schemas.py`, `sessions.py` | HTTP 계약·요청 수명·취소 |
+| `engine.py`, `inference.py`, `runtime_identity.py` | 모델 호출·재시도·실행 모델 확인 |
+| `prompting.py`, `prompts/`, `validation.py` | 프롬프트 조립·출력 검사 |
+| `guidance.py`, `packs/` | 주행 규칙·용어집·데모 장소 |
+| `models/manifest*.json` | 모델 파일·revision·해시·실행 설정 |
+| `scripts/`, `tests/` | 설치·실행·검증 |
+| `eval/`, `train/` | 평가·검토·보존된 증류·QLoRA 도구 |
+| `docs/` | 사용 안내·API·제출 요약·PR 초안 |
 
-## 다른 파트와 맞닿는 곳
+## 검증
 
-백엔드는 `/internal/v1/translate`, `/internal/v1/parse-destination`, `/internal/v1/cancel`, `/health/ready`를 호출합니다. 요청과 응답 형식은 [`docs/openapi.json`](docs/openapi.json)에 있습니다. 필드 이름은 `session_id`처럼 밑줄로 씁니다. 문서에 없는 필드가 오면 422로 거절하고, 오류는 `error_code`로 구분합니다.
+```powershell
+.\.venv\Scripts\python.exe scripts\verify_mvp.py --local
+```
 
-앱은 `guidance.py`와 `packs/fixtures/guidance_scenarios.json`을 기준으로 Kotlin으로 옮깁니다. 온보딩에서 받은 언어·평소 운전 국가·한국 운전 경험을 `DriverProfile`로 넘기면 출발 안내와 주행 중 설명의 양이 바뀌고, 안전 경고는 누구에게나 나갑니다. 안내 문구는 한국어·영어·프랑스어·스페인어가 있습니다. `StopLock.update()`는 기어나 속도 값이 들어올 때마다 호출해야 합니다.
+결과는 `run/verify-*/report.json`에 기록됨. 로컬 검사는 API·검사기·주행 규칙 대상. 실제 모델의 의미 정확성·앱 3초 응답은 별도 실측 필요함. 검증 상태는 [사용 안내 11장](docs/guide.md#11-검증-상태) 참고.
 
-통역 언어 값은 Pleos STT·TTS locale(`ko-KR`, `en-US`, `es-US`, `es-MX`)을 그대로 씁니다. 앱이 어떤 SDK 값을 어디에 넘기는지는 [`docs/pleos_sdk.md`](docs/pleos_sdk.md)에 있습니다.
-
-코드에서 `# 백엔드 연동`, `# 프론트 연동` 주석이 붙은 곳이 다른 파트와 연결되는 부분입니다.
-
-## 실행 환경
-
-현재 DLPC는 NVIDIA GPU(VRAM 24GB)를 사용합니다. GPU 적재·학습 메모리·처리 속도는 실제 실행에서 확인합니다. Windows는 `scripts/*.ps1`, Linux(DLPC 등)는 `scripts/run.sh`로 설치하고 실행합니다. 자세한 환경·용량 기준은 [`docs/guide.md`](docs/guide.md)에 있습니다.
-
-## 지금 상태
-
-독립 검토의 지적별 반영과 남은 실제 장비 확인은 [`docs/review_followup.md`](docs/review_followup.md)에 있습니다.
-
-모델 없이 도는 테스트와 주행 시나리오는 `python scripts/verify_mvp.py --local`로 함께 실행하고 `run/verify-*/report.json`에 결과를 남깁니다.
-
-온보딩 3개 외국어 × 11개 국가 × 3개 경험을 검증합니다. 국가·경험 선택지의 현지화 사전, 모든 운전자의 스쿨존 진입 경고, 확인된 비보호 좌회전 맥락의 조건부 안내가 있습니다. 번역 프롬프트는 관용구·부탁·허락·전언을 자연스럽게 전달하도록 보강했고, 자연스러움 개발평가 20건을 추가했습니다.
-
-기획별 구현 위치, 모델 품질 합격 기준, SDK 실기기 확인 범위는 [`docs/mvp_acceptance.md`](docs/mvp_acceptance.md)에 있습니다. `eval/release_gate.py`는 실제 모델·현재 코드·전건 검토가 없으면 실패합니다. 로컬 테스트 통과는 실제 번역 품질 합격과 다릅니다.
-
-사용자 제공 repair-v9 집계는 dev 번역 73/75, general 157/160, general_es 90/90, naturalness.dev 20/20, 기록된 첫 시도 오언어 0/343입니다. 원본 결과를 로컬에서 재집계하지 않았으며 이후 미지원 언어·목적지 변경의 모델 품질 수치는 아직 없습니다. 검사에 걸린 번역은 재생하지 않고 다시 말해 달라고 합니다.
-
-오답 초안을 뺀 재시도, 구체적인 회전·원화 힌트와 시도별 기록을 추가했습니다. 후속으로 첫 요청의 목표 언어 이름, 지명을 제외한 언어 검사, 영어 구어체 시각 힌트·한글 정규화와 언어 오류·기타 오류·혼합 오류별 재시도 집계를 반영했습니다. repair-v9 이후에는 번역 프롬프트를 유지하고 미지원 프랑스어 감지와 목적지 의도 설명을 보완했습니다. 다음에 확인할 것은 이렇습니다.
-
-1. 프랑스어 확인 질문·목적지 두 건의 모델 재평가, `review.csv` 의미 검수와 스페인어 원어민 검토
-2. 8B를 기준으로 선생 모델 검증과 LoRA 증류 자료를 준비([실행 안내](docs/guide.md))
-3. 팀이 확인한 기어·속도 표시·TTS 경로에 원본 m/s·관측 시각·기어 재관측을 연결하고, STT·HTTP 통역·취소까지 에뮬레이터에서 검증
-4. 에뮬레이터와 30분 동시 실행
-
-평가셋, 학습 시드 데이터, 용어집, 안내 문구, 데모 장소 좌표는 아직 검수 전 초안입니다. 스페인어 문장은 원어민 검토가 필요합니다. 1차 제출은 학습 없이 기본 모델과 프롬프트, 용어집으로 갑니다. QLoRA는 고정 Qwen 선생 출력의 자동 필터·AI 표본 검토를 거친 자료로 준비하며 scripts/lora.sh로 실행합니다.
-
-사용자 제공 34bfd43 비교와 Claude 블라인드 검토(AI 검토·참고)에서 8B의 나쁨 비율은 2%, 4B는 6%였습니다. 이를 근거로 8B를 기본으로 선택하고 효과가 없거나 안전 지표가 악화된 두 단계 출력·문체·현장 용어·다듬기 실험은 삭제했습니다. 자동 통과율만으로 의미 정확성을 보장하지 않으며, 남은 오류 유형은 [검토 기록](docs/naturalness_plan.md)에 남겼습니다.
-
-## Git
-
-모델 파일, 가상환경, 로그, 학습 결과, `.env`는 올리지 않습니다. 필요하면 `scripts/`의 스크립트로 다시 받습니다. `roadmate-ai/`가 바뀌면 GitHub Actions가 모델 없이 테스트를 돌립니다.
+모델·가상환경·`.env`·로그·평가 결과·학습 결과는 Git 제외 대상. 평가셋은 학습·프롬프트 예시로 사용 금지. 잠근 시험은 튜닝에 사용하지 않고 확정 설정으로 `--final` 1회 실행 예정.

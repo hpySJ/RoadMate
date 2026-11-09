@@ -1,4 +1,4 @@
-"""Convert a verified Qwen3-8B PEFT adapter to GGUF plus an immutable-base sidecar."""
+# 어댑터
 import argparse
 import hashlib
 import json
@@ -51,7 +51,7 @@ def check_training(adapter: Path, manifest: dict) -> tuple[dict, Path]:
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description='검증된 Qwen3-8B 어댑터를 GGUF로 변환합니다.')
     ap.add_argument("--adapter", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--profile", default="8b-q4", choices=["8b-q4"])

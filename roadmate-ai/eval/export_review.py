@@ -1,4 +1,4 @@
-"""Export blinded AI review workbooks; never a training or human-release approval file."""
+# 평가
 import argparse
 import csv
 import hashlib
@@ -252,7 +252,6 @@ def write_files(contents):
         raise FileExistsError("Refusing to overwrite existing review files")
     for path in paths:
         path.parent.mkdir(parents=True, exist_ok=True)
-    # Reserve every output before writing so a name collision cannot replace prior reviews.
     reserved = []
     try:
         for path in paths:
@@ -287,7 +286,7 @@ def write_review(rows, key, out_dir, label, fields=None, include_key=True):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='AI 검토용 블라인드 비교 파일을 만듭니다.')
     parser.add_argument("runs", type=Path, nargs="*")
     parser.add_argument("--review", type=Path, help="Existing review; preserves its judgments and notes")
     parser.add_argument("--key", type=Path, help="Private key from the original export")

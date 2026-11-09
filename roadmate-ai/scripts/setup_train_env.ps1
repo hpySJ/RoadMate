@@ -1,4 +1,4 @@
-﻿# 학습: QLoRA 학습 환경(.venv-train) - PyTorch CUDA + Transformers/PEFT/TRL/bitsandbytes
+# 학습 환경
 param([string]$Python = "3.11", [string]$Cuda = "cu126", [string]$Torch = "2.14.1")
 . "$PSScriptRoot\_common.ps1"
 $venv = Join-Path $Root ".venv-train"

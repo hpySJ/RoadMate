@@ -1,9 +1,4 @@
-"""학습: Python(NF4) 경로에서 어댑터 적용 전/후를 같은 검증 자료로 비교한다(학습 자체의 효과).
-
-사용: .venv-train\\Scripts\\python.exe train\\eval_hf.py --split validation                      # 기준(어댑터 없음)
-      .venv-train\\Scripts\\python.exe train\\eval_hf.py --split validation --adapter train\\runs\\lora-v1\\adapter
-최종 배포 품질은 GGUF+LoRA로 llama-server를 띄운 뒤 eval\\evaluate.py로 측정한다.
-"""
+# 모델 평가
 import argparse
 import hashlib
 import json
@@ -82,7 +77,6 @@ def main():
             issues = ["invalid_json"]
         results.append({"meta": m, "reference": ref, "output": out if out is not None else raw, "issues": issues})
 
-    # 검증: 실행마다 따로 저장해 어댑터끼리 비교할 때 이전 결과를 덮어쓰지 않는다(모델·어댑터·데이터 식별 정보 함께 기록)
     label = "base" if not a.adapter else "-".join(Path(a.adapter).resolve().parts[-3:])
     out_dir = ROOT / "train" / "runs" / "eval_hf" / f"{a.split}-{label}-{time.strftime('%Y%m%d-%H%M%S')}"
     out_dir.mkdir(parents=True, exist_ok=True)

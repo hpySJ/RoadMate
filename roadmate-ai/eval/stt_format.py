@@ -1,4 +1,4 @@
-"""Create punctuation/case variants of the three development evaluation sets; no inference."""
+# 평가
 import argparse
 import hashlib
 import json
@@ -72,7 +72,6 @@ def normalize_source(text: str, locale="en-US") -> str:
 
 
 def variant_bytes(cases: list[dict]) -> bytes:
-    """Deterministic serialization shared by the variant writer and paired comparison."""
     return "".join(json.dumps({**case, "text": normalize_source(case["text"], case["source_locale"])}, ensure_ascii=False,
                               separators=(",", ":")) + "\n" for case in cases).encode("utf-8")
 
@@ -85,7 +84,6 @@ def build_variants(out_dir: Path) -> dict:
     for name in DATASETS:
         expected = ROOT.resolve() / "eval" / name
         source = expected.resolve(strict=True)
-        # A canonical filename must not be redirected to another set or outside eval/.
         if source != expected or "test.locked" in source.name:
             raise ValueError(f"canonical evaluation path was redirected: {expected}")
         raw = source.read_bytes()
@@ -110,7 +108,6 @@ def build_variants(out_dir: Path) -> dict:
                          "count": len(cases), "changed_count": changed})
     manifest = {"transform_version": STT_FORMAT_VERSION, "rules": RULES,
                 "observations": OBSERVATIONS, "datasets": datasets}
-    # Validate every source before creating any output or parent directories.
     out_dir.mkdir(parents=True)
     for name, content in variants.items():
         (out_dir / name).write_bytes(content)
@@ -119,7 +116,7 @@ def build_variants(out_dir: Path) -> dict:
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='개발 평가셋의 STT 형식 사본을 만듭니다.')
     parser.add_argument("--out-dir", type=Path, required=True)
     args = parser.parse_args(argv)
     print(json.dumps(build_variants(args.out_dir), ensure_ascii=False, indent=2))

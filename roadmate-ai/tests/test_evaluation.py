@@ -1,3 +1,4 @@
+# 테스트
 import csv
 import copy
 import hashlib
@@ -211,7 +212,6 @@ def test_quality_gate_rejects_mock_unreviewed_and_changed_evidence(tmp_path, mon
     settings = Settings.from_env()
     cases = [{"id": "synthetic-case", "task": "translate", "source_locale": "en-US", "target_locale": "ko-KR",
               "text": "synthetic test fixture", "must_include": ["example"]}]
-    # 승인 표시는 합성 테스트 자료에만 넣는다. 실제 초안 평가셋을 승인하지 않는다.
     for c in cases:
         c.update(review_status="approved", reviewer="synthetic-test-reviewer", reviewed_at="2026-11-08")
     local_eval = tmp_path / "eval" / "general_es.jsonl"

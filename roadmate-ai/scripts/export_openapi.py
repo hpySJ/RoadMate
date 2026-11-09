@@ -1,9 +1,9 @@
-"""백엔드 연동: 백엔드 담당에게 전달할 API 계약(docs/openapi.json) 생성."""
 import dataclasses
 import json
 import sys
 from pathlib import Path
 
+# API 문서
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 

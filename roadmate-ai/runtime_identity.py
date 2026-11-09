@@ -1,4 +1,3 @@
-"""관리 스크립트로 띄운 로컬 모델의 파일·프로세스·문맥을 확인한다. 원격 증명/전자서명은 아니다."""
 import ctypes
 import hashlib
 import json
@@ -13,6 +12,7 @@ ROOT = Path(__file__).resolve().parent
 log = logging.getLogger("roadmate.runtime")
 
 
+# 파일 확인
 def _file_key(path: Path) -> dict:
     stat = path.stat()
     return {"path": str(path), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns,
@@ -27,6 +27,7 @@ def _digest(path: Path) -> str:
     return h.hexdigest()
 
 
+# 해시 캐시
 def digest(path: Path, cache_dir: Path = ROOT / "run" / "runtime-hashes", *, allow_hash: bool = True) -> str:
     started = time.monotonic()
     p = path.resolve(strict=True)
@@ -62,6 +63,7 @@ def digest(path: Path, cache_dir: Path = ROOT / "run" / "runtime-hashes", *, all
     return sha
 
 
+# 모델 준비
 def prepare_runtime_files(manifest: dict, root: Path = ROOT) -> None:
     model = root / "models" / manifest["model"]["gguf_file"]
     if digest(model, root / "run" / "runtime-hashes") != manifest["model"]["gguf_sha256"]:
@@ -71,6 +73,7 @@ def prepare_runtime_files(manifest: dict, root: Path = ROOT) -> None:
             raise ValueError("adapter SHA256 mismatch")
 
 
+# 프로세스 확인
 def process_identity(pid_file: Path) -> dict:
     pid = int(pid_file.read_text(encoding="ascii").split()[0])
     if pid <= 0:
@@ -104,13 +107,14 @@ def process_identity(pid_file: Path) -> dict:
     else:
         base = Path("/proc") / str(pid)
         executable = (base / "exe").resolve(strict=True).name
-        # comm can contain spaces; fields after its final ')' start at state (field 3).
+
         started = (base / "stat").read_text().rsplit(")", 1)[1].split()[19]
     if executable not in ("llama-server", "llama-server.exe"):
         raise ValueError("model pid is not llama-server")
     return {"pid": pid, "started": str(started)}
 
 
+# 런타임 확인
 def verify_runtime(props: dict, adapters: list, manifest: dict, process: dict, root: Path = ROOT,
                    *, allow_hash: bool = True) -> dict:
     model = root / "models" / manifest["model"]["gguf_file"]

@@ -1,4 +1,4 @@
-"""32B launch guards use synthetic manifests, logs and free-space reports only."""
+# 테스트
 from contextlib import contextmanager
 import json
 from pathlib import Path

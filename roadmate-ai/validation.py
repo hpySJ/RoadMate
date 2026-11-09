@@ -1,4 +1,3 @@
-"""번역 출력 검증: 구조·언어·숫자·부정·연료·좌우. 실패하면 재생하지 않는다."""
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -8,7 +7,7 @@ from prompting import LANG_KEY, _find_terms, concept_spans, fold, glossary, matc
 HANGUL = re.compile(r"[가-힣]")
 LATIN = re.compile(r"[A-Za-z]")
 HAN_KANA = re.compile(r"[぀-ヿ一-鿿]")
-# 검증: 로마자 언어는 기능어로 구분한다. 프랑스어는 별도의 고유한 기능어 근거가 있어야 판정한다.
+
 FUNC_WORDS = {
     "en": {"the", "is", "are", "you", "your", "please", "it", "to", "of", "and", "my", "this", "that", "can", "i",
            "we", "what", "where", "with", "for", "have", "do", "does", "was", "there", "here", "car"},
@@ -20,8 +19,9 @@ FUNC_WORDS = {
 }
 
 
+# 언어
 def latin_tokens(text: str) -> list[str]:
-    """한글에 붙은 라틴 단어·영숫자 표지. NFC로 악센트를 맞추고 B2의 숫자는 유지한다."""
+
     chars = []
     for char in unicodedata.normalize("NFC", text):
         if char.isdecimal() or char.isalpha() and "LATIN" in unicodedata.name(char, ""):
@@ -34,7 +34,7 @@ def latin_tokens(text: str) -> list[str]:
 
 
 def latin_words(text: str) -> list[str]:
-    """숫자를 제외한 라틴 문자 단어·조각. 재시도와 평가의 단어 경계를 유지한다."""
+
     return latin_tokens(re.sub(r"\d", " ", text))
 
 
@@ -50,13 +50,13 @@ def script_counts(text: str) -> tuple[int, int]:
 
 
 def latin_lang(text: str) -> str | None:
-    """en/es/fr 중 근거가 충분한 언어. 확실하지 않으면 None(짧은 문장, 고유명사)."""
-    # 지명 안의 de/del 같은 기능어는 주변 문장의 언어를 나타내지 않는다.
+
+
     text = _mask(text, [(s, e) for s, e, _ in _find_terms(text, _proper_names(), "en")])
     words = re.findall(r"[a-z]+", fold(text).lower())
     en, es = (sum(w in FUNC_WORDS[k] for w in words) for k in ("en", "es"))
     fr_only = set(words) & (FUNC_WORDS["fr"] - FUNC_WORDS["en"] - FUNC_WORDS["es"])
-    # shortcut: 전부 대문자인 프랑스어는 약어와 구별하지 않는다. 대문자 STT가 필요하면 언어 판별을 보강한다.
+
     if (len(fr_only) >= 2 and sum(w in FUNC_WORDS["fr"] for w in words) > 2 * max(en, es)
             and any(not w.isupper() and w.lower() in {"je", "vous", "nous", "il", "ils", "elle", "elles", "est",
                                                      "sont", "suis", "sommes", "etes", "ne"}
@@ -77,20 +77,20 @@ def in_locale_script(text: str, locale: str) -> bool:
 
 
 def looks_like_other_language(text: str, locale: str) -> bool:
-    # 검증: 버튼 방향과 실제 발화 언어가 반대인 경우
+
     h, l = script_counts(text)
     if locale != "ko-KR":
         return h > max(2, l) or h == 0 and latin_lang(text) == "fr"
     return h == 0 and l >= 3
 
 
-# ---------------------------------------------------------------- numbers
+# 숫자
 @dataclass(frozen=True)
 class Num:
     value: float
-    kind: str  # n | time | phone
-    exact: bool = False  # time: 오전·오후(a.m./p.m.)나 24시간제로 확정된 값
-    unit: str | None = None  # 금액: KRW | USD
+    kind: str
+    exact: bool = False
+    unit: str | None = None
 
 
 EN_UNITS = {
@@ -118,7 +118,7 @@ NATIVE_RE = re.compile(
     r"(?<![가-힣])(열한|열두|다섯|여섯|일곱|여덟|아홉|스무|스물|한|두|세|네|열)\s?(시간|시|명|분(?!화|류|석|야|노)|개|대|번|살|사람|장"
     r"|병|잔|곳|군데|달)"
 )
-# 검증: 단위 없이 쓴 고유어 수(어른 셋, 아이 둘). 열(열이 나요)·하나(하나도)는 뜻이 갈려 뺀다
+
 NATIVE_ALONE = {"둘": 2, "셋": 3, "넷": 4, "다섯": 5, "여섯": 6, "일곱": 7, "여덟": 8, "아홉": 9}
 NATIVE_ALONE_RE = re.compile(r"(?<![가-힣])(둘|셋|넷|다섯|여섯|일곱|여덟|아홉)(?=[\s,.?!]|$|이|은|만|도|요|입니|이에|이서)")
 PHONE_RE = re.compile(r"(?<!\d)(?:\+?82[\s-]?)?0?\d{1,3}[\s-]\d{3,4}[\s-]\d{4}(?!\d)")
@@ -127,7 +127,7 @@ EN_STT_CLOCK_RE = re.compile(r"(?<![\w.,:+-])(0?[1-9]|1[0-2])([0-5]\d)\s+([ap])\
 DIGIT_RE = re.compile(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?!\d|,\d)")
 _EN_DAYPART = r"(in the morning|in the afternoon|in the evening|at night|tonight|this morning|this afternoon|this evening)"
 EN_TIME_TAIL = re.compile(rf"\s*(?:o'clock(?:\s+{_EN_DAYPART})?|([ap])\.?\s?m\.?(?![A-Za-z])|{_EN_DAYPART})", re.IGNORECASE)
-# 검증: at 5처럼 단위 없는 시각만 허용한다. 뒤의 수량·금액·날짜나 소수/범위는 시각으로 추정하지 않는다.
+
 EN_BARE_TIME_RE = re.compile(
     r"\b(?:at|by|until|around|before|after)\s+(?P<hour>1[0-2]|[1-9]|"
     + "|".join(w for w, v in EN_UNITS.items() if 1 <= v <= 12)
@@ -145,7 +145,7 @@ PLATE_RE = re.compile(r"\d{2,3}\s?[가-힣]\s?\d{4}")
 CUR_EN = re.compile(r"\s?(?:k|thousand|million|mil)?\s?(won|krw|dollars?|usd|bucks)\b", re.IGNORECASE)
 CUR_KO = re.compile(r"\s?(원|달러|불)")
 
-# 스페인어 숫자는 강세를 뺀 글자(fold)로 읽는다(dieciséis = dieciseis, mañana = manana)
+
 ES_UNITS = {
     "cero": 0, "un": 1, "uno": 1, "una": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5, "seis": 6, "siete": 7,
     "ocho": 8, "nueve": 9, "diez": 10, "once": 11, "doce": 12, "trece": 13, "catorce": 14, "quince": 15,
@@ -168,10 +168,10 @@ ES_WORD_RE = re.compile(rf"\b{_ES_TOKEN}(?:\s+{_ES_TOKEN})*\b", re.IGNORECASE)
 _ES_DAYPART = r"(?:de|en|por)\s+la\s+(manana|madrugada|tarde|noche)"
 ES_TIME_TAIL = re.compile(rf"\s*(?:en\s+punto(?:\s+{_ES_DAYPART})?|([ap])\.?\s?m\.?(?![a-z])|{_ES_DAYPART})", re.IGNORECASE)
 _ES_HOUR = r"\d{1,2}|" + "|".join(sorted([w for w, v in ES_UNITS.items() if 1 <= v <= 24], key=len, reverse=True))
-# 검증: "a las tres y media", "hasta las 5 menos cuarto"처럼 la/las가 붙은 말만 시각으로 본다(las dos personas는 숫자)
+
 _ES_MIN = "|".join(["media", "cuarto", r"\d{1,2}", rf"(?:{_ES_TENS})\s+y\s+(?:{_ES_ONES})",
                     *sorted([w for w, v in ES_UNITS.items() if 1 <= v < 60], key=len, reverse=True)])
-# 검증: 시·분·때를 한 덩어리로 읽는다(a las tres y diez de la tarde = 15:10, cinco menos cuarto = 4:45)
+
 ES_HOUR_RE = re.compile(rf"\b(?:a|hasta|desde|son|es|para|de|entre|y|tipo|sobre|por)\s+las?\s+(?P<hour>{_ES_HOUR})\b"
                         rf"(?:\s+(?P<op>y|menos)\s+(?P<minute>{_ES_MIN})\b(?:\s+minutos?\b)?)?", re.IGNORECASE)
 ES_TO_RE = re.compile(rf"\b(?:un\s+)?(?P<minute>{_ES_MIN})\b(?:\s+(?P<unit>minutos?))?\s+para\s+las?\s+"
@@ -180,7 +180,7 @@ ES_TO_BEFORE = re.compile(r"(?:^\s*|\b(?:son|es|faltan?|lleg\w*|vuelv\w*|regres\
 ES_QUANTITY_BEFORE = re.compile(r"\b(?:necesit\w*|quier\w*|quer\w*|teng\w*|tien\w*|ten\w*|somos|seremos|hay|para"
                                 r"|reserv\w*|compr\w*|pid\w*|ped\w*|traig\w*|trae\w*)\s+"
                                 r"(?:(?:solo|solamente|unicamente|exactamente|otros?|otras?)\s+)*$", re.I)
-# 검증: "a las dos personas"(두 사람에게)처럼 뒤에 세는 말이 오면 시각이 아니다
+
 ES_COUNT_AFTER = re.compile(r"\s+(?:personas?|gente|adultos?|ninos?|ninas?|bebes?|senoras?|senores?|hombres?|mujeres"
                             r"|clientes?|pasajeros?|amigos?|chicos?|chicas?|carros?|autos?|coches?|maletas?|llaves?"
                             r"|tarjetas?|cosas?|veces|noches|dias?|semanas?|meses|anos?|litros?|asientos?|lugares?)\b",
@@ -199,7 +199,7 @@ ES_ORD_ANY = re.compile(r"\b(" + "|".join(ES_ORD) + r")\s+(?=[a-z])", re.IGNOREC
 
 
 def _es_prep(text: str) -> str:
-    # 검증: 30.000(점 천 단위) → 30,000, 3,5(쉼표 소수) → 3.5. 글자 수는 그대로
+
     text = re.sub(r"(?<![\d.,])\d{1,3}(?:\.\d{3})+(?![\d,]|\.\d)", lambda m: m.group().replace(".", ","), text)
     return re.sub(r"(?<![\d.,])(\d+),(\d{1,2})(?!\d)", r"\1.\2", text)
 
@@ -219,19 +219,19 @@ def _parse_es_words(s: str) -> int | None:
 
 
 def _time(h: int, pm: bool | None) -> Num:
-    # 검증: 오전·오후가 있거나 24시간제(0시, 13~24시)면 확정 값, 아니면 12시간 단위로만 비교
+
     if pm is None:
         return Num(float(h), "time", exact=h == 0 or 12 < h <= 24)
     return Num(float(h % 12 + (12 if pm else 0)), "time", exact=True)
 
 
 def _night_pm(h: int | None) -> bool | None:
-    # 검증: 밤 9시 = 21시, 밤 12시(12 de la noche, 12 at night) = 자정, 밤 1~4시 = 새벽
+
     return None if h is None else not (h == 12 or 1 <= h <= 4)
 
 
 def _en_pm(t: re.Match | None, h: int | None = None) -> bool | None:
-    # 검증: a.m./p.m., in the morning/evening 등 → 오후 여부. o'clock만 있으면 미확정(None)
+
     part = t and (t.group(2) or t.group(1) or t.group(3))
     if not part:
         return None
@@ -249,7 +249,7 @@ def _ko_pm(before: str, h: int | None = None) -> bool | None:
 
 
 def _es_pm(t: re.Match | None, h: int | None = None) -> bool | None:
-    # 검증: p. m., de la tarde → 오후, de la noche는 시각을 같이 본다(doce de la noche = 자정). en punto만 있으면 미확정
+
     part = t and (t.group(2) or t.group(1) or t.group(3))
     if not part:
         return None
@@ -263,7 +263,7 @@ DUR = {"en": DUR_EN, "es": DUR_ES, "ko": DUR_KO}
 
 
 def _unit(before: str, after: str, lang: str) -> str | None:
-    # 검증: 금액은 통화까지 비교(30,000 won ≠ 3만 달러)
+
     if re.search(r"\$\s?$", before):
         return "USD"
     if re.search(r"₩\s?$", before):
@@ -275,17 +275,17 @@ def _unit(before: str, after: str, lang: str) -> str | None:
 
 
 def _num(v: float, before: str, after: str, lang: str) -> Num:
-    # 검증: 금액은 통화, 시간 길이는 분 단위로 맞춰 비교한다(half an hour = 30분 = 반 시간 = media hora ≠ 30시간)
+
     cur = _unit(before, after, lang)
     if cur:
         return Num(v, "n", unit=cur)
     m = DUR[lang].match(after)
     if not m:
-        # 검증: necesito dos 같은 수량은 시각의 2분과 구분한다. 기존 단독 1 생략 규칙은 유지한다.
+
         return Num(v, "n", unit="count" if v != 1 and lang == "es" and ES_QUANTITY_BEFORE.search(before) else None)
     if m.group(1):
         return Num(v, "n", unit="min")
-    extra = m.group(3) if m.re.groups >= 3 else None  # 시간 반, y media = +30분, y cuarto = +15분
+    extra = m.group(3) if m.re.groups >= 3 else None
     return Num(v * 60 + (0 if not extra else 15 if "cuarto" in extra.lower() else 30), "n", unit="min")
 
 
@@ -334,8 +334,9 @@ def _mask(text: str, spans: list[tuple[int, int]]) -> str:
     return "".join(chars)
 
 
+# 시각
 def english_times(text: str):
-    """quarter/half past/to 시각을 검증과 프롬프트에서 같은 범위로 읽는다."""
+
     for m in EN_PAST_RE.finditer(text):
         h = int(m.group(3)) if m.group(3).isdigit() else EN_UNITS[m.group(3).lower()]
         if not 1 <= h <= 12:
@@ -344,14 +345,14 @@ def english_times(text: str):
         t = EN_TIME_TAIL.match(text, m.end())
         anchor = _time(h, _en_pm(t, h))
         if m.group(2).lower() == "to":
-            # 오전·오후를 먼저 적용한다(quarter to 12 p.m. = 11:45).
+
             val = (anchor.value - 1) % 24 if anchor.exact else float((h - 1) or 12)
             anchor, mins = Num(val, "time", exact=anchor.exact), 60 - mins
         yield m.start(), t.end() if t else m.end(), anchor, mins
 
 
 def spanish_times(text: str):
-    """검증과 프롬프트 힌트가 같은 시각·원문 범위를 쓴다. 반환: (시작, 끝, 시각, 분)."""
+
     text = fold(text)
     for pattern in (CLOCK_RE, ES_TO_RE, ES_HOUR_RE):
         spans = []
@@ -370,10 +371,10 @@ def spanish_times(text: str):
                     before = text[:m.start()]
                     typical_minutes = mins in (5, 10, 15, 20, 25, 30)
                     quantity = ES_QUANTITY_BEFORE.search(before)
-                    # para (un) cuarto para las ...는 15분 전. necesito un cuarto의 방 요청은 그대로 둔다.
+
                     quarter_time = w.lower() == "cuarto" and quantity and quantity.group().split()[0].lower() == "para"
                     if (quantity and not quarter_time) or not (m.group("unit") or typical_minutes or ES_TO_BEFORE.search(before)):
-                        continue  # 검증: 통상 분 표현은 동사와 무관하게 읽되, necesito diez / somos cuatro의 수량은 보존한다
+                        continue
                 start = m.start() if pattern is ES_TO_RE else m.start("hour")
                 subtract = pattern is ES_TO_RE or m.group("op") == "menos"
             t = ES_TIME_TAIL.match(text, m.end())
@@ -392,7 +393,6 @@ def spanish_times(text: str):
             yield m.start(), t.end(), _time(h, _es_pm(t, h)), None
 
 
-# 검증: 30 thousand won, 30 mil wones처럼 숫자 뒤 단위 말은 숫자에 곱하고, 같은 말을 다시 세지 않게 위치를 돌려준다
 SCALES = {"en": {"k": 1e3, "thousand": 1e3, "million": 1e6, "mil": 1e6}, "es": {"mil": 1e3, "millon": 1e6, "millones": 1e6}}
 _EN_JOINED_SCALED_NUMBER = re.compile(
     r"(?<![\w.,])(?:(?:is|are|was|were|just|only|about|around|roughly|approximately|exactly|nearly|over|under"
@@ -401,9 +401,10 @@ _EN_JOINED_SCALED_NUMBER = re.compile(
     r"(?:\s*(?:and\s+)?\d+(?:[.,]\d+)?[a-z]*)?(?!\w)", re.I)
 
 
+# 음성 입력
 def space_english_number_boundaries(text: str) -> str:
-    """Scale로 확인되는 영어 숫자 구간만 분리하며 글자·숫자·통화는 추정하거나 지우지 않는다."""
-    # shortcut: 식별자와 구분할 수 없는 임의 접두사는 보존한다. 실제 STT 근거가 더 모이면 범위를 검토한다.
+
+
     return _EN_JOINED_SCALED_NUMBER.sub(
         lambda m: re.sub(r"(?<=[A-Za-z])(?=\d)|(?<=\d)(?=[A-Za-z])", " ", m.group()), text)
 
@@ -435,6 +436,7 @@ def _digit_nums(text: str, lang: str, out: list) -> list[tuple[int, int]]:
     return spans
 
 
+# 숫자 추출
 def extract_numbers(text: str, locale: str) -> list[Num]:
     lang = LANG_KEY[locale]
     if lang == "en":
@@ -466,14 +468,14 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
     text = _mask(text, spans)
 
     if lang == "en":
-        # Pleos의 HMM a m/p m 표기만 복원한다. 오전·오후 없는 숫자는 시각으로 추측하지 않는다.
+
         for m in EN_STT_CLOCK_RE.finditer(text):
             out.append(_time(int(m.group(1)), m.group(3).lower() == "p"))
             if int(m.group(2)):
                 out.append(Num(float(m.group(2)), "n", unit="min"))
             spans.append(m.span())
         text = _mask(text, spans)
-        # 검증: 말로 하는 시각(quarter past 4 p.m.)은 숫자 시각보다 먼저 읽어 두 번 세지 않는다
+
         for start, end, anchor, mins in english_times(text):
             out += [anchor, Num(float(mins), "n", unit="min")]
             spans.append((start, end))
@@ -489,7 +491,7 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
             if t:
                 out.append(_time(int(m.group(1)), _en_pm(t, int(m.group(1)))))
                 spans.append((m.start(), t.end()))
-        # 검증: 정오·자정, 말로 하는 시간 길이(half an hour, an hour and a half)
+
         for m in re.finditer(r"\b(noon|midday|midnight)\b", text, re.IGNORECASE):
             out.append(Num(0.0 if m.group(1).lower() == "midnight" else 12.0, "time", exact=True))
             spans.append(m.span())
@@ -542,7 +544,7 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
             words = m.group()
             t = ES_TIME_TAIL.match(text, m.end())
             if not t and re.fullmatch(r"(un|uno|una)", words, re.IGNORECASE) and not DUR_ES.match(text, m.end()):
-                continue  # 관사 un/una는 숫자로 세지 않는다
+                continue
             v = _parse_es_words(words)
             if v is None:
                 continue
@@ -567,7 +569,7 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
             spans.append(m.span())
         for m in NATIVE_RE.finditer(text):
             if m.group(1) == "두" and m.group(2) == "시" and re.search(r"[어아여해놔]\s?$", text[:m.start()]):
-                continue  # 검증: "찍어 두시는·놔두시면"은 보조동사 '두다'라 시각이 아니다(지금 두시입니다는 시각)
+                continue
             if m.group(2) == "시":
                 out.append(_time(NATIVE[m.group(1)], _ko_pm(text[:m.start()], NATIVE[m.group(1)])))
             elif m.group(2) == "시간":
@@ -581,7 +583,7 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
             out.append(Num(float(NATIVE_ALONE[m.group(1)]), "n"))
             spans.append(m.span())
         text = _mask(text, spans)
-        # 3만 5천 / 15만 / 1.5만 같은 아라비아 숫자 + 한국어 단위
+
         tok = re.compile(r"(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s?(억|만|천|백)?")
         rank = {"억": 4, "만": 3, "천": 2, "백": 1, None: 0}
         mult = {"억": 1e8, "만": 1e4, "천": 1e3, "백": 1e2, None: 1}
@@ -614,24 +616,25 @@ def _num_match(a: Num, b: Num) -> bool:
     if a.kind == "phone" or b.kind == "phone":
         return a.kind == b.kind and a.value == b.value
     if (a.kind == "time" and b.unit) or (b.kind == "time" and a.unit):
-        return False  # 검증: 같은 숫자여도 시각과 분·금액은 다르다(10분 ≠ 오전 10시)
+        return False
     if a.unit and b.unit and a.unit != b.unit:
         return False
     if abs(a.value - b.value) < 1e-6:
         return True
     if "time" in (a.kind, b.kind) and a.value <= 24 and b.value <= 24:
         if a.kind != "time" or b.kind != "time":
-            return False  # 검증: 시각끼리만 12시간 차이를 허용한다(10분 ≠ 오후 10시, 14명 ≠ 2시)
+            return False
         if a.exact and b.exact:
             return a.value % 24 == b.value % 24
         if a.exact:
-            return False  # 원문의 오전·오후(또는 24시간제)가 번역에서 빠짐
+            return False
         return a.value % 12 == b.value % 12
     return False
 
 
+# 숫자 비교
 def compare_numbers(src: list[Num], tgt: list[Num]) -> list[str]:
-    # 검증: 서수(두 번째)는 양쪽에 다 있을 때만 비교한다("a second driver" = "운전자 한 명 더")
+
     both_ord = any(n.kind == "ord" for n in src) and any(n.kind == "ord" for n in tgt)
     missing, pool = [], list(tgt)
     for s in src:
@@ -647,7 +650,7 @@ def compare_numbers(src: list[Num], tgt: list[Num]) -> list[str]:
 
 
 def _pair_durations(whole: list[Num], parts: list[Num]) -> None:
-    # 검증: 한쪽의 "1시간 + 30분" 두 값이 다른 쪽의 한 값(an hour and a half = 90분)과 같으면 짝으로 본다
+
     for w in [n for n in whole if n.unit == "min"]:
         hours = [n for n in parts if n.unit == "min" and n.value and n.value % 60 == 0]
         mins = [n for n in parts if n.unit == "min" and 0 < n.value < 60]
@@ -659,12 +662,13 @@ def _pair_durations(whole: list[Num], parts: list[Num]) -> None:
 
 
 def _is_zero(n: Num) -> bool:
-    # 검증: 0은 "없다"와 같은 뜻으로 옮겨질 수 있어 짝이 없어도 넘어간다(면책금이 없어요 = deductible is zero)
+
     return n.kind == "n" and n.value == 0
 
 
+# 시각 보정
 def add_meridiem(tt: str, source: str, src_locale: str, tgt_locale: str) -> str:
-    # 검증: 원문에 오전·오후가 있는데 한국어 번역이 "6시"처럼 뺐으면 원문 기준으로 "오후 6시"를 채운다(같은 시각일 때만)
+
     if src_locale == "ko-KR" or tgt_locale != "ko-KR":
         return tt
     exact = [n.value for n in extract_numbers(source, src_locale) if n.kind == "time" and n.exact]
@@ -676,8 +680,6 @@ def add_meridiem(tt: str, source: str, src_locale: str, tgt_locale: str) -> str:
     return tt
 
 
-# ---------------------------------------------------------------- negation
-# 검증: (확실한 부정, 부정에 가까운 말). 한쪽만 확실한 부정이고 다른 쪽에 둘 다 없으면 실패. 스페인어는 강세를 뺀 글자로 본다
 _EN_NEG_CONTRACTION = r"(?:are|is|was|were|do|does|did|have|has|had|ca|could|wo|would|sha|should|must|need|dare)n['’]?t"
 NEG = {
     "en": (
@@ -687,7 +689,7 @@ NEG = {
                    r"|sick|unwell|bad)\b", re.I),
     ),
     "es": (
-        # 검증: 되묻는 "¿no?", "de nada"(천만에요), "sin plomo"(무연)는 부정이 아니다
+
         re.compile(r"\b(no(?!\s*\?)|nunca|jamas|nadie|ningun|ninguno|ninguna|ningunos|ningunas|tampoco|ni|sin(?!\s+plomo)"
                    r"|prohib\w*)\b"
                    r"|(?<!de )\bnada\b", re.I),
@@ -695,7 +697,7 @@ NEG = {
                    r"|mal|ilesos?|ilesas?|basta|alto|dej[ea] de|todavia|aun|ok|okey|de acuerdo|rechaz\w*|sino|desconozco)\b", re.I),
     ),
     "ko": (
-        # 검증: "A, 아니면 B"(또는)는 부정이 아니지만 "회원이 아니면"(조건부 부정)은 부정이다
+
         re.compile(r"않|(?<!잘)못|없|말고|마세요|마십시오|말아|지 ?마|지\s?말(?:라[고는]|랬)|아니(?!면)|(?<=[이가게] )아니면|(?<=[이가게])아니면"
                    r"|아닌|아닙|아냐|아녜|금지|불가"
                    r"|(?<![가-힣])안\s?(?!녕|내|전|에|쪽|경|심|과|개|건|부|마|방|색|약|면|정|팎|으로|까)[가-힣]"),
@@ -704,13 +706,13 @@ NEG = {
 }
 
 
+# 부정
 def neg_level(text: str, locale: str) -> int:
     hard, soft = NEG[LANG_KEY[locale]]
     text = fold(text).replace("’", "'")
     return 2 if hard.search(text) else 1 if soft.search(text) else 0
 
 
-# ---------------------------------------------------------------- left / right
 DIR_KO = {"left": re.compile(r"왼|좌회전|좌측|좌로"), "right": re.compile(r"오른|우회전|우측|우로")}
 DIR_EN_PHRASE = {
     d: re.compile(
@@ -720,7 +722,7 @@ DIR_EN_PHRASE = {
     for d in ("left", "right")
 }
 DIR_EN_WORD = {d: re.compile(rf"\b{d}\b", re.I) for d in ("left", "right")}
-# 검증: 스페인어 derecho는 문맥에 따라 직진·권리·오른쪽을 구분한다
+
 _ES_STRAIGHT_BEFORE = re.compile(r"(?:^|[,.;:!?]|\b(?:sig\w*|segu\w*|todo|vay\w*|ve|vete|continu\w*|manej\w*"
                                  r"|condu\w*|camin\w*|ir|va|voy|vamos|van|avanc\w*|avanz\w*|siempre|teng\w*|tien\w*"
                                  r"|ten\w*|tuv\w*|dele|dale|tom[ae]\w*|agarr\w*|es|esta))\s*$", re.I)
@@ -729,7 +731,7 @@ _ES_RIGHTS_AFTER = re.compile(r"\s+(?:a|al|de|del)\b", re.I)
 
 
 def _es_right(text: str) -> bool:
-    # 검증: 직진·권리만 제외한다. "retrovisor derecho del carro"의 del은 오른쪽 의미를 지우지 않는다
+
     if re.search(r"\bderechas?\b", text, re.I):
         return True
     return any(not _ES_STRAIGHT_BEFORE.search(text[:m.start()])
@@ -738,7 +740,7 @@ def _es_right(text: str) -> bool:
 
 
 DIR_ES_LEFT = re.compile(r"\bizquierd[ao]s?\b", re.I).search
-# (번역에 꼭 있어야 하는 표현, 있으면 되는 표현). 스페인어는 양쪽 모두 직진·권리와 오른쪽을 구분한다
+
 DIR_FOREIGN = {
     "en": ({d: r.search for d, r in DIR_EN_PHRASE.items()}, {d: r.search for d, r in DIR_EN_WORD.items()}),
     "es": ({"left": DIR_ES_LEFT, "right": _es_right},
@@ -746,6 +748,7 @@ DIR_FOREIGN = {
 }
 
 
+# 방향
 def check_direction(fx: str, ko: str, lang: str = "en") -> list[str]:
     issues = []
     phrase, word = DIR_FOREIGN[lang]
@@ -758,7 +761,6 @@ def check_direction(fx: str, ko: str, lang: str = "en") -> list[str]:
     return issues
 
 
-# 검증: 뒤바뀌기 쉬운 반대말(안/밖, 전/후). 원문에 한쪽만 있는데 번역에 반대쪽만 있으면 실패
 OPPOSITES = [
     ("inside", {"en": r"\binside\b", "es": r"\b(?:dentro|adentro)\b"}, r"안에|안으로|안쪽|내부",
      "outside", {"en": r"\boutside\b", "es": r"\b(?:fuera|afuera)\b"}, r"밖|바깥|외부"),
@@ -779,7 +781,7 @@ def check_opposites(fx: str, ko: str, lang: str = "en") -> list[str]:
     return issues
 
 
-# ---------------------------------------------------------------- critical terms
+# 핵심 용어
 def check_critical_terms(src: str, src_locale: str, tgt: str, tgt_locale: str) -> list[str]:
     a = set(match_concepts(src, src_locale, {"fuel"}))
     b = set(match_concepts(tgt, tgt_locale, {"fuel"}))
@@ -788,7 +790,7 @@ def check_critical_terms(src: str, src_locale: str, tgt: str, tgt_locale: str) -
 
 _EN_FUEL_VERB = r"(?:put(?:\s+in)?|use|want|need|take|pump|add|give\s+me|fill\s+(?:it\s+)?(?:up\s+)?with)"
 _ES_FUEL_VERB = r"pon\w*|ech\w*|carg\w*|us[aeo]\w*|tom\w*|llen\w*|met\w*|surt\w*|llev\w*|acept\w*|admit\w*|sirv\w*"
-# 검증: 보조동사는 연결어까지 읽어 부정의 범위를 유지한다(volver a, ir a, tener que + 주유 동사).
+
 _ES_FUEL_AUX = (r"(?:vuelv\w*|volv\w*)\s+a|(?:ir|voy|vas?|vamos|van|vay\w*|ib[ao]\w*)\s+a"
                 r"|(?:teng\w*|tien\w*|ten\w*|tuv\w*)\s+que|pued\w*|pod\w*|deb\w*")
 _ES_FUEL_FILL = (rf"de|del|el|la|los|las|un|una|con|le|les|me|lo|nos|te|se|es|sea|mas|quier\w*|quer\w*|necesit\w*"
@@ -797,7 +799,7 @@ FUEL_NEG_BEFORE = {
     "en": re.compile(
         rf"(?:\b(?:not|no|never|instead\s+of|rather\s+than|other\s+than|except|excluding|apart\s+from|without|{_EN_NEG_CONTRACTION})|n['’]t"
         rf"|\b(?:not|cannot|{_EN_NEG_CONTRACTION})\s+{_EN_FUEL_VERB}|n['’]t\s+{_EN_FUEL_VERB})\s+(?:(?:any|the|a|an|in|it|some)\s+)*$", re.I),
-    # "no le ponga diésel", "gasolina, no de diésel", "en lugar de diésel"
+
     "es": re.compile(rf"\b(?:no|nunca|sin|ni|nada|en\s+lugar|en\s+vez|excepto|salvo|menos)\s+(?:(?:{_ES_FUEL_FILL})\s+)*$", re.I),
     "ko": None,
 }
@@ -805,18 +807,19 @@ FUEL_NEG_AFTER = {
     "en": re.compile(r"^\s+(?:(?:is|was)\s+not|(?:is|was)n['’]?t|is\s+(?:wrong|prohibited|forbidden)|not\s+allowed)\b", re.I),
     "es": re.compile(rf"^\s+(?:no\s+(?:(?:se|le|les|me|lo|la|nos|te)\s+)*(?:es|esta|va|puede|permite|debe|{_ES_FUEL_VERB})\b"
                      r"|(?:esta|es|queda)\s+(?:prohibid[oa]|mal|incorrect[oa])\b)", re.I),
-    # "아닌지/아닌가 확인"은 연료 종류를 묻는 말이므로 확정된 연료 부정으로 보지 않는다.
+
     "ko": re.compile(r"^(?:차)?(?:은|는|이|가|을|를|으로|로|도|만)?\s*(?:다시\s*)?(?:말고|아니(?!면)|아닌(?!지|가)|아닙|아냐|아녜|대신|빼|제외|금지|절대|안\s?(?:돼|되|됩|넣|쓰)"
                      r"|(?:넣을|쓸|주유할|사용할|채울)\s*필요(?:가)?\s*없"
                      r"|(?:넣|주유하|주유|쓰|사용하|채우)(?:지\s?(?:마|말|않)|으?시?면\s?안))"),
 }
-# 검증: "diésel no, gasolina"처럼 끊어 말한 no만 앞 연료의 부정으로 본다("diésel no gasolina"의 no는 뒤 연료 몫)
+
 ES_NO_END = re.compile(r"^\s+no\s*$", re.I)
 CLAUSE = re.compile(r"[,.;!?]")
 
 
+# 연료
 def fuel_polarity(text: str, locale: str) -> dict[str, set[bool]]:
-    """연료 개념 id → {True(넣을 연료) / False(부정된 연료)}. "not diesel", "경유 말고"처럼 바로 붙은 부정만 본다."""
+
     lang = LANG_KEY[locale]
     spans = [(s, e, cid) for s, e, cid, cat in concept_spans(text, locale) if cat == "fuel"]
     text = fold(text)
@@ -835,15 +838,13 @@ def fuel_polarity(text: str, locale: str) -> dict[str, set[bool]]:
 
 
 def check_fuel_polarity(src: str, src_locale: str, tgt: str, tgt_locale: str) -> list[str]:
-    # 검증: "휘발유, 경유 말고"가 "경유, 휘발유 말고"로 뒤집힌 출력 차단(넣을 연료·부정 연료가 함께 나온 문장)
+
     a, b = fuel_polarity(src, src_locale), fuel_polarity(tgt, tgt_locale)
     if not any(len(set().union(*p.values())) == 2 for p in (a, b) if p):
         return []
     return [f"fuel_polarity_mismatch:{c}" for c in sorted(a.keys() & b.keys()) if a[c] != b[c]]
 
 
-# 파라미터 튜닝: 번역/원문 글자 수 최소 비율(정답 자료 최솟값 영→한 0.30, 한→영 1.33보다 낮게). 짧은 원문은 검사 안 함
-# 스페인어 원문은 영어보다 길어 영→한보다 낮게 둔다(검수 자료가 쌓이면 다시 잡는다)
 MIN_LEN_RATIO = {"en": (30, 0.22), "es": (30, 0.18), "ko": (12, 0.8)}
 LEAK_RE = re.compile(r"^\s*(translation|translated|here is|note|traducci[oó]n|traducido|nota|번역|통역|참고)\s*[:：]|\n", re.I)
 BRIEF_WAIT = {
@@ -854,8 +855,9 @@ BRIEF_WAIT = {
 }
 
 
+# 번역 검사
 def validate_translation(out: dict, source: str, src_locale: str, tgt_locale: str, structural_only: bool = False) -> list[str]:
-    # 검증: 모델 출력 JSON 계약
+
     status = out.get("status")
     tt, cq = out.get("translated_text"), out.get("clarification_question")
     if status == "clarification_required":
@@ -886,16 +888,16 @@ def validate_translation(out: dict, source: str, src_locale: str, tgt_locale: st
     min_src, ratio = MIN_LEN_RATIO[LANG_KEY[src_locale]]
     if len(source) >= min_src and len(tt) < ratio * len(source):
         issues.append("too_short")
-    # 검증: 번호판(34하 5678)의 한글은 원문 그대로 옮겨도 된다
+
     script_tt = PLATE_RE.sub(" ", tt) if PLATE_RE.search(source) else tt
     if HAN_KANA.search(tt) and not HAN_KANA.search(source):
         issues.append("foreign_script")
     if tgt_locale == "ko-KR":
-        # 원문에 있다는 이유만으로 일반 단어를 남기지 않는다. 등록된 이름은 전체 구간만 허용한다.
+
         common = set().union(*FUNC_WORDS.values()) | {
             fold(w).lower() for e in glossary()["entries"] if not e.get("proper_name")
             for term in e[LANG_KEY[src_locale]] for w in latin_words(term)}
-        # shortcut: 미등록 이름은 문장 중간의 Titlecase만 추정한다. 문장 첫 이름은 용어집 검수 후 등록한다.
+
         source_names = {w for sentence in re.split(r"[.!?。！？]", source) for w in latin_words(sentence)[1:]
                         if w.istitle() and fold(w).lower() not in common}
         checked = unicodedata.normalize("NFC", script_tt)
@@ -918,7 +920,7 @@ def validate_translation(out: dict, source: str, src_locale: str, tgt_locale: st
         issues.append("untranslated")
     source_nums, target_nums = extract_numbers(source, src_locale), extract_numbers(tt, tgt_locale)
     if all(BRIEF_WAIT[LANG_KEY[loc]].fullmatch(fold(text).strip()) for text, loc in ((source, src_locale), (tt, tgt_locale))):
-        # 검증: 완결된 '잠시만요' 요청끼리만 관용적 a minute/un minuto의 1분을 정규화한다.
+
         source_nums = [n for n in source_nums if n != Num(1.0, "n", unit="min")]
         target_nums = [n for n in target_nums if n != Num(1.0, "n", unit="min")]
     issues += compare_numbers(source_nums, target_nums)
@@ -937,6 +939,7 @@ def validate_translation(out: dict, source: str, src_locale: str, tgt_locale: st
 COORD_RE = re.compile(r"\d{1,3}\.\d{4,}")
 
 
+# 목적지 검사
 def validate_destination(out: dict) -> list[str]:
     if out.get("intent") not in ("set_destination", "other"):
         return ["bad_intent"]

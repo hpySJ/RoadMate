@@ -1,4 +1,3 @@
-"""One artifact directory per LoRA preparation stage; actual model runs happen only when invoked."""
 import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -24,6 +23,7 @@ DATASETS = ("general", "general_es", "naturalness.dev")
 STAGE_HEADROOM = 2 * 1024 ** 3
 
 
+# 파일
 def existing_parent(path):
     path = path.resolve()
     while not path.exists():
@@ -43,6 +43,7 @@ def copy_process_logs(root, name, log_dir):
     return copied
 
 
+# 서버 상태
 def alive(pid):
     if pid <= 1:
         return False
@@ -52,7 +53,6 @@ def alive(pid):
         return False
     except PermissionError:
         return True
-    # A terminated process awaiting its parent does not own a listening server.
     status = Path(f"/proc/{pid}/stat")
     try:
         return status.read_text().rsplit(")", 1)[1].split()[0] != "Z" if status.exists() else True
@@ -125,8 +125,8 @@ def stop_owned(root, start_log, log_dir):
         raise ValueError("Owned processes stopped, but log archival failed: " + "; ".join(log_errors))
 
 
+# 검토 자료
 def review_archive(files, home):
-    """An allow-list, not a recursive directory archive: keys and model metadata never enter it."""
     for source, _ in files:
         if source.suffix not in (".csv", ".md") or "key" in source.name.lower():
             raise ValueError(f"Not a blind review artifact: {source.name}")
@@ -137,11 +137,14 @@ def review_archive(files, home):
     return path
 
 
+# 학습 단계
 class Pipeline:
     def __init__(self, root, out, stage, teacher="14b-q4"):
         self.root, self.out, self.stage = root, out, stage
         self.teacher = teacher
-        self.stt_copies_ratio = .5 if stage == "train-eval" else None
+        self.stt_copies_ratio = (1.0 if teacher == "8b-q4" else .5) if stage == "train-eval" else None
+        self.reuse_sources = None
+        self.training_plan, self.stt_reports = None, {}
         self.python = root / ".venv" / "bin" / "python"
         self.env = {**os.environ, "LOG_REJECTED": "1", "MODEL_BACKEND": "llama", "MODEL_PROFILE": "8b-q4",
                     "PYTHONIOENCODING": "utf-8"}
@@ -248,7 +251,6 @@ class Pipeline:
                     raise ValueError("llama-server process identity changed during GPU memory query")
                 if not gpu["process_memory_mib"]:
                     raise ValueError("llama-server PID absent from nvidia-smi; host/container PID mismatch or no GPU allocation")
-                # One configured CUDA device must fit; allocations on different GPUs must not be summed.
                 gpu["maximum_device_bytes"] = max(gpu["process_memory_mib"]) * 1024 ** 2
                 verified = gpu["maximum_device_bytes"] >= threshold
                 if verified:
@@ -312,8 +314,11 @@ class Pipeline:
 
     def evaluate(self, profile, arm, adapter=None):
         with self.server(profile, arm, adapter) as env:
-            for dataset in DATASETS:
-                log = self.run([self.python, "eval/evaluate.py", "--file", f"eval/{dataset}.jsonl", "--label",
+            datasets = [(dataset, self.root / "eval" / f"{dataset}.jsonl") for dataset in DATASETS]
+            if self.stage == "train-eval":
+                datasets += [(f"{dataset}.stt", self.out / "stt-inputs" / f"{dataset}.jsonl") for dataset in DATASETS]
+            for dataset, path in datasets:
+                log = self.run([self.python, "eval/evaluate.py", "--file", path, "--label",
                                 f"{self.out.name}-{arm}", "--url", f"http://127.0.0.1:{env.get('AI_PORT', '8000')}",
                                 "--attempt-log", "logs/ai.err.log"], f"{arm}-{dataset}", env)
                 paths = re.findall(r"^saved: (.+)$", log.read_text(encoding="utf-8"), re.M)
@@ -348,8 +353,20 @@ class Pipeline:
                 files += [(dest / f"review_{label}.{suffix}", f"{reviewer}/review_{label}.{suffix}") for suffix in ("csv", "md")]
             self.run([self.python, "eval/score_review.py", review, "--key", key, "--out-dir", self.out / "scores" / dataset],
                      f"score-{dataset}")
+        stt_entries = []
+        if self.stage == "train-eval":
+            for arm in ("baseline", "candidate"):
+                report = self.out / "compare_stt" / arm
+                command = [self.python, "eval/compare_stt.py", "--out-dir", report]
+                for dataset in DATASETS:
+                    command += ["--pair", self.runs[(arm, dataset)], self.runs[(arm, f"{dataset}.stt")]]
+                self.run(command, f"compare-stt-{arm}")
+                self.stt_reports[arm] = str(report)
+            stt_entries = [{"dataset": dataset, **{arm: str(self.runs[(arm, f"{dataset}.stt")])
+                           for arm in ("baseline", "candidate")}} for dataset in DATASETS]
         (self.out / "comparison_manifest.json").write_text(json.dumps({"stage": self.stage, "adapter": str(adapter) if adapter else None,
-                                                                      "comparisons": entries}, indent=2) + "\n", encoding="utf-8")
+            "teacher_profile": self.teacher, "comparisons": entries, "stt_comparisons": stt_entries,
+            "stt_reports": self.stt_reports}, indent=2) + "\n", encoding="utf-8")
         self.archive_reviews(files)
 
     def archive_reviews(self, files):
@@ -358,9 +375,12 @@ class Pipeline:
 
     def generate(self):
         with self.server(self.teacher, "teacher") as env:
-            self.run([self.python, "train/distill.py", "generate", "--pool", "train/sources/pool.jsonl",
+            command = [self.python, "train/distill.py", "generate", "--pool", "train/sources/pool.jsonl",
                       "--out", self.out, "--teacher", self.teacher,
-                      "--url", f"http://127.0.0.1:{env.get('AI_PORT', '8000')}"], "generate", env)
+                      "--url", f"http://127.0.0.1:{env.get('AI_PORT', '8000')}"]
+            if self.reuse_sources:
+                command += ["--reuse-sources", self.reuse_sources]
+            self.run(command, "generate", env)
         draft = self.out / "distill.draft.jsonl"
         canonical = self.root / "train" / "data" / "distill.draft.jsonl"
         canonical.parent.mkdir(parents=True, exist_ok=True)
@@ -375,6 +395,8 @@ class Pipeline:
     def train_eval(self, data):
         config = json.loads((self.root / "train" / "training_config.json").read_text(encoding="utf-8"))
         config["teacher_profile"] = self.teacher
+        if self.teacher == "8b-q4":
+            config["num_train_epochs"] = 1
         draft, evidence = data / "distill.draft.jsonl", data / "sample.evidence.json"
         if not draft.is_file() or not evidence.is_file():
             raise ValueError(f"Teacher draft and completed AI sample evidence are required in {data}")
@@ -389,23 +411,43 @@ class Pipeline:
                   "--tokenizer", config["base_model"], "--tokenizer-revision", config["base_revision"],
                   "--max-length", str(config["max_length"]), "--teacher", self.teacher,
                   "--stt-copies-ratio", str(self.stt_copies_ratio)], "prepare")
+        dataset = json.loads((prepared / "dataset_manifest.json").read_text(encoding="utf-8"))
+        tokens = dataset["token_counts"]
+        if (not isinstance(tokens, dict) or type(tokens.get("total")) is not int or tokens["total"] <= 0
+                or any(type(tokens.get("by_split", {}).get(split)) is not int or tokens["by_split"][split] < 0
+                       for split in ("train", "validation", "test"))
+                or tokens["total"] != sum(tokens["by_split"].values()) or tokens["by_split"]["train"] <= 0):
+            raise ValueError("Exact tokenizer token counts are required before training")
+        self.training_plan = {"token_counts": tokens, "num_train_epochs": config["num_train_epochs"],
+            "train_token_exposures": tokens["by_split"]["train"] * config["num_train_epochs"],
+            "estimated_train_eval_hours": [2, 4] if self.teacher == "8b-q4" else None,
+            "estimate_basis": "User planning budget; includes training and evaluation; not a hardware measurement"}
+        self.summary(status="prepared; training not started")
         self.run([train_python, "train/train_qlora.py", "--config", snapshot, "--data-dir", prepared,
                   "--output-dir", self.out / "training", "--teacher", self.teacher], "train")
         adapter = self.out / "adapter.gguf"
         self.run([self.python, "train/convert_adapter.py", "--adapter", self.out / "training" / "adapter",
                   "--out", adapter, "--profile", "8b-q4"], "convert", {**self.env, "MODEL_PROFILE": "8b-q4"})
+        self.run([self.python, "eval/stt_format.py", "--out-dir", self.out / "stt-inputs"], "stt-inputs")
         self.evaluate("8b-q4", "baseline")
         self.evaluate("8b-q4", "candidate", adapter)
         self.compare(adapter)
         self.run([self.python, "train/check_adoption.py", "--stage-dir", self.out], "adoption-pending")
 
-    def summary(self, error=None):
+    def summary(self, error=None, status=None):
         lines = [f"# LoRA {self.stage}", "", f"- artifacts: {self.out}",
                  f"- teacher: {self.teacher}",
-                 f"- status: {'failed' if error else 'AI 검토 대기 (참고)'}",
+                 f"- status: {'failed' if error else status or 'AI 검토 대기 (참고)'}",
                  f"- elapsed seconds: {time.monotonic() - self.started:.1f}"]
         if self.stage == "train-eval":
             lines.append(f"- requested STT copies ratio: {self.stt_copies_ratio}")
+        if self.training_plan:
+            plan = self.training_plan
+            lines += [f"- total tokens (exact tokenizer): {plan['token_counts']['total']}; by split: {plan['token_counts']['by_split']}",
+                      f"- epochs: {plan['num_train_epochs']}; train token exposures: {plan['train_token_exposures']}",
+                      f"- estimated train + eval hours: {plan['estimated_train_eval_hours']}; {plan['estimate_basis']}"]
+        for arm, folder in self.stt_reports.items():
+            lines += ["", f"## {arm} STT comparison", "", (Path(folder) / "summary.md").read_text(encoding="utf-8")]
         if error:
             lines.append(f"- error: {error}")
         if self.archive:
@@ -438,22 +480,27 @@ class Pipeline:
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         (self.out / "stage_summary.json").write_text(json.dumps({"stage": self.stage, "teacher": self.teacher,
             **({"stt_copies_ratio": self.stt_copies_ratio} if self.stage == "train-eval" else {}),
+            "training_plan": self.training_plan, "stt_reports": self.stt_reports,
             "error": error, "disk_checks": self.disk_checks, "offload_checks": self.offload_checks},
             ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print("\n".join(lines), flush=True)
         print(f"summary: {path}", flush=True)
 
 
+# 실행
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="One artifact directory per LoRA preparation stage; actual model runs happen only when invoked.")
     parser.add_argument("stage", choices=("teacher-check", "generate", "train-eval"))
     parser.add_argument("--teacher", choices=TEACHER_PROFILES, default="14b-q4")
     parser.add_argument("--out", type=Path)
     parser.add_argument("--data", type=Path, help="Completed generate folder with sample.evidence.json")
-    parser.add_argument("--stt-copies-ratio", type=float, help="train-eval only: STT input copies ratio, default 0.5; 0 disables")
+    parser.add_argument("--reuse-sources", type=Path, help="generate only: reuse the accepted pool and historical source evidence")
+    parser.add_argument("--stt-copies-ratio", type=float, help="train-eval only: default 1.0 for self teacher, otherwise 0.5; 0 disables")
     parser.add_argument("--finish", type=Path, help="Existing train-eval folder; review decision only, no model execution")
     parser.add_argument("--reviews", type=Path, help="Merged review_pair01-*.csv directory, used with --finish")
     args = parser.parse_args(argv)
+    if args.reuse_sources and (args.stage != "generate" or args.finish):
+        parser.error("--reuse-sources is only available for generate")
     if args.stt_copies_ratio is not None and (
             args.stage != "train-eval" or args.finish or not 0 <= args.stt_copies_ratio <= 1):
         parser.error("--stt-copies-ratio must be finite and in [0, 1], for train-eval preparation only")
@@ -467,8 +514,9 @@ def main(argv=None):
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     out = (args.out or ROOT / "train" / "runs" / f"{args.stage}-{stamp}-{uuid.uuid4().hex[:6]}").resolve()
     pipeline = Pipeline(ROOT, out, args.stage, args.teacher)
+    pipeline.reuse_sources = args.reuse_sources.resolve() if args.reuse_sources else None
     if args.stage == "train-eval":
-        pipeline.stt_copies_ratio = .5 if args.stt_copies_ratio is None else args.stt_copies_ratio
+        pipeline.stt_copies_ratio = (1.0 if args.teacher == "8b-q4" else .5) if args.stt_copies_ratio is None else args.stt_copies_ratio
     created = False
     try:
         if out.exists():
@@ -484,6 +532,7 @@ def main(argv=None):
             shutil.copytree(ROOT / "logs", out / "logs-before")
         (out / "stage.json").write_text(json.dumps({"stage": args.stage, "created_utc": stamp, "profiles": profiles,
                                                     "teacher": args.teacher,
+                                                    "reuse_sources": str(pipeline.reuse_sources) if pipeline.reuse_sources else None,
                                                     **({"stt_copies_ratio": pipeline.stt_copies_ratio} if args.stage == "train-eval" else {}),
                                                     "gpu_layers_override": os.environ.get("GPU_LAYERS"),
                                                     "data": str(args.data.resolve()) if args.data else None}, indent=2) + "\n", encoding="utf-8")

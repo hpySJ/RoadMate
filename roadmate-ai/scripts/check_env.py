@@ -1,4 +1,3 @@
-"""실행 PC 확인: GPU·VRAM·RAM·필수 파일. 에뮬레이터를 켜기 전/후로 한 번씩 실행해 기록한다."""
 import ctypes
 import platform
 import shutil
@@ -11,6 +10,7 @@ sys.path.insert(0, str(ROOT))
 from config import load_manifest, model_profile  # noqa: E402
 
 
+# 메모리
 def ram_gib():
     class MS(ctypes.Structure):
         _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
@@ -30,6 +30,7 @@ def ram_gib():
     return round(s.ullTotalPhys / 2**30, 1), round(s.ullAvailPhys / 2**30, 1)
 
 
+# GPU
 def gpu():
     if not shutil.which("nvidia-smi"):
         return "nvidia-smi not found (NVIDIA driver?)"
@@ -38,6 +39,7 @@ def gpu():
     return out.stdout.strip() or out.stderr.strip()
 
 
+# 환경 검사
 def main():
     m = load_manifest()
     ram = ram_gib()
@@ -55,7 +57,6 @@ def main():
     }
     for k, v in rows.items():
         print(f"{k:40} {v}")
-    # 파라미터 튜닝: 모델 단독 VRAM 5GiB 이하, 전체 GPU 여유 1GiB 이상을 측정 목표로 기록
 
 
 if __name__ == "__main__":

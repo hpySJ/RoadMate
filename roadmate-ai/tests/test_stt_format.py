@@ -1,3 +1,4 @@
+# 테스트
 import copy
 import hashlib
 import json
@@ -102,7 +103,6 @@ def sources(tmp_path, monkeypatch):
              "expect_confirm": True, "expect_poi_any": ["A", "B"], "reference": None},
         ]
         (directory / name).write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in cases[name]), encoding="utf-8")
-    # An unrelated file must never be discovered/read by a glob or input option.
     (directory / "test.locked.synthetic.jsonl").write_text("not JSON; must not be read", encoding="utf-8")
     monkeypatch.setattr(F, "ROOT", root)
     return root, cases

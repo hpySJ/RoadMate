@@ -1,4 +1,4 @@
-"""Compare a completed, blinded LoRA review. AI advice; never installs an adapter."""
+# 채택 검증
 import argparse
 import hashlib
 import json
@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT))
 from config import load_manifest  # noqa: E402
 from eval.evaluate import judge, pct  # noqa: E402
 from eval.export_review import cell, load_run, read_key, read_review  # noqa: E402
+from eval.compare_stt import compare_pair, cohort_measures  # noqa: E402
 
 DATASETS = {"general", "general_es", "naturalness.dev"}
 
@@ -22,7 +23,7 @@ def sha(path):
 
 def quality(rows, key):
     counts = [Counter(), Counter()]
-    pending = []
+    pending, new_bad = [], []
     if {r["id"] for r in rows} != set(key["rows"]):
         raise ValueError("Review does not cover every exported row")
     for row in rows:
@@ -43,7 +44,52 @@ def quality(rows, key):
         if len(resolved) == 2:
             for i, rid in enumerate(("run1", "run2")):
                 counts[i][resolved[rid]] += 1
-    return counts, pending
+            if resolved["run1"] != "나쁨" and resolved["run2"] == "나쁨":
+                new_bad.append(row["id"])
+    return counts, pending, new_bad
+
+
+def stt_comparison(manifest, pairs, enforce):
+    stt_pairs = manifest.get("stt_comparisons", [])
+    if not stt_pairs and not enforce:
+        return None, []
+    if len(stt_pairs) != 3 or {p["dataset"] for p in stt_pairs} != DATASETS:
+        raise ValueError("Expected STT comparisons for the three development datasets")
+    clean = {pair["dataset"]: pair for pair in pairs}
+    rows, evidence, failures, signatures = {"baseline": [], "candidate": []}, [], [], {}
+    for pair in stt_pairs:
+        dataset, compared = pair["dataset"], {}
+        for side in rows:
+            current, provenance = compare_pair(clean[dataset][side], pair[side])
+            if side in signatures and signatures[side] != provenance["signature"]:
+                raise ValueError(f"STT {side}: mixed configurations across datasets")
+            signatures[side] = provenance["signature"]
+            rows[side].extend(current)
+            compared[side] = {row["id"]: row for row in current}
+            evidence.append({"dataset": dataset, "side": side, **provenance})
+        if enforce:
+            lost = [cid for cid, row in compared["baseline"].items()
+                    if row["signals_eligible"] and not compared["candidate"][cid]["signals_eligible"]]
+            failures.extend(f"{dataset}:STT_eligible_pair_lost:{cid}" for cid in lost)
+    report = {side: cohort_measures(current) for side, current in rows.items()}
+    report["es_to_ko"] = {side: cohort_measures([r for r in current
+        if r["direction"].startswith("es-") and r["direction"].endswith("->ko-KR")])
+        for side, current in rows.items()}
+    report.update(historical_es_to_ko_question_loss=7,
+                  reference="each model's clean output question punctuation; fresh paired baseline governs adoption",
+                  pairs=evidence)
+    if enforce:
+        baseline, candidate = (report[side]["signals"] for side in ("baseline", "candidate"))
+        es_base, es_candidate = (report["es_to_ko"][side]["signals"] for side in ("baseline", "candidate"))
+        if not es_base["eligible_pairs"] or not es_candidate["eligible_pairs"]:
+            failures.append("STT:es_to_ko:no_eligible_pairs")
+        if es_candidate["question_loss"] >= es_base["question_loss"]:
+            failures.append("STT:es_to_ko:question_loss_not_reduced")
+        if candidate["question_loss"] > baseline["question_loss"]:
+            failures.append("STT:question_loss_increased")
+        if candidate["question_addition"]:
+            failures.append("STT:question_addition_must_be_zero")
+    return report, failures
 
 
 def automatic(records):
@@ -89,6 +135,10 @@ def decide(stage_dir, reviews=None):
     sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
     if sidecar.get("sha256", sidecar.get("adapter_sha256")) != adapter_hash:
         raise ValueError("Adapter differs from its conversion sidecar")
+    teacher_profile = sidecar.get("teacher_profile", manifest.get("teacher_profile", "14b-q4"))
+    if manifest.get("teacher_profile", teacher_profile) != teacher_profile:
+        raise ValueError("Comparison teacher profile differs from adapter training")
+    self_teacher = teacher_profile == "8b-q4"
     model = load_manifest(ROOT / "models" / "manifest.qwen3-8b.json")["model"]
     totals, pending, failures, reports = [Counter(), Counter()], [], [], []
     for pair in pairs:
@@ -96,15 +146,15 @@ def decide(stage_dir, reviews=None):
         key = read_key(pair["key"])
         if set(key["runs"]) != {"run1", "run2"}:
             raise ValueError("Expected a two-model blind comparison")
-        measures, loaded = [], []
+        measures, loaded, paired_records = [], [], []
         for i, name in enumerate(("baseline", "candidate")):
             records, run = load_run(pair[name])
             verify_run(records, run, dataset, None if i == 0 else adapter_hash, model)
             if key["runs"][f"run{i+1}"]["results_sha256"] != run["results_sha256"] or key["runs"][f"run{i+1}"]["metadata"] != run["metadata"]:
                 raise ValueError("Review key is for different evaluation results")
             loaded.append(run)
+            paired_records.append(records)
             measures.append(automatic(records))
-        # Same code and runtime settings; only the loaded adapter may differ.
         if any(loaded[0]["metadata"]["ready"].get(k) != loaded[1]["metadata"]["ready"].get(k)
                for k in ("artifact_hashes", "runtime_config")):
             raise ValueError("Baseline and adapter were evaluated with different code or runtime settings")
@@ -112,6 +162,16 @@ def decide(stage_dir, reviews=None):
         for metric in ("FAIL", "502", "destination_FAIL"):
             if b[metric] > a[metric]:
                 failures.append(f"{dataset}:{metric}:{a[metric]}->{b[metric]}")
+        if self_teacher:
+            for cid, original in paired_records[0].items():
+                candidate = paired_records[1][cid]
+                for metric, before, after in (
+                    ("FAIL", not original["pass"], not candidate["pass"]),
+                    ("502", original["http"] == 502, candidate["http"] == 502),
+                    ("destination_FAIL", original["case"]["task"] == "destination" and not original["pass"],
+                     candidate["case"]["task"] == "destination" and not candidate["pass"])):
+                    if after and not before:
+                        failures.append(f"{dataset}:{metric}:new_row:{cid}")
         if b["p95_ms"] - a["p95_ms"] > 300:
             failures.append(f"{dataset}:p95_increase_over_300ms")
         review = reviews / f"review_{pair['label']}.csv" if reviews else Path(pair["review"])
@@ -119,20 +179,31 @@ def decide(stage_dir, reviews=None):
             pending.append(f"{dataset}:review_missing")
         else:
             rows, _ = read_review(review, key)
-            counts, missing = quality(rows, key)
+            counts, missing, new_bad = quality(rows, key)
             pending.extend(f"{dataset}:{p}" for p in missing)
+            if self_teacher:
+                failures.extend(f"{dataset}:new_bad:{cid}" for cid in new_bad)
             for total, count in zip(totals, counts):
                 total.update(count)
         reports.append({"dataset": dataset, "baseline": a, "candidate": b})
     if not pending:
         if not sum(totals[0].values()):
             raise ValueError("No paired successful translations were reviewed")
-        if totals[1]["나쁨"] > totals[0]["나쁨"] or totals[1]["어색함"] >= totals[0]["어색함"]:
+        if not self_teacher and (totals[1]["나쁨"] > totals[0]["나쁨"] or totals[1]["어색함"] >= totals[0]["어색함"]):
             failures.append("quality_requires_bad_nonincrease_and_awkward_decrease")
+    stt, stt_failures = stt_comparison(manifest, pairs, self_teacher)
+    failures.extend(stt_failures)
     status = "rejected" if failures else "pending" if pending else "passed"
     result = {"status": status, "notice": "AI 검토(참고). 자동 배포·사람 검수 승인이 아닙니다.",
               "adapter_sha256": adapter_hash, "quality": {"baseline": dict(totals[0]), "candidate": dict(totals[1])},
               "automatic": reports, "failures": failures, "pending": pending}
+    if self_teacher:
+        result["criteria"] = {"clean": "no new bad/FAIL/502/destination_FAIL rows; p95 increase <= 300ms",
+                              "stt": "es->ko question loss decreases versus fresh baseline; total loss does not increase; zero question additions",
+                              "historical_es_to_ko_question_loss": 7,
+                              "question_reference": "question punctuation in each model's clean output"}
+    if stt is not None:
+        result["stt"] = stt
     if status == "rejected":
         sidecar["adoption_status"] = "rejected"
         sidecar["adoption_failures"] = failures
@@ -141,7 +212,7 @@ def decide(stage_dir, reviews=None):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description='LoRA 비교 결과로 채택 조건을 확인합니다.')
     ap.add_argument("--stage-dir", type=Path, required=True)
     ap.add_argument("--reviews", type=Path)
     args = ap.parse_args(argv)

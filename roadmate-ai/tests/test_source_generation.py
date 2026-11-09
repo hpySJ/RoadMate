@@ -1,4 +1,4 @@
-"""Synthetic source fixtures only; never model-generated training data."""
+# 테스트
 import asyncio
 import copy
 import json
@@ -38,7 +38,7 @@ def test_batches_cover_directions_without_replicating_templates(monkeypatch, tmp
             return {"utterances": texts}, {"synthetic": True}
     monkeypatch.setattr(D, "looks_like_other_language", lambda *args: False)
     rows = asyncio.run(D.source_augmentation(Teacher(), tmp_path, set(), 11))
-    assert len(rows) == 330  # 6 directions x 5 scenarios x 11, above the old 200 source ceiling.
+    assert len(rows) == 330
     assert max(spec["count"] for spec, *_ in calls) == 10
     assert len({sampling["seed"] for *_, sampling in calls}) == len(calls)
     assert len({spec["turn_form"] for spec, *_ in calls}) > 1
@@ -59,12 +59,10 @@ def test_batches_cover_directions_without_replicating_templates(monkeypatch, tmp
     for spec, *_ in calls:
         originals = list(dict.fromkeys(r["text"] for r in rows
             if r["source_locale"] == spec["locale"] and r["scenario"] == spec["scenario"]))
-        # History is the original utterance once, scoped to this cell; it excludes the current batch.
         assert spec["already_used"] == originals[:10 * spec["independent_batch"]]
         topics = D.SOURCE_TOPICS[spec["scenario"]]
         assert summary["accepted_by_topic"][spec["locale"]][spec["scenario"]] == {
             topic: (10 if index == 0 else 1 if index == 1 else 0) for index, topic in enumerate(topics)}
-    # The frozen messages in provenance/logs retain the exact history seen by each teacher call.
     assert [json.loads(log["messages"][-1]["content"]) for log in logs] == [spec for spec, *_ in calls]
     for record in rows:
         messages = record["source_generation"]["messages"]
@@ -137,7 +135,6 @@ def row(index, origin="teacher_generated", task="translate"):
 
 
 def test_safety_filter_cannot_leave_a_template_majority():
-    # Simulate only eight teacher sources surviving, with 40 supplemental ones still valid.
     rows = [row(i) for i in range(8)] + [row(i+8, "authored_source") for i in range(40)]
     rows[-1]["task"] = "destination"
     selected = D.balanced_sources(rows, 42)

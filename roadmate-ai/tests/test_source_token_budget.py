@@ -1,4 +1,4 @@
-"""Opt-in test with pinned 14B metadata, no weights/inference/evaluation or training data."""
+# 테스트
 import hashlib
 import json
 import os
@@ -9,7 +9,6 @@ import pytest
 from train import distill as D
 
 
-# Synthetic length fixtures, deliberately repeated with numbers; not evidence of semantic diversity.
 SHORT = {
     "en-US": ["The display on pump {n} has gone blank.", "Please leave the key in locker {n}.",
         "Could you bring the child seat to bay {n}?", "The car in space {n} has a loose mirror.",
@@ -41,7 +40,6 @@ def pinned_tokenizer():
     folder = Path(folder)
     tokenizer = folder / "tokenizer.json"
     template = folder / "gguf-chat-template.jinja"
-    # Qwen3-14B base 40c0698 / GGUF 530227a metadata, independently downloaded from each pinned repo.
     assert hashlib.sha256(tokenizer.read_bytes()).hexdigest() == "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"
     assert hashlib.sha256(template.read_bytes()).hexdigest() == "57f1fd00f0013a2be96aa79b857391f27e23df5b5f847072b524c897e24d0361"
     manifest = json.loads((D.ROOT / "models/manifest.qwen3-14b.json").read_text(encoding="utf-8"))

@@ -1,4 +1,4 @@
-"""Category requests use the model path; rules must not hide its intent mistakes."""
+# 테스트
 import asyncio
 import json
 import time

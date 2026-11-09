@@ -1,3 +1,4 @@
+# 테스트
 import json
 from pathlib import Path
 
@@ -9,7 +10,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_inference_inputs_have_no_evaluation_sentence_leaks():
-    # Locked content stays inside this comparison; failures expose IDs/paths only.
     assert inference_overlaps(ROOT) == []
 
 

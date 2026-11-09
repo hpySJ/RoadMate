@@ -1,3 +1,4 @@
+# 테스트
 import asyncio
 import copy
 import hashlib
@@ -105,7 +106,6 @@ def test_hash_verification_does_not_block_the_event_loop(tmp_path, monkeypatch):
         task = asyncio.create_task(client.runtime_identity())
         try:
             await asyncio.wait_for(entered.wait(), 1)
-            # 해시가 아직 대기 중이어도 다른 코루틴을 실행할 수 있어야 한다.
             assert not task.done()
             await asyncio.sleep(0)
             release.set()

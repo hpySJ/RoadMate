@@ -1,4 +1,4 @@
-"""STT augmentation contracts use synthetic records, never evaluation files."""
+# 테스트
 import copy
 import hashlib
 import json
@@ -27,7 +27,6 @@ def row(index, origin="teacher_generated", **kwargs):
 
 @pytest.fixture
 def selection_only(monkeypatch):
-    # These rows exercise selection/provenance, not translation quality.
     monkeypatch.setattr(D, "check", lambda record: [])
     monkeypatch.setattr(D, "record_overlaps", lambda record, blocked: [])
 
@@ -98,15 +97,15 @@ def test_destination_rows_are_never_copied_and_zero_disables(selection_only):
     assert summary["selected_rows"] == summary["added_rows"] == summary["realized_ratio"] == 0
 
 
-def test_unchanged_or_invalid_copies_are_skipped(selection_only, monkeypatch):
+def test_ratio_one_keeps_unchanged_copies_but_skips_invalid_copies(selection_only, monkeypatch):
     originals = [row(0), row(1), row(2), row(3)]
     originals[0]["text"] = normalize_source(originals[0]["text"], "en-US")
     monkeypatch.setattr(D, "check", lambda r: ["synthetic validation failure"] if r["id"] == originals[1]["id"] else [])
     monkeypatch.setattr(D, "record_overlaps", lambda r, blocked: ["boundary_source"] if "ac drawer" in r["text"] else [])
     result, summary = D.augment_stt(originals, 1, 42, {"synthetic-protected"}, {r["group_id"]: "train" for r in originals})
-    assert summary["selected_rows"] == 4 and summary["added_rows"] == 1
-    assert summary["skipped"]["unchanged"] == summary["skipped"]["validation"] == summary["skipped"]["boundary"] == 1
-    assert copies(result)[0]["stt_copy"]["parent_id"] == originals[3]["id"]
+    assert summary["selected_rows"] == 4 and summary["added_rows"] == 2
+    assert summary["skipped"]["validation"] == summary["skipped"]["boundary"] == 1
+    assert {r["stt_copy"]["parent_id"] for r in copies(result)} == {originals[0]["id"], originals[3]["id"]}
 
 
 def test_copy_cannot_collide_with_another_original_group(selection_only):
@@ -114,17 +113,16 @@ def test_copy_cannot_collide_with_another_original_group(selection_only):
     other = row(1, text=normalize_source(original["text"], "en-US"))
     assert D.fingerprint(original["text"], "en-US") != D.fingerprint(other["text"], "en-US")
     result, summary = D.augment_stt([original, other], 1, 42, set(), {"group-0": "train", "group-1": "validation"})
-    assert not copies(result)
+    assert [r["stt_copy"]["parent_id"] for r in copies(result)] == [other["id"]]
     assert summary["skipped"]["duplicate_group"] == 1
 
 
-def test_rejected_teacher_copies_cannot_lower_teacher_share(selection_only):
+def test_rejected_teacher_copies_cannot_lower_teacher_share(selection_only, monkeypatch):
     originals = [row(i, "teacher_generated" if i < 8 else "authored_source") for i in range(10)]
-    for original in originals[:4]:
-        original["text"] = normalize_source(original["text"], "en-US")
+    monkeypatch.setattr(D, "check", lambda r: ["invalid copy"] if r["id"] in {o["id"] for o in originals[:4]} else [])
     result, summary = D.augment_stt(originals, 1, 42, set(), {r["group_id"]: "train" for r in originals})
     assert summary["added_rows"] == 5
-    assert summary["skipped"]["unchanged"] == 4 and summary["skipped"]["source_mix"] == 1
+    assert summary["skipped"]["validation"] == 4 and summary["skipped"]["source_mix"] == 1
     assert check_source_mix(result)["teacher_share"] == .8
 
 

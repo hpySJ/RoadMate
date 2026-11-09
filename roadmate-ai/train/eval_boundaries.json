@@ -4,12 +4,12 @@
   "legacy_test_status": "retired_exposed",
   "active_test": "eval/test.locked.v2.jsonl",
   "active_test_cases": 44,
-  "active_test_review_status": "draft",
+  "active_test_review_status": "approved",
   "active_test_model_evaluation_performed": false,
-  "seal_note": "Reference text and review metadata are not approved. After human review, update the seal deliberately before the one final model run.",
+  "seal_note": "Source, reference and expectations independently AI-reviewed by Claude and Codex; human_reviewed=false. Only review metadata changed; content unchanged. Seal updated before the single final model run.",
   "frozen_files": {
     "eval/test.locked.jsonl": "bfc1f0de2b585250d0be9e2de3f8002cd4e63cdb926f73d4275f27937233811d",
-    "eval/test.locked.v2.jsonl": "a728db2d562a58ddfa0cf3d10812836e5cc57b07b0f6eaaeec965568a27920f5"
+    "eval/test.locked.v2.jsonl": "82cc66adaac78deb8226cc85f43564c559b7b1728d1f3fdfc5e5fa4e759241a0"
   },
   "prompt_template_overlap": {
     "dev.jsonl": [],
@@ -47,5 +47,8 @@
     ],
     "test.locked.v2.jsonl": []
   },
-  "inference_audit": "Sentence-level exact/near audit including sealed files, diagnostics limited to case IDs and artifact paths; does not restore prior exposed sets to held-out status."
+  "inference_audit": "Sentence-level exact/near audit including sealed files, diagnostics limited to case IDs and artifact paths; does not restore prior exposed sets to held-out status.",
+  "active_test_reviewer": "ai:claude+codex (human_reviewed=false)",
+  "active_test_reviewed_at": "2026-11-10T07:30:46+09:00",
+  "active_test_human_reviewed": false
 }

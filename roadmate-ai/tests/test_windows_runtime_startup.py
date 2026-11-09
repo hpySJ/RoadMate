@@ -1,4 +1,4 @@
-"""Exercise the actual launchers with synthetic process/hash commands only."""
+# 테스트
 import shutil
 import subprocess
 from pathlib import Path

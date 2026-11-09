@@ -1,3 +1,4 @@
+# 테스트
 import pytest
 
 
@@ -113,7 +114,6 @@ def test_korean_attributive_fuel_negation_still_rejects_reversed_fuels():
 def test_indirect_fuel_question_is_not_a_confirmed_fuel_prohibition(ending):
     from validation import check_fuel_polarity, fuel_polarity
     target = f"경유가 {ending}."
-    # True here means the mention was not classified as an explicit prohibition.
     assert fuel_polarity(target, "ko-KR") == {"fuel_diesel": {True}}
     assert "fuel_polarity_mismatch:fuel_diesel" in check_fuel_polarity(
         "Gasoline, not diesel, please.", "en-US", target, "ko-KR")
@@ -374,7 +374,7 @@ def test_positive_contraction_is_not_negation(apostrophe):
     ("We'll be back by 6 p.m.", "6시까지 돌아올 예정이에요.", "오후 6시까지 돌아올 예정이에요."),
     ("Return it at 9 a.m.", "9시에 반납할게요.", "오전 9시에 반납할게요."),
     ("We'll be back by 6 p.m.", "오후 6시까지 돌아올게요.", "오후 6시까지 돌아올게요."),
-    ("We'll be back by 6 p.m.", "7시까지 돌아올게요.", "7시까지 돌아올게요."),  # 다른 시각은 고치지 않음
+    ("We'll be back by 6 p.m.", "7시까지 돌아올게요.", "7시까지 돌아올게요."),
     ("It takes 2 hours.", "2시간 걸려요.", "2시간 걸려요."),
 ])
 def test_add_meridiem(src, tgt, fixed):
@@ -407,7 +407,6 @@ def test_number_parsing(text, loc, values):
     assert [n.value for n in extract_numbers(text, loc)] == values
 
 
-# ---------------------------------------------------------------- 스페인어(es-US·es-MX) ↔ 한국어
 @pytest.mark.parametrize("src,sl,tgt,tl", [
     ("Póngale 30,000 wones de gasolina, no de diésel.", "es-US", "경유 말고 휘발유로 3만 원어치 넣어 주세요.", "ko-KR"),
     ("No le ponga diesel, solo gasolina.", "es-MX", "경유는 넣지 말고 휘발유만 넣어 주세요.", "ko-KR"),
@@ -478,7 +477,6 @@ def test_multiplier_word_is_not_counted_twice():
     assert [n.value for n in extract_numbers("It is 30 thousand won.", "en-US")] == [30000]
 
 
-# ---------------------------------------------------------------- 리뷰에서 나온 사례(정상 번역은 통과, 뒤집힌 번역은 실패)
 @pytest.mark.parametrize("src,sl,good,bad,issue", [
     ("Está prohibido estacionarse aquí.", "es-US", "여기는 주차 금지예요.", "여기에 주차할 수 있어요.", "negation_mismatch"),
     ("Se prohíbe estacionarse aquí.", "es-MX", "여기는 주차 금지예요.", "여기에 주차할 수 있어요.", "negation_mismatch"),
@@ -639,7 +637,6 @@ def test_bare_english_hours_allow_unspecified_meridiem(source, good):
     bad = good.replace("5시", "6시")
     assert v(source, "en-US", bad, "ko-KR")
     assert v(bad, "ko-KR", source, "en-US")
-    # 원문에 명시된 오후는 at 5로 생략할 수 없다.
     assert v("오후 " + good, "ko-KR", source, "en-US")
 
 

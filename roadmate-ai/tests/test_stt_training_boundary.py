@@ -1,4 +1,4 @@
-"""STT boundaries use synthetic files, never the repository's evaluation sets."""
+# 테스트
 import json
 from pathlib import Path
 

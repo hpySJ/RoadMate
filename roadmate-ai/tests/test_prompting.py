@@ -1,5 +1,7 @@
+# 테스트
+import hashlib
 import json
-import unicodedata
+from pathlib import Path
 
 import pytest
 
@@ -314,7 +316,7 @@ def test_schema_blocks_cjk_in_generated_text():
     import re
     branch = P.TRANSLATE_SCHEMA["properties"]["translated_text"]["anyOf"][0]
     pat = branch["pattern"]
-    assert pat.startswith("^") and pat.endswith("$")  # llama.cpp 문법 변환 조건
+    assert pat.startswith("^") and pat.endswith("$")
     assert re.fullmatch(pat, "신용카드로 결제할 수 있어요? It's 3 p.m.")
     assert not re.fullmatch(pat, "信用카드로 결제할 수 있어요?")
     assert not re.fullmatch(pat, "クレジットカード")
@@ -341,7 +343,7 @@ def test_alternative_question_example_keeps_both_choices_and_listener_role():
 
 
 def test_spanish_glossary_hints():
-    assert P.select_glossary("Póngale diesel, por favor.", "es-MX", "ko-KR") == {"diesel": "경유"}  # 강세 없이 말해도
+    assert P.select_glossary("Póngale diesel, por favor.", "es-MX", "ko-KR") == {"diesel": "경유"}
     assert P.select_glossary("Tengo una llanta ponchada.", "es-US", "ko-KR") == {"llanta ponchada": "펑크"}
     assert P.select_glossary("Nos vemos a las 3 de la tarde.", "es-US", "ko-KR") == {"3 de la tarde": "오후 3시"}
     assert P.select_glossary("Llévenos al Aeropuerto de Jeju.", "es-US", "ko-KR") == {"Aeropuerto de Jeju": "제주국제공항"}
@@ -359,7 +361,6 @@ def test_few_shot_uses_same_language_pair_only():
 def test_midnight_hints_and_ambiguous_spanish_words():
     assert P.select_glossary("Vuelva a las 12 de la noche.", "es-US", "ko-KR") == {"12 de la noche": "자정"}
     assert P.select_glossary("Come back at 12 p.m.", "en-US", "ko-KR") == {"12 p.m.": "정오"}
-    # 검증: 문맥 없이는 뜻이 갈리는 단어(통행료/요금소, 연료통/보증금)와 보장 범위가 다른 보험 이름은 힌트로 강제하지 않는다
     assert P.select_glossary("Me cobraron un peaje.", "es-US", "ko-KR") == {}
     assert P.select_glossary("El depósito está vacío.", "es-US", "ko-KR") == {}
     assert "cobertura amplia" not in P.select_glossary("Quiero cobertura amplia.", "es-US", "ko-KR")
@@ -390,20 +391,17 @@ def test_punctuation_and_stt_inputs_keep_original_payload_on_first_attempt_and_r
         assert json.loads(messages[-1]["content"]) == payload
 
 
-def test_stt_examples_contrast_questions_with_statements_and_keep_language_pair_selection():
-    shots = [ex for ex in P.examples("translate")
-             if not any(unicodedata.category(c).startswith("P") for c in ex["input"]["utterance"])]
-    assert 2 <= len(shots) <= 4
-    assert all(ex["input"]["utterance"] == ex["input"]["utterance"].lower() for ex in shots)
-    assert sum(ex["output"]["translated_text"].endswith("?") for ex in shots) >= 2
-    assert any(ex["output"]["translated_text"].endswith(".") and "?" not in ex["output"]["translated_text"]
-               for ex in shots)
-    assert any(ex["input"]["source_locale"] == "ko-KR" for ex in shots)
-    for source in ("en-US", "es-US", "es-MX"):
-        messages = P.translate_messages(source, "ko-KR", "general", "x")
-        pairs = [(json.loads(user["content"]), json.loads(assistant["content"]))
-                 for user, assistant in zip(messages[1:-1:2], messages[2:-1:2])]
-        for ex in shots:
-            i = ex["input"]
-            same_pair = P.foreign_lang(i["source_locale"], i["target_locale"]) == P.LANG_KEY[source]
-            assert ((i, ex["output"]) in pairs) == same_pair
+def test_baseline_translation_messages_are_unchanged_after_v11_restoration():
+    root = Path(__file__).resolve().parents[1]
+    baseline = json.loads((root / "tests/fixtures/translation_prompt_baseline.json").read_text(encoding="utf-8"))
+    datasets = {"dev.jsonl", "general.jsonl", "general_es.jsonl", "naturalness.dev.jsonl"}
+    cases = {(name, row["id"]): row for name in datasets
+             for line in (root / "eval" / name).read_text(encoding="utf-8").splitlines()
+             if line.strip() for row in [json.loads(line)] if row["task"] == "translate"}
+    expected = {(row["dataset"], row["id"]): row["sha256"] for row in baseline["records"]}
+    assert P.prompt("translate")[0] == "translate-v11"
+    assert set(cases) == set(expected)
+    for key, row in cases.items():
+        messages = P.translate_messages(row["source_locale"], row["target_locale"], row["scenario"], row["text"])
+        serialized = json.dumps(messages, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        assert hashlib.sha256(serialized.encode("utf-8")).hexdigest() == expected[key], key

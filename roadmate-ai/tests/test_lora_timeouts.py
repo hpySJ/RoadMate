@@ -1,4 +1,4 @@
-"""Long teacher calls must not retain the HTTP client's former 30-second read cap."""
+# 테스트
 import asyncio
 import json
 from types import SimpleNamespace

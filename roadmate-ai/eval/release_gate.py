@@ -1,4 +1,4 @@
-"""실제 모델 평가와 독립 검토가 모두 끝났는지 확인한다. 누락·mock·오래된 결과는 실패한다."""
+# 평가
 import argparse
 import csv
 import hashlib
@@ -109,7 +109,7 @@ def check_run(run: Path) -> tuple[dict, list[str]]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description='실제 모델 평가와 사람 검토의 제출 조건을 확인합니다.')
     ap.add_argument("runs", type=Path, nargs="+")
     args = ap.parse_args()
     reports, failures = [], []

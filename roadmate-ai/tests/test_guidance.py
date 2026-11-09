@@ -1,3 +1,4 @@
+# 테스트
 from copy import deepcopy
 from pathlib import Path
 
@@ -40,7 +41,6 @@ def ids(locale, country, experience):
     ("OTHER", "experienced", {"welcome_back", "school_zone"}, {"right_turn", "keep_right", "bus_lane", "welcome_first"}),
 ])
 def test_briefing_follows_onboarding_table(country, experience, must, must_not):
-    # 검증: 기획서 3.3 개인화 안내 결정 표. 기타 국가는 통행 방향을 추측하지 않는다
     got = set(ids("en-US", country, experience))
     assert must <= got and not (must_not & got), got
 
@@ -67,7 +67,6 @@ def test_every_text_has_all_locales_and_alias():
 
 
 def test_queue_drops_repeat_queued_during_playback():
-    # 검증: 재생 중(아직 mark_played 전) 들어온 같은 안내는 재생 완료 후 꺼내지지 않는다
     eng, q = GuidanceEngine(load_pack(), "en-US"), SpeechQueue()
 
     def snap(now):

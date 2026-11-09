@@ -1,4 +1,3 @@
-"""로컬 llama-server(OpenAI 호환) 호출. 외부 AI API는 사용하지 않는다."""
 import asyncio
 import json
 import time
@@ -8,6 +7,7 @@ import httpx
 from runtime_identity import ROOT, prepare_runtime_files, process_identity, verify_runtime
 
 
+# 오류
 class ModelError(Exception):
     code = "model_error"
     status = 502
@@ -31,6 +31,7 @@ class ModelBadOutput(ModelError):
     code = "invalid_model_output"
 
 
+# 모델
 class LlamaClient:
     is_mock = False
 
@@ -42,7 +43,7 @@ class LlamaClient:
         self.manifest, self._identity = manifest, None
 
     async def prepare_runtime(self) -> None:
-        """Cold file hashing belongs to startup, outside translation deadlines."""
+
         if self.manifest:
             try:
                 await asyncio.to_thread(prepare_runtime_files, self.manifest)
@@ -73,7 +74,7 @@ class LlamaClient:
             except asyncio.TimeoutError as e:
                 raise ModelTimeout("runtime verification exceeded deadline") from e
             timeout_s -= time.monotonic() - started
-        # QWEN 구현: JSON 스키마 문법으로 출력 형식 강제, stream=false로 최종 결과만 검증
+
         body = {
             "model": self.model_id,
             "messages": messages,
@@ -140,7 +141,7 @@ class LlamaClient:
         return r.json()
 
     async def wait_idle(self, max_s: float) -> bool:
-        """취소 후 llama-server 슬롯이 실제로 비었는지 확인한다. 확인 불가면 max_s까지 기다린다."""
+
         deadline = time.monotonic() + max_s
         while time.monotonic() < deadline:
             try:
@@ -156,8 +157,9 @@ class LlamaClient:
         await self.http.aclose()
 
 
+# 모의 모델
 class MockClient:
-    """모델 없이 계약 시험용. 응답의 model_id가 mock으로 표시된다."""
+
 
     is_mock = True
     model_id = "mock"

@@ -1,4 +1,3 @@
-# roadmate-ai 폴더 변경 시 모델 없이(mock) 계약·검증·규칙 시험을 실행
 name: roadmate-ai tests
 on:
   pull_request:

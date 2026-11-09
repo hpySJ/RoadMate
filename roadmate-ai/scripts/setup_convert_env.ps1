@@ -1,4 +1,4 @@
-﻿# 학습: LoRA → GGUF 변환 환경(.venv-convert). llama.cpp 같은 태그의 변환기 요구사항을 그대로 사용
+# 변환 환경
 param([string]$Python = "3.11")
 . "$PSScriptRoot\_common.ps1"
 $src = Join-Path $Root "tools\llama-src"

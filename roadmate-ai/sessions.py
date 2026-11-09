@@ -1,4 +1,3 @@
-"""요청 중복 제거, epoch 취소, 모델 단일 실행 슬롯."""
 import asyncio
 import hashlib
 import json
@@ -9,6 +8,7 @@ from dataclasses import dataclass, field
 MAX_ENTRIES = 10_000
 
 
+# 요청 식별
 def payload_hash(obj: dict) -> str:
     return hashlib.sha256(json.dumps(obj, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
@@ -22,6 +22,7 @@ class Inflight:
     waiters: int = field(default=0)
 
 
+# 중복 요청
 class TurnRegistry:
     def __init__(self, dedupe_ttl_s: float):
         self.ttl = dedupe_ttl_s
@@ -38,7 +39,7 @@ class TurnRegistry:
         return epoch <= self.cancelled.get(session_id, -1)
 
     def cancel(self, session_id: str, epoch: int) -> tuple[int, int]:
-        # 백엔드 연동: cancelled_through_epoch는 단조 증가, 해당 epoch 이하만 무효화
+
         through = max(epoch, self.cancelled.get(session_id, -1))
         self.cancelled[session_id] = through
         self.cancelled.move_to_end(session_id)
@@ -74,8 +75,9 @@ class TurnRegistry:
             self._cap(self.done)
 
 
+# 모델 슬롯
 class ModelSlot:
-    """모델 전체 동시 실행 1건. 대기열을 만들지 않고 짧게 기다린 뒤 busy를 돌려준다."""
+
 
     def __init__(self):
         self._lock = asyncio.Lock()
@@ -84,7 +86,7 @@ class ModelSlot:
         deadline = time.monotonic() + wait_s
         while True:
             if not self._lock.locked():
-                await self._lock.acquire()  # 잠기지 않은 Lock은 즉시 획득된다
+                await self._lock.acquire()
                 return True
             if time.monotonic() >= deadline:
                 return False

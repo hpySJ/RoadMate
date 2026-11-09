@@ -1,3 +1,4 @@
+# 테스트
 import json
 import subprocess
 import sys
@@ -19,7 +20,7 @@ def test_pool_groups_are_stable_and_parallel_templates_share_group():
     norm = lambda s: "".join(s.lower().split())  # noqa: E731
     pool = [json.loads(x) for x in (ROOT / "train" / "sources" / "pool.jsonl").read_text(encoding="utf-8").splitlines()]
     for p in pool:
-        if p["group_id"].startswith("p_"):  # 손으로 쓴 문장: 내용으로 정한 ID(목록 순서와 무관)
+        if p["group_id"].startswith("p_"):
             assert p["group_id"] == "p_" + hashlib.sha1(norm(p["text"]).encode()).hexdigest()[:10]
     langs = {}
     for locale, templates in (("en-US", make_pool.EN_T), ("ko-KR", make_pool.KO_T)):
@@ -62,7 +63,7 @@ def test_generation_boundaries_and_prepare_nonlocked_boundaries(monkeypatch, tmp
     make_pool.main()
     assert prepare_data.load_jsonl(tmp_path / "train/sources/pool.jsonl") == []
     if eval_name.startswith("test.locked"):
-        return  # 생성의 기존 봉인 경계는 유지한다. C단계의 locked 미열람은 별도 합성 시험으로 고정한다.
+        return
     rec = {"group_id": "eval-leak", "task": "translate", "source_locale": "ko-KR", "target_locale": "en-US",
            "scenario": "general", "text": text, "review_status": "approved",
            "output": {"status": "ok", "translated_text": "This sentence is for evaluation.", "clarification_question": None}}

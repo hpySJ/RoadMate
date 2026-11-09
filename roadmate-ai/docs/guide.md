@@ -1,16 +1,16 @@
 # roadmate-ai 사용 안내
 
-설치, 서버 실행, 백엔드·앱 연동 규칙, 평가, 튜닝, 학습, 문제 해결을 모아 둔 문서입니다. Pleos SDK와 맞닿는 곳은 [`pleos_sdk.md`](pleos_sdk.md)에 따로 정리했습니다. 아래 1~11장은 Windows 기준이고 명령은 `roadmate-ai` 폴더에서 PowerShell로 실행합니다. Linux(DLPC 등)는 바로 아래 장을 먼저 봅니다.
+설치·실행·API·평가·실험 이력 안내. 명령은 `app.py`와 `scripts/`가 있는 AI 저장소 루트에서 실행함. Windows 명령은 PowerShell 기준, Linux(DLPC)는 아래 장 참고. 기존 Pleos 연결 기준은 [`pleos_sdk.md`](pleos_sdk.md) 참고.
 
 ## Linux(DLPC)에서 실행
 
-기본 프로필은 **8b-q4(Qwen3-8B Q4_K_M, 생각 모드 끔)**입니다. 4B 대안은 `MODEL_PROFILE=4b-q4`로 선택합니다.
+최종 기본값은 **8b-q4(Qwen3-8B Q4_K_M, 생각 모드 끔) + translate-v11**, LoRA 없음. 4B는 대안 프로필로만 보존함.
 
-Ubuntu에서는 PowerShell 스크립트 대신 `scripts/run.sh` 하나로 설치하고 실행합니다. llama.cpp는 공식 Ubuntu CUDA 12.8 빌드를 받아 쓰므로 직접 빌드하지 않습니다. 명령은 JupyterLab 터미널의 `roadmate-ai` 폴더에서 실행합니다.
+Ubuntu 설치·실행은 `scripts/run.sh` 사용함. llama.cpp 공식 Ubuntu CUDA 12.8 빌드를 내려받으므로 직접 빌드 불필요함. JupyterLab 터미널의 AI 저장소 루트에서 실행함.
 
 ```bash
-git clone -b codex/roadmate-ai-mvp https://github.com/hpySJ/RoadMate.git
-cd RoadMate/roadmate-ai
+git clone https://github.com/roadmate-korea/roadmate-AI.git
+cd roadmate-AI
 nvidia-smi                                   # GPU 이름과 VRAM 확인
 bash scripts/run.sh setup                    # .venv, llama.cpp, 모델 다운로드, 환경 확인
 bash scripts/run.sh start                    # 모델 서버 → AI 서버 → smoke 시험(SMOKE OK가 나오면 성공)
@@ -18,9 +18,9 @@ bash scripts/run.sh start                    # 모델 서버 → AI 서버 → s
 bash scripts/run.sh stop
 ```
 
-선생 비교·증류는 아래 8장의 scripts/lora.sh를 사용합니다. 아래 DLPC 명령은 로컬 검증 중 실행하지 않았습니다.
+위 clone 명령은 팀 저장소에 코드 반영 후 사용함. 현재 작업은 로컬 준비만 수행함. 최종 1회 평가는 6장, LoRA 종료 결과는 8장 참고. DLPC 명령은 이번 작업에서 실행하지 않음.
 
-Windows 명령과의 대응은 이렇습니다. 나머지 Python 명령은 `.venv\Scripts\python.exe`를 `.venv/bin/python`으로, `\`를 `/`로 바꿔 그대로 씁니다.
+Windows·Linux 명령 대응은 아래 표 참고. 나머지 Python 명령은 `.venv\Scripts\python.exe`를 `.venv/bin/python`으로, `\`를 `/`로 바꿔 사용함.
 
 | Windows | Linux |
 |---|---|
@@ -33,10 +33,10 @@ Windows 명령과의 대응은 이렇습니다. 나머지 Python 명령은 `.ven
 
 DLPC에서 알아 둘 점:
 
-- 기본으로 `python3.12`를 씁니다. 다른 Python을 쓰려면 `PYTHON=/경로/python bash scripts/run.sh setup`처럼 지정합니다.
-- 노트북 작업을 정지하면 띄워 둔 서버도 같이 꺼집니다. 홈 폴더의 모델과 가상환경은 남으니 다시 `start`만 하면 됩니다.
-- 서버는 그 작업 안(127.0.0.1)에서만 접속됩니다. 다른 PC의 백엔드는 이 서버를 호출할 수 없으니, DLPC는 평가·튜닝·학습에 쓰고 백엔드 연동 시연은 백엔드와 같은 PC에서 합니다.
-- 학습까지 하면 디스크를 20GB 넘게 씁니다. `df -h ~`로 남은 공간을 먼저 확인합니다.
+- 기본 Python은 `python3.12`. 변경 시 `PYTHON=/경로/python bash scripts/run.sh setup`으로 지정함.
+- 노트북 작업 정지 시 서버도 종료됨. 홈 폴더의 모델·가상환경은 보존되므로 이후 `start`로 재시작 가능함.
+- 서버는 작업 내부의 127.0.0.1에서만 접속 가능함. 앱 시연은 실제 연결 경로가 있는 GPU PC 필요함.
+- 모델·환경 설치 전 `df -h ~`로 여유 공간 확인 필요함. 추가 LoRA 학습은 종료함.
 
 ## 1. 실행 PC 요구사항
 
@@ -62,7 +62,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ```powershell
 .\scripts\setup_ai_env.ps1                         # .venv 생성 + requirements.lock.txt 설치
 .\scripts\setup_llama.ps1                          # llama.cpp b12076 CUDA 12.4 → tools\llama, 소스 → tools\llama-src
-.\.venv\Scripts\python.exe scripts\download_model.py   # GGUF 2.5GB 다운로드 + SHA256 확인
+.\.venv\Scripts\python.exe scripts\download_model.py   # 기본 8B GGUF 약 5GB + SHA256 확인
 .\.venv\Scripts\python.exe scripts\check_env.py        # GPU·VRAM·RAM·파일 확인
 ```
 
@@ -85,7 +85,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 .\scripts\start_ai.ps1       # 포그라운드 FastAPI
 ```
 
-### 모델 없이 계약만 시험(백엔드 담당 개발용)
+### 모델 없이 API 계약 시험
 ```powershell
 .\scripts\start_all.ps1 -Mock    # 응답 model_id가 "mock", 번역문은 [모의 번역]/[MOCK] 접두어
 ```
@@ -100,13 +100,14 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
 첫 요청 전에 `/health/ready`가 200인지 확인하고 시연을 시작한다. 모델 로딩 시간과 준비 후 번역 시간은 따로 기록한다.
 
-## 4. 백엔드 연동
+## 4. API 연동
 
 전체 계약: [`docs/openapi.json`](openapi.json) (서버 실행 중이면 `http://127.0.0.1:8000/docs`).
 계약을 바꾸면 `app.py`의 `API_VERSION`을 올리고 `.\.venv\Scripts\python.exe scripts\export_openapi.py`로 재생성한다(테스트가 불일치를 잡는다).
 
 | 방향 | API | 용도 |
 |---|---|---|
+| 앱 → AI | `POST /translate` | `{text, from, to, situation}` → `{text}` |
 | 백엔드 → AI | `POST /internal/v1/translate` | 최종 STT 문장 1개 번역 |
 | 백엔드 → AI | `POST /internal/v1/parse-destination` | 목적지 검색어 추출 + 데모 장소 후보 |
 | 백엔드 → AI | `POST /internal/v1/cancel` | `session_epoch` 이하 요청·진행 중 추론 취소 |
@@ -117,13 +118,14 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 POST /internal/v1/translate
 {"request_id":"req-001","session_id":"sess-001","session_epoch":3,"turn_id":1,
  "source_locale":"en-US","target_locale":"ko-KR","scenario":"gas_station",
- "text":"Please fill it up with gasoline.","engine_bundle":"roadmate-ko-en-q4-v1"}
+ "text":"Please fill it up with gasoline.","engine_bundle":"roadmate-ko-en-q4-8b-v1"}
 ```
 ```json
 {"request_id":"req-001","session_id":"sess-001","session_epoch":3,"turn_id":1,
  "status":"ok","translated_text":"휘발유로 가득 넣어 주세요.","clarification_question":null,
  "engine_bundle":"roadmate-ko-en-q4-8b-v1","model_id":"roadmate-qwen8b-q4",
- "prompt_version":"translate-v9","glossary_version":"rental-ko-en-es-v11","latency_ms":850}
+ "prompt_version":"translate-v11","glossary_version":"rental-ko-en-es-v12","latency_ms":850,
+ "spanish_question_restored":false}
 ```
 - `source_locale`/`target_locale`: `ko-KR`, `en-US`, `es-US`, `es-MX` 중 한쪽은 반드시 `ko-KR`(한↔영, 한↔스). Pleos STT·TTS locale 값을 그대로 쓴다 / `scenario`: `gas_station`, `parking`, `rental_counter`, `accident`, `general`
 - 스페인어는 `es-US`와 `es-MX`를 같은 말로 처리한다. 번역문은 중남미식 존댓말(usted), 원화는 `30,000 wones`, 시각은 `3 p. m.`.
@@ -149,21 +151,21 @@ POST /internal/v1/translate
 - 모델 동시 실행 1건. 바쁘면 0.3초 기다린 뒤 429.
 - APK가 P 해제·이동을 감지하면 백엔드가 `POST /internal/v1/cancel {"session_id","session_epoch"}` 호출 → 그 epoch **이하**만 무효화(단조 증가). 늦게 온 epoch 3 취소가 epoch 4를 취소하지 않는다.
 - 취소·timeout 뒤에는 llama-server 슬롯이 실제로 빌 때까지 확인하고 다음 turn을 받는다.
-- timeout 권장: AI 모델 8초 < 백엔드 10초 < 앱 12초. timeout됐다고 자동으로 두 번째 호출을 보내지 않는다.
+- 서버의 모델 제한 기본값은 8초다. 현재 Android `/translate` 클라이언트의 전체 제한은 3초이므로 연결 시연에서는 `MODEL_TIMEOUT_S=2.5`로 시작하고 실제 왕복 시간을 측정한다. 시간 초과 후 자동으로 같은 요청을 다시 보내지 않는다.
 
 ### 내부 토큰(선택)
 `.env`(예시 `.env.example`)에 `AI_INTERNAL_TOKEN=...`을 넣으면 `X-Internal-Token` 헤더가 필요하다. 서버·`smoke.py`·`evaluate.py`가 모두 `config.py`로 같은 `.env`를 읽으므로 새 터미널에서도 따로 설정하지 않는다(이미 설정된 환경 변수가 우선). AI 서버는 `127.0.0.1`에만 바인딩한다. FastAPI·모델 포트를 인터넷에 공개하지 않는다.
 
 ### 에뮬레이터 주소
-APK의 `127.0.0.1`은 에뮬레이터 자신이다. 같은 PC에서는 `10.0.2.2`가 호스트의 loopback으로 연결되므로 AI 서버를 `127.0.0.1`에 바인딩한 것 자체가 접속 불가 이유는 아니다. 백엔드 구성이면 APK → `http://10.0.2.2:8080`(백엔드), 백엔드 → `http://127.0.0.1:8000`(AI)다. 로컬 시연에서 앱의 AI 직접 연결을 선택하면 주소는 `http://10.0.2.2:8000`이다. 다른 PC나 DLPC에는 이 별칭이 적용되지 않는다. [Android 네트워크 주소](https://developer.android.com/studio/run/emulator-networking-address)
+APK의 `127.0.0.1`은 기기·에뮬레이터 자신이다. 같은 PC의 에뮬레이터에서는 `10.0.2.2`가 호스트의 loopback으로 연결된다. 앱의 AI 직접 연결 주소는 `http://10.0.2.2:8000`이며 다른 PC나 DLPC에는 이 별칭이 적용되지 않는다. AI의 바인딩은 `127.0.0.1`을 유지한다. [Android 네트워크 주소](https://developer.android.com/studio/run/emulator-networking-address)
 
-Android `895bb08`에는 `INTERNET` 권한·HTTP 클라이언트·cleartext 예외가 없으므로 주소만 바꿔서는 통역되지 않는다. HTTP 예외는 debug 소스 세트의 `network_security_config`에서 `10.0.2.2` domain-config에만 두고 release에서는 허용하지 않는다. XML의 `debug-overrides`는 인증서 설정용이므로 cleartext 예외와 혼동하지 않는다. [Android 보안 설정](https://developer.android.com/privacy-and-security/security-config)
+Android `9945ab18`에는 STT와 HTTP 클라이언트가 구현돼 있다. 다만 `INTERNET` 권한·debug cleartext 설정이 없고 서버 URL 기본값이 비어 있다. 이 설정과 APK 빌드는 Android 담당 범위이며, AI 저장소에는 Android 코드 변경을 포함하지 않는다. [Android 보안 설정](https://developer.android.com/privacy-and-security/security-config)
 
-팀 백엔드의 존재·배치와 시연용 GPU PC를 먼저 확정한다. AI 직접 연결을 선택하면 앱이 요청 ID·epoch·취소·오류 처리를 맡고, 내부 토큰을 APK의 배포용 비밀값으로 두지 않는다. 정차 신호의 재관측·유효성까지 포함한 작업 순서는 [`pleos_sdk.md`](pleos_sdk.md) 6장을 따른다.
+현재 앱은 `/translate`를 직접 호출한다. 서버가 내부 요청 ID를 만들며 앱의 coroutine 취소로 HTTP 연결이 닫히면 서버도 작업을 취소한다. 재질문은 `text` 키가 없는 응답으로 반환되고 현재 앱은 문장 카드 안내로 대체한다. 기존 `/internal/v1/*` 계약은 별도로 유지한다.
 
 ## 5. 앱 연동(주행 안내 규칙·정차 잠금)
 
-주행 안내는 LLM이 아니라 **고정 규칙과 문구(현재 draft, 출시 전 검수 필요)**로 APK 안에서 실행한다. `guidance.py`가 기준 구현이며, 팀 Android `895bb08`의 기존 Kotlin 규칙과 같은 fixture로 동등성을 시험한다. 현재 차이와 기어 재관측·원본 속도·TTS 완료/중단 분리 조건은 [`pleos_sdk.md`](pleos_sdk.md) 2~3장에 기록했다.
+주행 안내는 LLM이 아니라 **고정 규칙과 문구(현재 draft, 출시 전 검수 필요)**로 APK 안에서 실행한다. `guidance.py`가 기준 구현이며, Android Kotlin 규칙과 같은 fixture로 동등성을 시험한다. 이전 코드 검토에서 확인한 정책 차이와 기어 재관측·원본 속도·TTS 완료/중단 조건은 [`pleos_sdk.md`](pleos_sdk.md) 2~3장에 기록했다. HTTP 계약 확인이 차량 신호 동등성 확인을 대신하지 않는다.
 
 - 규칙·문구: `packs/rules.json` (스쿨존 현재 구간 과속, 스쿨존 접근, 제한값 미상 접근, 우회전 조건부 안내, 출발 브리핑)
 - 시나리오 fixture: `packs/fixtures/guidance_scenarios.json` → `.\.venv\Scripts\python.exe guidance.py`로 전부 OK 확인
@@ -213,13 +215,54 @@ done
 - 자동 통과는 보조 지표다. `review.csv`의 `human_meaning_ok`, `critical_error`를 원문·번역을 아는 사람이 채운다. 모델 채점으로 통과시키지 않는다.
 - 필수 최소쌍: 휘발유/경유, 5만/15만 원, 가득/3만 원만, 다친 사람 있다/없다, 오세요/오지 마세요, 왼쪽/오른쪽.
 - 1차 목표(측정 전 목표값): 잠근 시험 의미 보존 90% 이상, 준비 후 짧은 문장 번역 p95 3초, 발화 종료→TTS 시작 p95 5초, 에뮬레이터와 30분 동시 실행, P 해제 후 이전 결과 재생 0건.
-- 평가 사례는 모두 `review_status: draft`다. 사람이 검수해 `approved`로 바꾼다. `tests/test_eval_data.py`가 정답이 검증기를 통과하는지, dev/test/few-shot 사이 누수가 없는지 확인한다.
+- 잠근 v2의 원문·reference·기대값 44행은 Claude·Codex 독립 AI 검토 완료. `review_status=approved`, `reviewer="ai:claude+codex (human_reviewed=false)"`로 기록함. 사람 검수나 모델 출력 합격을 뜻하지 않음. 나머지 평가 자료의 검토 상태와 구분 필요함.
+
+### 최종 설정과 잠근 시험 1회 실행
+
+최종 설정: `MODEL_PROFILE=8b-q4`, Qwen3-8B Q4_K_M, `translate-v11`, LoRA 없음. `735a577`의 프롬프트·예시와 345개 요청 기준 해시를 유지함. 스페인어 질문 복원에는 `cuándo`·`quién`·`quiénes` 포함. 문장부호가 하나라도 있으면 원문 유지함. 이후 잠근 시험 결과로 프롬프트·검사기·설정을 다시 고르지 않음.
+
+아래는 **DLPC 실행 준비 명령이며 이번 작업에서 실행하지 않음**. 진행 중인 작업이 끝난 뒤, 동일 코드·모델이 설치된 `roadmate-ai` 디렉터리에서 실행 필요함. 기존 `.env`의 어댑터를 빈 환경변수로 해제하고, DLPC 24GB GPU는 manifest 기본 99레이어 사용함. 서버는 한 번 시작하고 모든 평가가 끝날 때까지 코드·팩·설정 변경 금지.
+
+```bash
+(
+  set -euo pipefail
+  export MODEL_PROFILE=8b-q4 LORA_ADAPTER= LOG_REJECTED=1 MODEL_TIMEOUT_S=8
+  export MODEL_ID=roadmate-qwen8b-q4 MODEL_BASE_URL=http://127.0.0.1:8081/v1
+  export AI_URL=http://127.0.0.1:8000 AI_PORT=8000
+  unset GPU_LAYERS
+  FINAL_DIR=run/final-v11-01
+  mkdir -p run
+  mkdir "$FINAL_DIR"
+  bash scripts/run.sh stop
+  bash scripts/run.sh start
+  .venv/bin/python eval/stt_format.py --out-dir "$FINAL_DIR/stt"
+  .venv/bin/python eval/evaluate.py --file eval/test.locked.v2.jsonl --final \
+    --label final-v11 --attempt-log logs/ai.err.log | tee "$FINAL_DIR/locked.log"
+  pairs=()
+  for dataset in general general_es naturalness.dev; do
+    .venv/bin/python eval/evaluate.py --file "eval/$dataset.jsonl" \
+      --label final-v11-original --attempt-log logs/ai.err.log | tee "$FINAL_DIR/$dataset.original.log"
+    .venv/bin/python eval/evaluate.py --file "$FINAL_DIR/stt/$dataset.jsonl" \
+      --label final-v11-stt --attempt-log logs/ai.err.log | tee "$FINAL_DIR/$dataset.stt.log"
+    original=$(sed -n 's/^saved: //p' "$FINAL_DIR/$dataset.original.log")
+    stt=$(sed -n 's/^saved: //p' "$FINAL_DIR/$dataset.stt.log")
+    pairs+=(--pair "$original" "$stt")
+  done
+  .venv/bin/python eval/compare_stt.py "${pairs[@]}" --out-dir "$FINAL_DIR/stt-report"
+)
+```
+
+`run.sh start`에서 준비 확인과 smoke 수행함. `--final`은 값을 받지 않는 플래그임. `mkdir`가 준비 블록 재실행을 막고, 평가기의 `run/final-evaluations/<입력 지문>.json`이 같은 잠근 입력의 두 번째 실행을 막음. 중간 실패도 기록 보존 필요함. 폴더·ledger 삭제나 이름 변경으로 잠근 시험을 재시도하지 않음.
+
+각 `saved:` 결과 폴더의 `summary.md`에서 FAIL·502·첫 시도 오언어·재시도·번역투 표지·p50/p95 확인 가능함. STT 비교는 `run/final-v11-01/stt-report/summary.md`에 남음. `run.json`의 모델·프롬프트·코드 해시도 함께 보존함. 최종 수치는 [제출 요약](submission_summary.md)에 실행 후 기입함.
+
+AI 원문 검토 승인과 출력 의미 검수는 별개임. 기존 `release_gate.py`는 dev 포함 5종 평가와 사람의 출력 검토를 요구함. 위 실행만으로 사람 검수·릴리스 게이트 통과를 표시하지 않음. 팀 저장소 후속 커밋은 잠근 시험 완료 뒤 준비하며, 현재 커밋·푸시 없음.
 
 ### STT 형식 입력 비교
 
 소문자·문장부호 없는 입력에 대한 견고성을 비교한다. `general`, `general_es`, `naturalness.dev` 세 파일의 `text`만 바꾼 사본을 만들고 원본·정답·기대값·ID·행 순서는 유지한다. locked 파일은 읽거나 바꾸지 않는다. 아래 도구는 프롬프트·검사기·서버를 수정하거나 시작하지 않는다.
 
-`translate-v12`는 문장부호 없는 질문·부탁·평서를 화자 역할과 상황으로 구분하도록 지시하고, 대비 예시 4개를 사용한다. 스페인어(`es-US`·`es-MX`)에서 지정한 질문 시작 구문은 모델 입력만 `¿…?`로 감싼다. 물음표·마침표·느낌표·말줄임표·쉼표 등 문장부호가 하나라도 있으면 원문을 유지한다. 숫자 내부 문장부호도 유지하고 복원 대상에서 제외한다. 안전 검사에는 원문을 그대로 사용한다. 내부 응답의 `spanish_question_restored`와 `translation_input` 로그에 적용 여부를 남기고, `LOG_REJECTED=1`이면 시도별 로그에도 남긴다. 앱 `/translate` 응답 형식은 그대로다.
+`translate-v11` 프롬프트·예시는 git 기록에서 복원했으며 기존 345개 요청 해시 불변 테스트로 확인한다. 사용자 제공 DLPC 재평가에서 v12의 상황상 질문 5건 개선이 없고 깨끗한 입력의 502가 2건 늘어 복원했으며, 이 PC에서 실측한 결과는 아니다. 스페인어(`es-US`·`es-MX`)에서 지정한 질문 시작 구문은 모델 입력만 `¿…?`로 감싼다. 시작어에는 `cuándo`, `quién`, `quiénes`도 포함한다. 물음표·마침표·느낌표·말줄임표·쉼표 등 문장부호가 하나라도 있으면 원문을 유지한다. 숫자 내부 문장부호도 유지하고 복원 대상에서 제외한다. 안전 검사에는 원문을 그대로 사용한다. 내부 응답의 `spanish_question_restored`와 `translation_input` 로그에 적용 여부를 남기고, `LOG_REJECTED=1`이면 시도별 로그에도 남긴다. 앱 `/translate` 응답 형식은 그대로다.
 
 이 시작 구문 규칙은 문장부호 없는 `hay`·`ya` 평서도 질문으로 바꾸는 오탐이 있다. 합성 회귀 테스트에 이 한계를 고정했으며, 기존 문장부호 입력을 포함한 실제 의미·지연 변화는 DLPC 비교가 필요하다. Hi-Pass 조회는 `Hi-Pass`·`hi-pass`·`hipass`를 잡지만 `hi pass`처럼 띄어 쓴 표기는 현재 잡지 못한다. 이번 변경에서는 용어집·검사기·숫자 규칙을 수정하지 않았다.
 
@@ -263,7 +306,9 @@ JSON 계약 → 목표 언어 문자 → 설명문 섞임 → 길이 → 숫자�
 
 재시도는 오답 초안을 다시 보내지 않고 원문·검사 종류·구체적인 용어 대응을 보낸다. 외국어의 원화 금액은 한국어 `원` 표기를 힌트로 제공한다. `at 5`, `before eight`처럼 분명한 영어 시각은 오전·오후 미정으로 비교하지만, 수량·기간·돈·날짜는 이 규칙에서 제외한다. `at 5 on Monday` 같은 추가 문맥과 `1.234,50` 혼합 금액 표기는 아직 보수적으로 기존 파서를 따른다.
 
-## 7. 튜닝
+## 7. 튜닝 이력
+
+설정 선택 종료. 아래 항목은 개발 이력이며 잠근 시험 이후 튜닝 절차로 사용하지 않음.
 
 실패 원인을 나눈다: STT 오인식 / 프롬프트 / 용어 / 모델의 의미·언어 품질 / 양자화 / 입력 모호성. 반복되는 의미 오역은 프롬프트를 계속 늘리지 않고 [4B·8B 비교](model_comparison.md)로 확인한다.
 
@@ -305,127 +350,23 @@ MODEL_PROFILE=8b-q4 .venv/bin/python eval/evaluate.py --file eval/general.jsonl 
 
 다른 서버가 실행 중이면 먼저 그 작업을 마친다. 4B Q4/Q8 대안은 MODEL_PROFILE만 바꾸며, 원본 결과와 로그를 보존한다. 잠근 시험은 튜닝에 사용하지 않는다.
 
-## 8. 8B LoRA 증류 준비
+## 8. LoRA 실험 종료
 
-학습 정답은 고정 Qwen 선생 모델의 **수정하지 않은 출력**만 사용한다. 사람·Claude·Codex 번역이나 사람이 고친 정답은 본학습에 넣지 않는다. AI 검토는 참고 판정이며 사람 검수로 표시하지 않는다.
+최종 선택은 **Qwen3-8B Q4_K_M + translate-v11 + 스페인어 질문 복원 규칙**, 어댑터 없음. LoRA 추가 생성·학습은 종료함. 아래 수치는 사용자 제공 DLPC 결과와 **AI 검토(참고)** 요약이며 이번 로컬 작업에서 다시 측정하지 않음.
 
-### 8.1 설치·용량
+| 선생 모델 | 확인 결과 | 종료 사유 |
+|---|---|---|
+| 14B Q4 | 같은 행 뜻 오류 7→7 | 의미 정확도 개선 없음 |
+| 32B Q4 | 자연스러움 개선, 같은 행 뜻 오류 7→6. 학습 표본 나쁨 6.7%, 스페인어 9% | 학습 정답 품질 기준 미달 |
+| 8B 자기 선생 | 학습 표본 나쁨 8.0% | 자기 선생 표본 기준 4% 초과 |
 
-    bash scripts/run.sh setup
-    bash scripts/run.sh setup-train
-    bash scripts/run.sh setup-convert
+서로 다른 검토 표본의 비율을 하나의 성능 수치로 합치지 않음. 32B 뜻 오류 1건 감소만으로 검증된 개선을 주장하지 않음. 채택 어댑터 없음. 모델 비교와 한계는 [모델 비교](model_comparison.md), 제출 상태는 [제출 요약](submission_summary.md)에 기록함.
 
-| 파일 | 디스크 크기 | 용도 |
-|---|---:|---|
-| Qwen3-8B HF 원본 | 약 16GB | NF4 학습 |
-| 8B Q4_K_M GGUF | 5.03GB | 기본·어댑터 비교 |
-| 14B Q4_K_M GGUF | 9.00GB | 선생 비교·생성 |
-| 32B Q4_K_M GGUF | 19.76GB | `--teacher 32b-q4`로 선택하는 DLPC 선생 전용 |
-| 환경·캐시·체크포인트 | 추가 수~수십 GB | 설치·체크포인트 수에 따라 변동 |
+`scripts/lora.sh`, `scripts/lora_pipeline.py`, `train/`의 생성·필터·학습·변환 도구와 관련 테스트는 보존함. 14B·32B manifest도 실험 이력용으로 유지함. 이 장은 다음 학습을 지시하는 실행 절차가 아님. 향후 재개 시 새로운 승인·자료 품질 기준 필요함.
 
-여유 디스크 50~70GB 이상을 계획한다. 파일 크기는 VRAM 요구량과 다르다. 현재 DLPC는 **VRAM 24GB**이므로 아래 명령은 GPU_LAYERS를 지정하지 않고 manifest의 n_gpu_layers=99로 전체 GPU 적재를 요청한다. 시작 로그의 실제 offload 레이어 수와 실행 중 VRAM 사용량으로 확인한다. 이 PC에서 24GB DLPC의 적재·학습·속도를 실측한 것은 아니다. MODEL_TIMEOUT_S=60은 실행 제한 시간이며 예상 지연이 아니다.
+기존 실험의 원본 결과·표본 검토·해시는 당시 증거로 보존함. LoRA 종료로 현재 코드의 주석 정리를 미루거나 소스 해시를 옛 값으로 유지할 필요 없음. 과거 증거의 해시를 덮어쓰거나 새 코드에서 재현한 결과로 표시하지 않음.
 
-[공식 14B](https://huggingface.co/Qwen/Qwen3-14B-GGUF/tree/530227a7d994db8eca5ab5ced2fb692b614357fd), [공식 32B](https://huggingface.co/Qwen/Qwen3-32B-GGUF/tree/938a7432affaec9157f883a87164e2646ae17555)의 revision·SHA256·크기를 manifest에 고정했다. 생각 모드를 끄며 실제 응답에 생각 내용이 나오면 거절한다.
-
-**32B는 24GB GPU에서 여유가 빠듯하다.** 19.76GB 모델 파일 외에도 KV 캐시와 실행 버퍼가 필요하므로 파일 크기만으로 적재 성공을 판단하지 않는다. 32B 선생은 n_gpu_layers=99·ctx=4096으로 실행하고 CPU로 넘기거나 레이어 수를 줄여 재시도하지 않는다. 사용자 제공 `teacher-02` 실측에서는 RTX A5000에 전체 적재하여 로드 약 2분, 1,700토큰 prompt 처리 2.25초, 생성 28.5 tok/s였다. 이는 전체 teacher-check 완료나 품질 판정 결과가 아니며 이 PC에서 독립 재현하지 않았다. 시연 기본 모델은 계속 8b-q4이며 `/translate`·`/internal/v1/*` 계약도 바뀌지 않는다.
-
-### 8.2 단계별 명령
-
-각 --out은 `teacher-03`처럼 **아직 없는 새 폴더**여야 한다. 기존 `teacher-01`·`teacher-02` 결과를 덮어쓰지 않는다. 24GB DLPC의 전체 단계별 소요 시간은 **실측 전**이며, 기존 8GB CPU offload 가정의 시간 추정은 사용하지 않는다. 다운로드·검토 시간은 별도다.
-
-| 단계 | 소요 시간 |
-|---|---|
-| teacher-check | 24GB DLPC 실측 필요 |
-| generate | 생성 발화 수·실제 토큰 수에 따라 실측 필요 |
-| train-eval | 학습 토큰 수·처리량에 따라 실측 필요 |
-
-`--teacher`는 `14b-q4` 또는 `32b-q4`이며 기본값은 `14b-q4`다. 기본 선생의 단계별 명령:
-
-    MODEL_TIMEOUT_S=60 bash scripts/lora.sh teacher-check --out train/runs/teacher-01
-    MODEL_TIMEOUT_S=60 bash scripts/lora.sh generate --out train/runs/distill-01
-    bash scripts/lora.sh train-eval --data train/runs/distill-01 --out train/runs/lora-01
-
-32B 선생 비교를 명시적으로 선택하는 명령:
-
-    MODEL_TIMEOUT_S=60 bash scripts/lora.sh teacher-check --teacher 32b-q4 --out train/runs/teacher-03
-
-비교·검토에서 32B를 선생으로 선택한 뒤에만 생성으로 진행한다. 자료 생성과 후속 학습에도 같은 선택을 전달한다(생성 후 AI 표본 검토 절차는 8.3절).
-
-    MODEL_TIMEOUT_S=60 bash scripts/lora.sh generate --teacher 32b-q4 --out train/runs/distill-02
-    bash scripts/lora.sh train-eval --teacher 32b-q4 --data train/runs/distill-02 --out train/runs/lora-02
-
-선택한 선생은 단계 기록·생성 기록·준비한 자료·학습 설정에 남는다. `prepare_data.py`와 `train_qlora.py`는 선택한 선생 manifest의 모델·revision·해시와 자료 출처를 대조한다. 14B와 32B 자료를 섞거나 다른 선생을 지정하면 중단한다. 학습 대상 본체는 두 경우 모두 8B다.
-
-이전에 GPU_LAYERS를 export했다면 실행 전에 unset GPU_LAYERS로 해제한다. 실제 토큰 수와 필터 통과율에 따라 시간·자료 수가 달라진다. 각 단계는 설정·로그·산출물·stage_summary.md를 한 폴더에 남기고 요약과 경과 시간을 출력한다. 홈의 roadmate-review-*.tgz에는 리뷰 CSV/MD만 포함하고 key·설정·평가 원본은 넣지 않는다. 비교 리뷰는 Claude용·Codex용을 분리한다. 기존 PID·사용 중인 포트를 발견하면 시작하지 않고 자신이 시작한 프로세스만 종료한다.
-
-teacher-check는 **8B 기준 모델과 선택한 선생**으로 general·general_es·naturalness.dev를 평가한다. FAIL·502·첫 시도 오언어·재시도·번역투·p50/p95와 블라인드 리뷰를 남긴다. 선생이 더 나은지 검토한 뒤 generate로 진행한다. 두 모델에는 같은 제한 시간을 적용한다. 14B 실패 시 32B로 자동 전환하지 않는다.
-
-32B의 teacher-check·generate는 시작 전에 디스크를 검사한다. 아직 없는 GGUF(32B 19.76GB, 비교 시 필요한 8B 포함), 보존할 기존 로그의 복사본과 단계 산출물 여유 2GiB를 예약한다. 같은 파일시스템의 필요량은 합산하며 이미 있는 정상 크기 모델은 다시 예약하지 않고 기존 다운로드 단계에서 SHA256을 검증한다. 기존 산출물은 삭제하지 않는다. 부족하면 다운로드·서버 시작 전에 중단한다.
-
-32B는 GPU_LAYERS가 99가 아닌 설정을 거절하며 자동 메모리 맞춤을 끄고 CUDA 장치를 요구한다. 현재 실행의 `offloaded N/N layers to GPU`와 CUDA 모델 적재 로그가 있으면 기존 방식으로 확인한다. 이 로그가 없는 빌드에서는 시작한 llama-server의 PID·프로세스 시작 시각을 확인한 뒤 `nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader,nounits`로 해당 PID의 GPU 메모리를 확인한다. 단일 GPU에서 GGUF 크기의 90% 이상이어야 통과하며, 다른 프로세스나 여러 GPU의 메모리를 합쳐 통과시키지 않는다. 명시적인 부분 적재·로딩 실패 로그는 메모리 수치로 덮어쓰지 않는다.
-
-확인 방식·실제 레이어 수(로그에 있을 때만)·PID·GPU 메모리·기준값·원시 조회 결과·로그 경로·디스크 검사 결과를 `stage_summary.md`에 남긴다. 메모리 조회 실패, N/A, 프로세스 변경, 컨테이너/호스트 PID 불일치, 기준 미달은 중단 사유이며 CPU 비교 결과를 만들지 않는다. 실패한 시작 로그도 보존한다. [NVIDIA의 프로세스 메모리 지표](https://docs.nvidia.com/deploy/nvidia-smi/index.html)는 GPU context의 메모리이므로 이 대체 검사는 메모리 기반 확인이다. 관측하지 않은 레이어 수를 N/N으로 만들어 기록하지 않는다.
-
-모델·어댑터 SHA256은 요청 제한 시간 밖의 초기화 단계에서 준비한다. `run/runtime-hashes/` 디스크 캐시는 해석된 절대 경로·size·mtime_ns·ctime_ns·inode가 모두 같은 파일만 재사용하며, 하나라도 바뀌면 다시 검증한다. cache hit/miss와 해시 계산 시간을 로그에 남긴다. 요청 중 캐시가 없거나 무효화되면 큰 파일을 다시 읽는 대신 준비되지 않은 상태로 거절하므로 서버를 재시작해 초기화를 다시 수행한다. Linux·Windows 시작 스크립트는 프로세스 시작·준비 대기 전에 해시를 준비하며, smoke와 증류 도구도 호출 제한 시간을 시작하기 전에 준비한다. 다운로드 단계의 전체 SHA256 검증은 유지한다. NFS에서 최초 해시는 오래 걸릴 수 있으나 smoke·번역의 모델 응답 제한 시간을 소비하지 않는다.
-
-### 8.3 원문·정답·AI 표본 검토
-
-정적 원문 풀은 **115건의 보조 자료**(번역 107·목적지 8)만 남겼다. 숫자·낱말을 바꿔 늘렸던 2,400건은 삭제했고, 보조 자료도 그룹·locale 방향별 최대 2건이다. 정답은 저장하지 않는다.
-
-주된 원문은 선생 모델이 새로 쓰는 구어 발화다. 기본 목표는 4개 원문 locale × 5개 상황 × 80개로 **중복 제거 후 원문 1,600개**이며, 한국어 원문의 세 목표 locale을 포함하면 **번역 요청 2,400행**이다. 같은 원문을 다른 목표 언어로 옮긴 행은 원문 다양성에 중복 계산하지 않는다. 보조 115건까지 포함하면 필터 전 최대 2,515행이다. 실제 번역 정답은 이 원문을 서버와 같은 프롬프트로 선생 모델에 다시 요청해 얻는다.
-
-한 번에 최대 10개씩 요청하며 배치마다 상황별 주제 하나를 순환 지정한다. 짧은 부탁·질문·상태 설명·확인·정정·가벼운 머뭇거림의 형식, 초점과 seed도 순환한다. 같은 locale·상황에서 이미 채택한 원문 전체를 `already_used`로 전달해 같은 요청을 말만 바꿔 반복하지 않도록 지시한다. 거절된 원문이나 다른 locale·상황의 원문은 이력에 넣지 않는다. 생성문끼리도 숫자 슬롯·지역 locale·근사 문자열 중복을 제거한다. 두 배의 고정 제안 예산 안에서 목표량을 채우지 못하면 기록을 남기고 중단하며 템플릿으로 메우지 않는다. 이 지시는 의미 중복 제거의 보장이 아니므로 의미가 비슷하지만 표현이 크게 다른 중복과 실제 구어성은 표본 검토가 필요하다.
-
-group_id는 상황 전체가 아니라 독립 생성 배치별로 부여한다. 같은 원문의 여러 목표 언어는 같은 그룹을 유지한다. source_generation.jsonl에 생성 프롬프트·seed·원본 응답·모델 해시·채택/거절 이유를 기록하고 source_summary.json에 고유 원문·그룹 수 및 `accepted_by_topic[locale][scenario][topic]`를 남긴다. 주제별 수는 목표 언어로 확장하기 전 채택한 원문 수다. 생성 원문의 원본 응답도 준비 단계에서 대조하므로 출처 이름만 바꿔 선생 발화로 셀 수 없다.
-
-선생 요청은 고정 llama.cpp의 [입력 토큰 계산 API](https://github.com/ggml-org/llama.cpp/blob/b12076/tools/server/README.md#post-v1chatcompletionsinput_tokens-token-counting)로 실제 템플릿·토크나이저를 적용한 수를 확인한다. 원문 생성의 출력 예약 1,024토큰까지 합쳐 ctx 4,096을 넘으면 추론 전에 중단하고 이력을 자르지 않는다. 토큰 계산 API 실패도 중단 사유다. 짧은 합성 원문 79개가 들어가는지는 아래 테스트로 재현하며, 긴 원문 79개까지 들어간다는 보장은 아니다. 테스트 문장은 학습 원문에 사용하지 않는다.
-
-    SOURCE_TOKENIZER_DIR=/고정_14B_tokenizer_경로 python -m pytest tests/test_source_token_budget.py -q
-
-위 폴더에는 manifest의 base_revision에 해당하는 tokenizer.json과 실제 GGUF에서 추출한 gguf-chat-template.jinja가 필요하며 `tokenizers`·`Jinja2`를 설치한 Python으로 실행한다. 실제 모델 생성은 하지 않는다.
-
-원문과 출력 모두 평가셋·few-shot 정확/근사 중복을 제외한다. locked는 봉인된 중복 배제에만 쓰고 추론·점수·튜닝에 쓰지 않는다. 문자·슬롯 비교가 모든 의미상 중복을 보장하지는 않는다. 서버와 같은 프롬프트의 선생 원본 출력에 안전 검사·번역투 필터를 적용한다. 통과분을 단계 폴더의 distill.draft.jsonl과 최신 사본 train/data/distill.draft.jsonl에 저장한다. 이전 사본·원본 응답·해시·필터 결과도 보존한다.
-
-안전 필터를 거친 뒤에도 선생 생성 원문 비율은 **80% 이상**이어야 한다. 보조 자료가 과해지면 보조 행을 제한하며 그 기록도 보존한다. prepare_data와 본학습에서 전체 및 train/validation/test 각 비어 있지 않은 분할의 비율을 다시 검사한다. summary.json·dataset_manifest.json에 필터 전후 비율, 출처별 행 수, 고유 원문 구조·그룹 수가 남는다. 이 비율은 자료 구성 규칙이며 자연스러움 향상의 측정 결과가 아니다.
-
-무작위 최대 150행의 sample.review.csv를 AI에게 전달한다. key는 전달하지 않는다. ai_verdict·ai_issue·notes만 채우고 원문·출력을 고치지 않는다. 실제 검토한 AI 모델을 기록한다.
-
-    .venv/bin/python train/distill.py review --draft train/runs/distill-01/distill.draft.jsonl --review train/runs/distill-01/sample.review.csv --key train/runs/distill-01/sample.key.json --out train/runs/distill-01/sample.evidence.json --reviewer '<실제로 검토한 AI 모델>'
-
-표본 누락·나쁨·해시 불일치는 학습을 막는다. 나쁜 정답을 사람이 고쳐 넣지 말고 선생·생성 단계부터 검토한다. 상태는 auto_filtered_ai_sample_reviewed, human_reviewed=false다. 본학습은 이 증거와 Qwen 원본 출력 해시를 재확인한다. 아직 실제 선생 정답·표본 검토를 만들지 않았다.
-
-### 8.4 학습·채택
-
-`prepare_data.py`는 C단계에서 번역 입력의 STT 형식 사본을 기본 50% 비율로 선택해 추가한다. `eval/stt_format.py`의 관찰 규칙을 사용하며 기본 seed는 기존 분할과 같은 42다. split·source_origin별 번역 행을 seed 해시 순서로 정렬하고 각 묶음에서 `floor(행 수 × 비율)`개를 선택하므로 입력 파일 순서가 표본을 바꾸지 않는다. 소규모 묶음의 내림과 제외 조건 때문에 실제 추가 비율은 50%보다 낮을 수 있다. 목적지 행은 복사하지 않는다.
-
-원본의 선생 출력·AI 표본 검수 증거를 먼저 검증한 뒤 사본의 `text`만 바꾸어 서버와 같은 빌더로 prompt를 만든다. completion은 원본과 같고 group_id·source_origin·source_generation도 유지한다. `meta.stt_copy`에 부모 ID·원문·변환 버전을 기록하여 새 선생 응답과 구분한다. 사본은 원본과 같은 train/validation/test 분할에만 들어간다.
-
-C단계의 원본·사본 경계 검사에서는 **test.locked*를 열지 않는다**. 나머지 평가셋·few-shot의 원문/출력과 그 STT 변형을 정확·근사 중복에서 제외한다. 변환 결과가 동일하거나 안전 검사·경계 검사에 실패한 사본, 다른 group의 틀과 충돌하는 사본은 추가하지 않는다. 원본 자료의 전체·분할별 선생 비율 80% 검사를 먼저 통과해야 하며, 사본 추가 후에도 같은 검사를 수행한다. 보조 자료 사본이 이 기준을 깨면 보조 사본 수를 제한한다. 원본 정답이나 검사기를 변경하지 않는다.
-
-`dataset_manifest.json`의 `stt_copies`에 요청 비율·seed·변환 버전/파일 SHA256·원본 번역 행 수·선택/추가 건수·분할별 추가 건수·제외 사유를 남긴다. `realized_ratio`는 추가 사본/원본 번역 행, `copy_share`는 최종 전체 자료 중 사본 비율이다. 모든 번역 행이 변환되어 50% 사본을 추가하면 최종 번역 자료에서 사본은 약 33.3%다. 사본도 토큰 길이 검사에 포함한다.
-
-준비만 실행하거나 전체 C단계에 비율을 전달할 수 있다. 아래 경로는 실제 검수 완료 자료와 아직 없는 출력 폴더로 바꾼다. `--stt-copies-ratio 0`이면 사본을 추가하지 않는다.
-
-```bash
-.venv-train/bin/python train/prepare_data.py --teacher 32b-q4 --inputs train/runs/distill-02/distill.draft.jsonl --ai-review train/runs/distill-02/sample.evidence.json --out train/out-stt-01 --stt-copies-ratio 0.5
-bash scripts/lora.sh train-eval --teacher 32b-q4 --data train/runs/distill-02 --out train/runs/lora-stt-01 --stt-copies-ratio 0.5
-```
-
-고정 HF 8B에 NF4 double quantization, r16/alpha32, q/k/v/o/gate/up/down, 2 epoch를 적용한다. group_id 단위 80/10/10 분할과 max_length 4096을 사용하고 넘는 정답은 자르지 않고 중단한다. enable_thinking=False로 prompt/completion을 먼저 렌더링하며 정답 JSON에만 loss를 준다. 첫 배치 마스킹도 확인한다. [TRL 형식 문서](https://huggingface.co/docs/trl/sft_trainer#train-on-completion-only)를 따른다.
-
-GGUF 어댑터와 .gguf.json 출처 파일을 만들며 기본 manifest를 수정하지 않는다. train-eval은 8B 기본·8B+LoRA를 같은 세 개발셋으로 비교한다. 독립 검토 뒤 다음을 general·general_es·naturalness.dev 각각에 적용한다.
-
-    .venv/bin/python eval/export_review.py --merge train/runs/lora-01/reviews/claude/review_pair01-general.csv train/runs/lora-01/reviews/codex/review_pair01-general.csv --key train/runs/lora-01/private/review_pair01-general.key.json --out-dir train/runs/lora-01/merged --label pair01-general
-
-불일치는 병합 CSV의 final에 사용자가 A/B별 판정을 적는다. 양쪽 AI 판정이 필요하며 누락을 좋음으로 세지 않는다. 세 파일 검토 후 GPU 없이 판정만 마무리한다.
-
-    bash scripts/lora.sh train-eval --finish train/runs/lora-01 --reviews train/runs/lora-01/merged
-
-조건은 같은 행에서 **나쁨 비증가·어색함 감소**, 각 평가셋 FAIL·502·목적지 실패 비증가, HTTP p95 증가 300ms 이하다. decision.json/.md에 pending/passed/rejected를 기록한다. 실패한 어댑터는 rejected로 표시해 로드를 막고 증거만 보존한다. 통과도 자동 배포하지 않는다.
-
-    MODEL_PROFILE=8b-q4 bash scripts/run.sh start --lora /절대경로/adapter.gguf
-
-후속 평가에도 같은 LORA_ADAPTER 절대 경로를 전달한다. 기본 복귀는 종료 후 LORA_ADAPTER= bash scripts/run.sh start로 실행한다. 실제 14B·32B 품질·VRAM, 학습·변환·적재·LoRA 효과는 DLPC 확인 항목이다.
+보존 도구의 로컬 테스트 중 선생 토큰 검사는 `SOURCE_TOKENIZER_DIR`에 고정 Qwen3-14B tokenizer를 지정해야 함. 미지정 시 해당 4건 건너뜀. 실제 모델 실행·학습 확인과 구분함.
 
 ## 9. 문제 해결
 
@@ -443,22 +384,26 @@ GGUF 어댑터와 .gguf.json 출처 파일을 만들며 기본 manifest를 수�
 | PowerShell에서 한글 깨짐 | 스크립트는 UTF-8 BOM으로 저장되어 있다. 편집기에서 BOM 유지 |
 | `Expand-Archive`·다운로드 실패 | 사내망 프록시, `%TEMP%\roadmate-llama-<tag>` 삭제 후 재시도 |
 
-## 10. GitHub 병합(PM)
+## 10. GitHub 구성
 
-- `roadmate-ai/` 폴더 하나로 독립. 팀 저장소 루트에 그대로 두면 된다.
-- 커밋 대상: 코드, `prompts/`, `packs/`, `eval/*.jsonl`, `models/manifest.json`, `train/*.py`·`training_config.json`·`data/`, `docs/openapi.json`, `requirements*.txt`, lock 파일.
+- `app.py`, `scripts/`, `models/` 등이 팀 AI 저장소 루트에 놓이는 독립 구성이다.
+- 커밋 대상: 코드, `prompts/`, `packs/`, `eval/*.jsonl`, `models/manifest*.json`, `train/`의 설정·원문 풀, `docs/`, `requirements*.txt`, lock 파일.
 - 커밋 제외(`.gitignore`): `.venv*`, `models/*.gguf`, `models/adapters/`, `tools/llama*/`, `logs/`, `run/`, `eval/results/`, `train/out|runs|base-config/`, `.env`. 큰 파일은 스크립트로 재설치한다.
-- CI: 저장소 루트 `.github/workflows/roadmate-ai.yml`이 `roadmate-ai/**` 변경 시 Python 3.11에서 `pytest`와 `guidance.py`를 실행한다(모델 불필요). 폴더 위치를 바꾸면 workflow의 `paths`, `working-directory`도 바꾼다.
-- `.gitattributes`: `.ps1`은 CRLF, 나머지는 LF.
-- 백엔드·앱과 맞닿는 부분은 코드에 `# 백엔드 연동`, `# 프론트 연동` 주석으로 표시되어 있다.
+- CI: 독립 저장소 루트 `.github/workflows/ci.yml`이 Python 3.11에서 `scripts/verify_mvp.py --local`을 실행한다(모델 불필요).
+- `.gitattributes`: 텍스트는 LF, PowerShell(`*.ps1`)은 CRLF로 고정한다. 바이너리 파일은 줄바꿈 변환에서 제외한다.
+- 코드에는 `# 모델`, `# 프롬프트 호출`처럼 간결한 섹션만 표시한다. 설치·실행·제약 설명은 문서에서 관리한다.
+- PR 제목·본문은 [`pull_request.md`](pull_request.md)의 기존 초안 참고. 팀 저장소 `roadmate-korea/roadmate-AI`용 후속 커밋은 잠근 시험 실행 뒤 준비함. 현재 커밋·푸시하지 않음.
+- LoRA 종료로 주석 정리의 옛 해시 보존 제약 해제됨. 과거 실험 증거는 원래 해시 그대로 보존함.
 
 ## 11. 검증 상태
 
-현재 버전은 14B 토크나이저 테스트를 포함한 `python scripts/verify_mvp.py --local`로 API·번역 검증·학습 경계·STT 형식 비교/학습 사본·질문 복원·런타임 해시·GPU 적재 확인·Windows 시작 경로·개인화 회귀 1,898건과 주행 시나리오를 통과했다. 결과는 `run/verify-5a7f7f4fcc/`에 기록한다. STT 학습 사본·해시·GPU 테스트는 합성 자료·응답으로, Windows 시작 테스트는 합성 실행 명령을 연결한 실제 PowerShell 스크립트로 확인했다. 14B 검사에는 8.3절의 `SOURCE_TOKENIZER_DIR` 설정을 사용했으며, 설정이 없으면 해당 4건은 건너뛴다. 이 명령은 실제 모델 번역이나 SDK 기기 시험이 아니다.
+2026-11-10 로컬 통합 검사 **1,961 passed**, 주행 시나리오 통과함. 보고서는 `run/verify-243be347fb/report.json`. `735a577`의 프롬프트·예시·기준 파일 동일성과 345개 요청 해시 고정 테스트도 확인함. 최종 DLPC 명령은 `bash -n` 구문검사만 통과했으며 실제 실행하지 않음.
+
+`python scripts/verify_mvp.py --local`은 API·번역 검사·학습 경계·STT 형식·질문 복원·런타임 해시·GPU 적재 확인·Windows 시작·주행 시나리오 검사임. 모델·GPU 응답은 합성 자료로 확인하고 Windows 시작 테스트는 실제 스크립트에 합성 명령을 연결함. 이번에는 `SOURCE_TOKENIZER_DIR`을 지정해 선생 토큰 검사도 수행함. 실제 모델 번역·SDK 기기 시험은 별도임.
 
 실제 모델 품질의 완료 기준과 실행 순서는 [mvp_acceptance.md](mvp_acceptance.md)에 있다. 평가기는 mock을 기본 거절하고, 실제 서버의 코드·팩 해시와 실행 설정을 기록한다. 자연스러움과 의미 보존은 review.csv에 별도로 검토해야 한다. 기존 버전의 모델 평가 수치를 이번 버전의 성적으로 쓰지 않는다.
 
-현재 기본 모델은 Qwen3-8B Q4_K_M이다. 4B Q4·Q8 대안을 포함해 고정 tokenizer와 실제 GGUF template으로 개발 문장·400자 입력·교정 재시도의 토큰 예산을 검사한다. 이는 측정 사례의 결과이며 모든 입력에 대한 상한 증명은 아니다.
+세 프로필 토큰 예산은 고정 tokenizer·GGUF template으로 프로필별 759건 통과함. 출력 예약 포함 최대 4B Q4·Q8 3,209/4,096, 8B Q4 3,213/4,096토큰. 개발 문장·400자 입력·교정 재시도 검사이며 잠근 시험 미사용. 모든 입력의 상한 증명은 아님.
 
 토큰 예산 재검사에는 모델 가중치 대신 해당 base_revision의 tokenizer 파일만 필요하다. `tokenizers`, `Jinja2`가 설치된 Python에서 다음 명령을 쓴다.
 
@@ -470,7 +415,7 @@ MODEL_PROFILE=8b-q4 python scripts/check_prompt_budget.py \
 
 실행 PC에서 남은 확인:
 
-1. 실제 Qwen Q4의 한↔영·한↔스 의미 보존·자연스러움·지연. 개발 평가로 설정 확정 후 잠근 시험은 `--final`로 실행한다.
-2. 8장의 선생 비교 → 생성·AI 표본 검토 → 학습 비교 순서로 진행한다. 실측 전에는 어댑터를 채택하지 않는다.
+1. 확정 설정의 한↔영·한↔스 의미 보존·자연스러움·지연 확인 필요함. 6장 명령으로 잠근 시험 `--final` 1회와 개발·STT 평가 실행함.
+2. LoRA 종료. 어댑터 없이 최종 설정으로 평가하고 잠근 시험 결과는 제출 요약에 기입함.
 3. Pleos STT/TTS·기어·속도·방향지시등·NaviHelper·FusedLocation 입력을 실제 SDK에서 연결하고 fixture와 동등성 확인.
 4. 에뮬레이터와 모델 서버를 30분 함께 실행해 메모리·VRAM·취소·언어 전환을 확인.

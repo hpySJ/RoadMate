@@ -1,4 +1,4 @@
-﻿# 종료: AI 서버 → 모델 서버 순서
+# 종료
 . "$PSScriptRoot\_common.ps1"
 foreach ($name in @("ai", "llama")) {
     $pidFile = Join-Path $Root "run\$name.pid"

@@ -1,4 +1,3 @@
-"""연기 시험: 준비 확인 → 한↔영·한↔스 번역 → 목적지 → 취소. 품질 평가는 eval에서 별도 실행."""
 import asyncio
 import json
 import logging
@@ -22,6 +21,7 @@ AI = os.environ.get("AI_URL", "http://127.0.0.1:8000")
 HEADERS = {"X-Internal-Token": os.environ["AI_INTERNAL_TOKEN"]} if os.environ.get("AI_INTERNAL_TOKEN") else {}
 
 
+# 모델 검사
 async def non_thinking_chat():
     settings = Settings.from_env()
     client = LlamaClient(settings.model_base_url, settings.model_id, settings.manifest)
@@ -34,6 +34,7 @@ async def non_thinking_chat():
         await client.aclose()
 
 
+# 연동 검사
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)

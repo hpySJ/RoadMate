@@ -1,8 +1,4 @@
-"""Pinned local Qwen teacher -> immutable filtered draft -> recorded AI sample review.
-
-No supplied or edited translations are accepted as targets. AI review is advisory,
-separate from human approval; an unchanged raw teacher answer is always retained.
-"""
+# 증류
 import argparse
 import asyncio
 import csv
@@ -122,7 +118,6 @@ class Teacher:
 
     async def call(self, messages, schema, max_tokens, sampling):
         self.raw = None
-        # Count with the serving template/tokenizer; never truncate accepted-source history to fit.
         response = await self.client.http.post(f"{self.client.base_url}/chat/completions/input_tokens", json={
             "model": self.manifest["model"]["alias"], "messages": messages,
             "chat_template_kwargs": self.manifest["runtime"]["chat_template_kwargs"],
@@ -149,7 +144,6 @@ class Teacher:
 
 
 def verify_teacher_record(row: dict, manifest: dict, prompt_hashes: dict, teacher_profile="14b-q4") -> list[str]:
-    """Integrity checks are reproducibility checks, not a remote cryptographic attestation."""
     try:
         assert_teacher(manifest, teacher_profile)
         teacher = row["teacher"]
@@ -168,6 +162,13 @@ def verify_teacher_record(row: dict, manifest: dict, prompt_hashes: dict, teache
             return ["teacher_provenance_mismatch"]
     except (KeyError, TypeError, ValueError):
         return ["teacher_provenance_missing_or_invalid"]
+    if provenance := row.get("source_provenance"):
+        try:
+            assert_teacher(provenance["manifest"], provenance["teacher_profile"])
+            return verify_source_record(row, provenance["manifest"], provenance["prompt_hashes"],
+                                        provenance["teacher_profile"])
+        except (KeyError, TypeError, ValueError):
+            return ["source_provenance_missing_or_invalid"]
     return verify_source_record(row, manifest, prompt_hashes, teacher_profile)
 
 
@@ -179,7 +180,8 @@ def verify_source_record(row, manifest, prompt_hashes, teacher_profile=None):
         evidence = source["teacher"]
         spec = json.loads(source["messages"][-1]["content"])
         utterances = raw_output(evidence["raw_response"], manifest["model"]["alias"])["utterances"]
-        if (source["version"] != SOURCE_VERSION or evidence["model"] != manifest["model"]
+        if (type(source["index"]) is not int or source["index"] < 0
+                or source["version"] != SOURCE_VERSION or evidence["model"] != manifest["model"]
                 or (teacher_profile is not None and evidence.get("teacher_profile", teacher_profile) != teacher_profile)
                 or evidence["manifest_sha256"] != digest(manifest) or evidence["prompt_hashes"] != prompt_hashes
                 or evidence["runtime"]["model_sha256"] != manifest["model"]["gguf_sha256"]
@@ -197,6 +199,11 @@ def verify_source_record(row, manifest, prompt_hashes, teacher_profile=None):
 
 def review_display(row):
     return row["output"].get("translated_text") if row["task"] == "translate" else P.completion_text(row["output"])
+
+
+def self_teacher(rows):
+    model = load_manifest(ROOT / "models" / MODEL_PROFILES["8b-q4"])["model"]
+    return bool(rows) and all(row.get("teacher", {}).get("model") == model for row in rows)
 
 
 def export_sample(draft: Path, rows: list[dict], out: Path, seed: int):
@@ -237,6 +244,7 @@ def record_review(draft: Path, review: Path, key_path: Path, out: Path, reviewer
     if len(reviewed) != len(key["sample"]) or {r["sample_id"] for r in reviewed} != set(key["sample"]):
         raise ValueError("sample review is missing rows or contains duplicates")
     evidence = []
+    is_self = self_teacher(rows)
     verdicts = {"좋음": "good", "어색함": "awkward", "나쁨": "bad", "good": "good", "awkward": "awkward", "bad": "bad"}
     for review_row in reviewed:
         selected = key["sample"][review_row["sample_id"]]
@@ -245,12 +253,14 @@ def record_review(draft: Path, review: Path, key_path: Path, out: Path, reviewer
                 or review_row["output"] != review_display(row)):
             raise ValueError("sample source or teacher answer was edited")
         verdict = verdicts.get(review_row["ai_verdict"].strip().lower())
-        if verdict not in ("good", "awkward"):
+        if verdict not in (("good", "awkward", "bad") if is_self else ("good", "awkward")):
             raise ValueError("all sample rows need AI review; any bad row blocks this draft")
         evidence.append({**selected, "verdict": verdict, "issue": review_row["ai_issue"], "notes": review_row["notes"]})
     result = {"kind": "ai_sample_review", "status": REVIEWED, "human_reviewed": False,
               "reviewer": reviewer, "draft_sha256": key["draft_sha256"], "seed": key["seed"],
-              "review_csv_sha256": digest(review.read_bytes()), "sample": evidence}
+              "review_csv_sha256": digest(review.read_bytes()), "sample": evidence,
+              "excluded_ids": sorted(r["id"] for r in evidence if r["verdict"] == "bad"),
+              "review_policy": "self_teacher_150_max_6_bad" if is_self else "no_bad_sample"}
     verify_ai_review(draft, rows, result)
     if out.exists():
         raise FileExistsError(out)
@@ -265,9 +275,16 @@ def verify_ai_review(draft: Path, rows: list[dict], evidence: dict):
         raise ValueError("AI sample evidence is missing or bound to a different draft")
     expected = {r["id"]: digest(r) for r in random.Random(evidence["seed"]).sample(rows, min(150, len(rows)))}
     sampled = evidence["sample"]
+    is_self = self_teacher(rows)
     if (len(sampled) != len(expected) or {r["id"]: r["record_sha256"] for r in sampled} != expected
-            or any(r["verdict"] not in ("good", "awkward") for r in sampled)):
+            or any(r["verdict"] not in (("good", "awkward", "bad") if is_self else ("good", "awkward")) for r in sampled)):
         raise ValueError("AI sample evidence does not match the complete random sample")
+    excluded = {r["id"] for r in sampled if r["verdict"] == "bad"}
+    if is_self and (len(sampled) != 150 or len(excluded) > 6):
+        raise ValueError("8B self-teacher review requires 150 rows and at most 6 bad rows (4%)")
+    if set(evidence.get("excluded_ids", [])) != excluded:
+        raise ValueError("AI sample exclusions do not match the bad sampled rows")
+    return excluded
 
 
 def source_messages(locale, scenario, count, batch, already_used=()):
@@ -294,14 +311,11 @@ async def source_augmentation(teacher: Teacher, out: Path, protected: set[str], 
     rows, seen, rejected = [], set(), Counter()
     accepted_by_topic = {locale: {scenario: dict.fromkeys(SOURCE_TOPICS[scenario], 0)
                                  for scenario in SCENARIOS} for locale in SOURCE_LOCALES}
-    # Dedup before target expansion: regional aliases and numeric swaps do not buy diversity.
-    # shortcut: fingerprints/lexical similarity miss semantic paraphrases; inspect the blinded source sample too.
     with (out / "source_generation.jsonl").open("x", encoding="utf-8") as log:
         for locale_index, locale in enumerate(SOURCE_LOCALES):
             for scenario in SCENARIOS:
                 accepted = 0
                 already_used = []
-                # Fixed two-times proposal budget; exhaustion stops instead of padding with templates.
                 max_batches = 2 * ((count + SOURCE_BATCH_SIZE - 1) // SOURCE_BATCH_SIZE)
                 for batch in range(max_batches):
                     size = min(SOURCE_BATCH_SIZE, count - accepted)
@@ -356,15 +370,48 @@ async def source_augmentation(teacher: Teacher, out: Path, protected: set[str], 
 
 
 def balanced_sources(rows, seed):
-    """Retain teacher originals; bound supplemental rows before and after safety filtering."""
     teacher = [r for r in rows if r.get("source_origin") == "teacher_generated"]
     extra = [r for r in rows if r.get("source_origin") != "teacher_generated"]
     random.Random(seed).shuffle(extra)
-    # Keep destination rehearsal when supplementary rows need trimming.
     extra.sort(key=lambda r: r.get("task") != "destination")
     selected = teacher + extra[:len(teacher) // 4]
     check_source_mix(selected)
     return selected
+
+
+def reuse_sources(folder: Path):
+    folder = folder.resolve()
+    manifest = json.loads((folder / "teacher.manifest.json").read_text(encoding="utf-8"))
+    summary = json.loads((folder / "summary.json").read_text(encoding="utf-8"))
+    profile, hashes = summary["teacher_profile"], summary["prompt_hashes"]
+    assert_teacher(manifest, profile)
+    if summary["teacher_model"] != manifest["model"]:
+        raise ValueError("reused source summary and historical teacher manifest disagree")
+    path = folder / "pool.jsonl"
+    rows = read_jsonl(path)
+    if (len(rows) != summary["source_rows"] or source_mix(rows) != summary["source_mix_before_translation"]
+            or len({row["id"] for row in rows}) != len(rows)):
+        raise ValueError("reused source pool differs from its generation summary")
+    provenance = {"teacher_profile": profile, "manifest": manifest, "prompt_hashes": hashes,
+                  "pool_sha256": digest(path.read_bytes()), "summary_sha256": digest((folder / "summary.json").read_bytes())}
+    fields = ("id", "group_id", "task", "source_locale", "target_locale", "scenario", "text",
+              "source_origin", "source_generation")
+    supplemental_path = ROOT / "train/sources/pool.jsonl"
+    if digest(supplemental_path.read_bytes()) != summary["source_pool_sha256"]:
+        raise ValueError("historical supplemental source pool hash differs; restore the original pool before reuse")
+    supplemental = {digest({key: row[key] for key in fields if key in row})
+                    for row in read_jsonl(supplemental_path)}
+    sources = []
+    for row in rows:
+        issues = verify_source_record(row, manifest, hashes, profile)
+        if row.get("source_origin") != "teacher_generated" and digest(
+                {key: row[key] for key in fields if key in row}) not in supplemental:
+            issues.append("supplemental_source_provenance_mismatch")
+        if issues:
+            raise ValueError(f"reused source {row['id']}: {issues}")
+        sources.append({**{key: row[key] for key in fields if key in row}, "source_provenance": provenance})
+    check_source_mix(sources)
+    return sources, provenance
 
 
 async def generate(args):
@@ -391,10 +438,16 @@ async def generate(args):
         if (not health.get("ready") or health.get("backend") != "llama" or health.get("model_profile") != args.teacher
                 or health.get("model_runtime") != identity or health.get("artifact_hashes") != artifact_hashes()):
             raise ValueError("AI ready identity/artifacts differ from the verified teacher runtime")
-        protected = protected_templates(ROOT)
-        pool = await source_augmentation(teacher, out, protected, args.source_count, args.seed)
-        pool += read_jsonl(Path(args.pool))
-        pool = balanced_sources(pool, args.seed)
+        protected = protected_templates(ROOT, include_locked=False, include_stt=True)
+        reused = getattr(args, "reuse_sources", None)
+        if reused:
+            pool, source_provenance = reuse_sources(Path(reused))
+            write_json(out / "source_summary.json", {"reused_from": str(Path(reused).resolve()),
+                       "source_rows": len(pool), "source_provenance": source_provenance})
+        else:
+            pool = await source_augmentation(teacher, out, protected, args.source_count, args.seed)
+            pool += read_jsonl(Path(args.pool))
+            pool = balanced_sources(pool, args.seed)
         pool = pool[:args.limit] if args.limit else pool
         selected, seen, groups = [], set(), {}
         for row in pool:
@@ -447,7 +500,8 @@ async def generate(args):
         (out / "distill.draft.jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in accepted), encoding="utf-8")
         export_sample(out / "distill.draft.jsonl", accepted, out, args.seed)
         summary = {"source_rows": len(selected), "accepted": len(accepted), "rejected": len(selected) - len(accepted),
-                   "source_pool_sha256": digest(Path(args.pool).read_bytes()),
+                   "source_pool_sha256": (source_provenance["pool_sha256"] if reused else digest(Path(args.pool).read_bytes())),
+                   "reused_sources": source_provenance if reused else None,
                    "source_code_sha256": {name: digest((ROOT / "train/sources" / name).read_bytes())
                                           for name in ("make_pool.py", "source_templates.py")},
                    "rejection_reasons": dict(reasons), "draft_sha256": digest((out / "distill.draft.jsonl").read_bytes()),
@@ -474,11 +528,12 @@ async def generate(args):
 def main():
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='고정된 Qwen 선생 모델로 증류 자료를 생성하고 검토 기록을 확인합니다.')
     sub = parser.add_subparsers(dest="stage", required=True)
     gen = sub.add_parser("generate")
     gen.add_argument("--teacher", choices=TEACHER_PROFILES, default="14b-q4")
     gen.add_argument("--pool", type=Path, default=ROOT / "train/sources/pool.jsonl")
+    gen.add_argument("--reuse-sources", type=Path, help="reuse a prior generation run's verified pool without generating sources")
     gen.add_argument("--out", type=Path, required=True)
     gen.add_argument("--url", default=os.environ.get("AI_URL", "http://127.0.0.1:8000"))
     gen.add_argument("--model-url")

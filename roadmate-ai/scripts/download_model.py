@@ -1,9 +1,3 @@
-"""QWEN 구현: manifest에 고정한 revision의 GGUF 1개를 내려받고 SHA256을 확인한다.
-
-기본 프로필: 8b-q4. MODEL_PROFILE로 4b-q4/4b-q8 대안을 선택한다.
-사용: .venv\\Scripts\\python.exe scripts\\download_model.py
-Q5 비교: ... --file Qwen3-4B-Instruct-2507-Q5_K_M.gguf --sha256 5bde5e9d883622acb02bf77fe7dcbc56a8b9a9ad4be78a72ca23a532658b4ecb
-"""
 import argparse
 import hashlib
 import sys
@@ -16,6 +10,7 @@ sys.path.insert(0, str(ROOT))
 from config import load_manifest  # noqa: E402
 
 
+# 파일 검증
 def sha256(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -24,6 +19,7 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+# 모델 다운로드
 def main():
     m = load_manifest()["model"]
     ap = argparse.ArgumentParser()

@@ -1,10 +1,4 @@
-"""증류의 작은 안전·목적지 보조 원문 묶음을 만든다. 정답은 없다.
-
-사용: python train/sources/make_pool.py
-구어 원문의 본체는 선생 모델이 생성한다. 아래 보조 자료는 그룹·방향마다 최대 2건만 남긴다.
-같은 뜻의 영어·한국어 틀은 같은 group 이름을 쓴다(학습·검증 분할이 갈라지지 않게).
-dev·test·general 평가셋, few-shot, 이미 train/data에 있는 문장은 자동으로 뺀다.
-"""
+# 원문
 import hashlib
 import itertools
 import json
@@ -17,7 +11,6 @@ sys.path.insert(0, str(ROOT / "train"))
 from data_boundary import fingerprint, overlaps, protected_templates  # noqa: E402
 from sources.source_templates import generated_sources  # noqa: E402
 
-# (scenario, 문장) — 영어 화자(외국인 운전자)
 EN = [
     ("gas_station", "Could you check if this car takes regular or premium?"),
     ("gas_station", "I paid at the machine, but the pump isn't working."),
@@ -62,7 +55,6 @@ EN = [
     ("general", "That's very kind of you. Thank you."),
 ]
 
-# (scenario, 문장) — 한국어 화자(직원·현지인)
 KO = [
     ("gas_station", "고급유 넣으시는 차는 아니에요."),
     ("gas_station", "카드를 먼저 꽂으시고 금액을 선택하세요."),
@@ -103,7 +95,6 @@ KO = [
     ("general", "제주 시내까지는 차로 30분쯤 걸려요."),
 ]
 
-# (group, scenario, 틀, {슬롯: 값들}) — 숫자·시각·연료·방향을 바꾼 변형
 EN_T = [
     ("t_amount_fuel", "gas_station", "Please put in {amount} won of {fuel}.",
      {"amount": ["20,000", "40,000", "60,000"], "fuel": ["gasoline", "diesel"]}),
@@ -152,11 +143,10 @@ def main():
     norm = lambda s: "".join(s.lower().split())  # noqa: E731
     blocked = protected_templates(ROOT)
     seen = set()
-    for path in (ROOT / "train" / "data").glob("*.jsonl"):  # 이미 생성한 학습 자료에 있는 문장도 뺀다
+    for path in (ROOT / "train" / "data").glob("*.jsonl"):
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 seen.add(norm(json.loads(line)["text"]))
-    # 학습: 그룹 ID는 목록 순번이 아니라 문장 내용으로 정한다(앞에 문장을 끼워도 기존 그룹이 바뀌지 않음)
     gid = lambda t: "p_" + hashlib.sha1(norm(t).encode()).hexdigest()[:10]  # noqa: E731
     rows, dropped = [], 0
     items = ([(gid(t), sc, t, "en-US", "authored_source") for sc, t in EN]
@@ -179,7 +169,6 @@ def main():
             continue
         seen_directions.add(key)
         rows.append({"id": f"pool-{len(rows) + 1:04d}", **record})
-    # Legacy sources receive the same sealed near-duplicate check as newly authored templates.
     limited, counts = [], Counter()
     for row in rows:
         key = (row["group_id"], row["source_locale"], row.get("target_locale"))

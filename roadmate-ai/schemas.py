@@ -2,12 +2,13 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-# 프론트 연동: Pleos STT·TTS locale 값(es-US·es-MX는 같은 스페인어). 통역은 한국어와 외국어 한 쌍, fr-CA는 주행 안내만
+
 Locale = Literal["ko-KR", "en-US", "es-US", "es-MX"]
 Scenario = Literal["gas_station", "parking", "rental_counter", "accident", "general"]
 Ident = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9._:\-]+$")
 
 
+# 입력 형식
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -19,7 +20,7 @@ def _clean(v: str) -> str:
     return v
 
 
-# 백엔드 연동: POST /internal/v1/translate 요청
+# 통역
 class TranslateRequest(_Strict):
     request_id: str = Ident
     session_id: str = Ident
@@ -61,6 +62,7 @@ class TranslateResponse(BaseModel):
     spanish_question_restored: bool = False
 
 
+# 앱 요청
 class AppTranslateRequest(_Strict):
     text: str = Field(min_length=1, max_length=2000)
     source_locale: Locale = Field(alias="from")
@@ -77,7 +79,7 @@ class AppTranslateClarification(BaseModel):
     clarification_locale: Locale
 
 
-# 백엔드 연동: POST /internal/v1/parse-destination 요청
+# 목적지
 class DestinationRequest(_Strict):
     request_id: str = Ident
     session_id: str = Ident
@@ -125,7 +127,7 @@ class DestinationResponse(BaseModel):
     latency_ms: int
 
 
-# 백엔드 연동: POST /internal/v1/cancel 요청
+# 취소
 class CancelRequest(_Strict):
     session_id: str = Ident
     session_epoch: int = Field(ge=0)
@@ -137,6 +139,7 @@ class CancelResponse(BaseModel):
     cancelled_inflight: int
 
 
+# 오류
 class ErrorBody(BaseModel):
     error_code: str
     request_id: Optional[str] = None

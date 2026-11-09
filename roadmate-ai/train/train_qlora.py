@@ -1,9 +1,4 @@
-"""학습: Qwen3-8B NF4 QLoRA (Transformers + PEFT + TRL, completion-only loss).
-
-본학습 전 스모크: .venv-train\\Scripts\\python.exe train\\train_qlora.py --smoke
-본학습:         .venv-train\\Scripts\\python.exe train\\train_qlora.py
-에뮬레이터·llama-server를 끄고 실행한다(같은 GPU 동시 사용 금지).
-"""
+# 학습
 import argparse
 import hashlib
 import json
@@ -35,7 +30,6 @@ def check_lengths(ds, tok, max_length: int) -> None:
 
 
 def render_training_row(row, tok) -> dict:
-    """Pre-render strings so TRL cannot silently choose its own thinking template."""
     prompt = tok.apply_chat_template(row["prompt"], tokenize=False, add_generation_prompt=True, enable_thinking=False)
     full = tok.apply_chat_template(row["prompt"] + row["completion"], tokenize=False, enable_thinking=False)
     if not full.startswith(prompt):
@@ -47,7 +41,6 @@ def render_training_row(row, tok) -> dict:
 
 
 def check_teacher_evidence(manifest: dict, teacher_profile=None) -> None:
-    # Legacy verified datasets were exclusively 14B; absence never implies 32B.
     recorded_profile = manifest.get("teacher_profile", "14b-q4")
     teacher_profile = teacher_profile or recorded_profile
     if teacher_profile not in TEACHER_PROFILES:
@@ -106,7 +99,6 @@ def load_model(cfg: dict, use_4bit: bool):
         dtype = torch.float16
     kw = {"revision": cfg.get("base_revision"), "dtype": dtype}
     if use_4bit:
-        # QWEN 구현: 본체 NF4 4비트 + double quantization, 본체 가중치는 고정
         kw["quantization_config"] = BitsAndBytesConfig(
             load_in_4bit=True, bnb_4bit_quant_type=cfg["bnb_4bit_quant_type"],
             bnb_4bit_use_double_quant=cfg["bnb_4bit_use_double_quant"], bnb_4bit_compute_dtype=dtype)
@@ -117,14 +109,12 @@ def load_model(cfg: dict, use_4bit: bool):
     if use_4bit:
         model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=cfg["gradient_checkpointing"])
     lc = cfg["lora"]
-    # 파라미터 튜닝: LoRA rank/alpha/dropout/대상 모듈
     model = get_peft_model(model, LoraConfig(r=lc["r"], lora_alpha=lc["alpha"], lora_dropout=lc["dropout"],
                                              bias=lc["bias"], target_modules=lc["target_modules"], task_type="CAUSAL_LM"))
     return model, dtype
 
 
 def check_mask(trainer, tok) -> dict:
-    # 검증: prompt는 -100으로 가려지고 정답 JSON과 종료 토큰만 학습되는지 확인
     batch = next(iter(trainer.get_train_dataloader()))
     labels = batch["labels"][0]
     sup = labels[labels != -100]
@@ -167,7 +157,6 @@ def main():
     out_dir = ROOT / cfg["output_dir"] / ("smoke" if a.smoke else "")
     data_dir = ROOT / cfg["data_dir"]
 
-    # 검증: prepare_data가 승인한 자료와 해시만 사용한다(자동 검토와 사람 검수는 별도 상태).
     dm_path = data_dir / "dataset_manifest.json"
     if not dm_path.exists():
         raise SystemExit(f"{dm_path} missing: run train/prepare_data.py first")
@@ -189,7 +178,6 @@ def main():
     if out_dir.exists():
         raise SystemExit(f"output directory already exists: {out_dir}")
 
-    # 검수·무결성 확인 전에는 학습 의존성이나 모델을 불러오지 않는다.
     import torch
     from datasets import load_dataset
     from transformers import AutoTokenizer, set_seed
@@ -213,7 +201,6 @@ def main():
 
     cuda = torch.cuda.is_available()
     ga = 2 if a.smoke else cfg["gradient_accumulation_steps"]
-    # 파라미터 튜닝: 배치 1 × 누적 16, 학습률, 스케줄러, epoch, 최대 길이
     args = SFTConfig(
         output_dir=str(out_dir),
         per_device_train_batch_size=cfg["per_device_train_batch_size"],
@@ -221,7 +208,7 @@ def main():
         gradient_accumulation_steps=ga,
         learning_rate=cfg["learning_rate"],
         lr_scheduler_type=cfg["lr_scheduler_type"],
-        warmup_steps=cfg["warmup_steps"],  # 0~1 실수는 전체 step 대비 비율
+        warmup_steps=cfg["warmup_steps"],
         num_train_epochs=cfg["num_train_epochs"],
         max_steps=2 if a.smoke else a.max_steps,
         max_length=cfg["max_length"],
@@ -255,7 +242,6 @@ def main():
     if not (adapter_dir / "adapter_model.safetensors").exists():
         raise SystemExit("adapter_model.safetensors not saved")
 
-    # 검증: 학습된 어댑터로 검증 자료 1건 생성
     model.eval()
     model.config.use_cache = True
     row = load_dataset("json", data_files=files["validation"])["train"][0]

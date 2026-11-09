@@ -1,10 +1,3 @@
-"""주행 안내 규칙 엔진 기준 구현. 모델 없이 동작하며 APK가 같은 동작으로 포팅한다.
-
-# 프론트 연동: APK(Kotlin)에서 이 파일과 packs/fixtures/guidance_scenarios.json을 기준으로 포팅·동등성 시험
-now_ms와 ts_ms는 같은 단조 시계의 밀리초. day_key는 앱의 Asia/Seoul 날짜를 권장한다.
-zone_id는 제공자·도로·구역을 구별하는 안정적인 ID이며, 확인할 수 없으면 구역 신호를 보내지 않는다.
-실행: python guidance.py packs/fixtures/guidance_scenarios.json
-"""
 import json
 import math
 import sys
@@ -14,16 +7,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 
+# 규칙 팩
 def load_pack(path: Path = ROOT / "packs" / "rules.json") -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+# 운전자
 @dataclass(frozen=True)
 class DriverProfile:
-    """온보딩 결과(프론트 연동: 앱이 시작 화면에서 받아 넘긴다).
-    country: MVP 목록 코드(CN, JP, TW, US, HK, PH, VN, TH, SG, MY) 또는 OTHER(통행 방향을 추측하지 않음)
-    experience: experienced(한국 운전 경험 있음) | first_time_korea(한국 처음) | first_time_lhd(좌핸들 처음)
-    """
+
 
     country: str = "OTHER"
     experience: str = "first_time_korea"
@@ -43,7 +35,7 @@ class Utterance:
 
 
 def _fresh(sig: dict | None, now: int, max_age: int):
-    """status=valid이고 값이 있고 max_age 안에 관측된 신호만 사용한다. now보다 미래 시각(시계 불일치)은 버린다."""
+
     if not isinstance(sig, dict) or sig.get("status") != "valid" or sig.get("value", sig.get("state")) is None:
         return None
     ts = sig.get("ts_ms")
@@ -74,6 +66,7 @@ def _check_day_key(day_key):
         raise ValueError("day_key must be a nonempty string")
 
 
+# 주행 안내
 class GuidanceEngine:
     def __init__(self, pack: dict, locale: str, allow_draft: bool = True, profile: DriverProfile | None = None):
         locale = pack.get("locale_alias", {}).get(locale, locale)
@@ -88,7 +81,7 @@ class GuidanceEngine:
             raise ValueError(f"unknown experience {self.profile.experience}")
         self.pack, self.locale = pack, locale
         self.fresh = pack["freshness_ms"]
-        # 검증: 한국 운전 경험자에게는 설명형 안내를 빼고 안전 경고(kind=warning)만 남긴다
+
         experienced = self.profile.experience == "experienced"
         rules = [r for r in pack["rules"] if not (experienced and r["kind"] == "explanation")]
         self.rules = sorted(rules, key=lambda r: r["priority"])
@@ -107,11 +100,11 @@ class GuidanceEngine:
             self.last_played.clear()
             self.played.clear()
             self.announced_zones.clear()
-            # 이전 시계 구간에서 만든 큐 항목과 늦게 도착한 재생 완료 콜백도 폐기한다.
+
             self.clock_epoch += 1
         self.last_now = now
 
-    # ------------------------------------------------------------ 조건(순수 함수)
+
     def _cond(self, rule: dict, snap: dict) -> tuple[dict, str | None] | None:
         now, t, h = snap["now_ms"], rule.get("trigger", {}), rule["handler"]
         speed = _fresh(snap.get("speed"), now, self.fresh["speed"])
@@ -137,7 +130,7 @@ class GuidanceEngine:
             d = zone.get("distance_m")
             if d is None or not t["min_distance_m"] <= float(d) <= t["max_distance_m"]:
                 return None
-            # 검증: onCurrentRoadSpeedLimit(현재 도로)를 앞 구역 제한값으로 쓰지 않는다
+
             has_limit = zone.get("limit_status") == "valid" and zone.get("limit_kph") is not None
             if h == "school_zone_approach_no_limit":
                 return ({}, zone.get("zone_id")) if not has_limit else None
@@ -145,12 +138,12 @@ class GuidanceEngine:
                 return None
             limit, kph = int(zone["limit_kph"]), round(mps * 3.6)
             if kph <= limit + t["over_limit_kph"]:
-                return None  # 원안: 이미 느리면 말하지 않음
+                return None
             return {"limit_kph": limit, "speed_kph": kph}, zone.get("zone_id")
         if h == "right_turn":
             sig = _fresh(snap.get("turn_signal"), now, self.fresh["turn_signal"])
             tbt = _fresh(snap.get("tbt"), now, self.fresh["tbt"])
-            # 검증: 깜빡이만으로 우회전 확정 금지(비상등·차로 변경 제외), TBT 우회전 맥락 필요
+
             if not (sig and sig["value"] == "right" and tbt and tbt["value"] == "right"):
                 return None
             d = tbt.get("distance_m")
@@ -160,7 +153,7 @@ class GuidanceEngine:
         if h == "unprotected_left":
             context = _fresh(snap.get("unprotected_left"), now, self.fresh["unprotected_left"])
             tbt = _fresh(snap.get("tbt"), now, self.fresh["tbt"])
-            # 비보호 표지·경로가 확인된 같은 교차로만 사용한다. 좌회전 TBT만으로 추측하지 않는다.
+
             if not (context and context.get("value") is True and context.get("on_route") is True
                     and _valid_id(context.get("intersection_id"))
                     and tbt and tbt.get("value") == "left"
@@ -179,7 +172,7 @@ class GuidanceEngine:
         return rule["templates"][self.locale].format(**{k: int(v) for k, v in slots.items()})
 
     def _blocked(self, rule: dict, day_key: str, now: int, zone_id: str | None) -> bool:
-        # 검증: 일일 횟수(교육성 설명만, 과속 경고는 null로 제한 없음)·재생 간격·구역당 1회. 생성 시와 큐에서 꺼낼 때 모두 검사
+
         rid, limit = rule["rule_id"], rule["daily_explanation_limit"]
         cooldown_key = (rid, zone_id if rule["kind"] == "warning" else None)
         zone_repeat = (day_key, rid, zone_id) in self.announced_zones
@@ -191,9 +184,9 @@ class GuidanceEngine:
                 or bool(zone_id and (rid.startswith("school_zone_approach") or rid == "school_zone_entry")
                         and zone_repeat))
 
-    # ------------------------------------------------------------ 평가
+
     def evaluate(self, snap: dict, day_key: str) -> list[Utterance]:
-        # 프론트 연동: 차량·내비 값이 바뀔 때마다 호출 → SpeechQueue.push
+
         now, out = snap["now_ms"], []
         _check_day_key(day_key)
         self._observe_time(now)
@@ -221,7 +214,7 @@ class GuidanceEngine:
         return out
 
     def revalidate(self, utt: Utterance, snap: dict) -> Utterance | None:
-        # 프론트 연동: TTS 재생 직전에 조건·횟수·간격을 다시 확인(재생 중 들어온 같은 안내 폐기), 지난 구역 안내는 폐기
+
         self._observe_time(snap["now_ms"])
         if (utt.clock_epoch != self.clock_epoch
                 or not utt.created_ms <= snap["now_ms"] <= utt.created_ms + utt.ttl_ms):
@@ -247,7 +240,7 @@ class GuidanceEngine:
                          utt.day_key, utt.clock_epoch)
 
     def mark_played(self, utt: Utterance, day_key: str, now_ms: int):
-        # 프론트 연동: TTS 재생 완료 콜백에서만 호출(대기 후 취소된 안내는 세지 않음)
+
         _check_day_key(day_key)
         if utt.clock_epoch != self.clock_epoch:
             return
@@ -262,22 +255,23 @@ class GuidanceEngine:
             self.announced_zones.add((day_key, utt.rule_id, utt.zone_id))
 
     def briefing(self) -> list[str]:
-        # 프론트 연동: 출발 전(정차 중) 한 번 읽어 주는 안내. 기획서 3.3 표의 조합을 프로필로 고른다
+
         p = self.profile
         cond = {
             "always": True,
             "first_time": p.experience != "experienced",
             "experienced": p.experience == "experienced",
             "first_time_lhd": p.experience == "first_time_lhd",
-            # 검증: 기타 국가(OTHER)는 통행 방향을 추측하지 않는다
+
             "left_hand_origin": p.country.upper() in self.pack["left_hand_traffic_countries"],
         }
         return [b[self.locale] for b in self.pack["briefing"] if all(cond[c] for c in b["when"])]
 
 
+# 음성 큐
 @dataclass
 class SpeechQueue:
-    """앱의 단일 발화 큐. 규칙별 최신 1건만 두고 우선순위 순으로 꺼낸다."""
+
 
     items: dict = field(default_factory=dict)
 
@@ -286,7 +280,7 @@ class SpeechQueue:
             self.items[u.rule_id] = u
 
     def next(self, engine: GuidanceEngine, snap: dict) -> Utterance | None:
-        # 프론트 연동: TTS·내비 음성이 비어 있을 때 호출
+
         ready = []
         for rid in list(self.items):
             u = engine.revalidate(self.items[rid], snap)
@@ -301,15 +295,16 @@ class SpeechQueue:
         return best
 
 
+# 정차 잠금
 class StopLock:
-    """정차 잠금: P 확인 + 유효 속도 |v| ≤ max가 sustain_ms 이상. 미지원·오류면 잠금 유지."""
+
 
     def __init__(self, pack: dict):
         self.cfg, self.fresh, self.since, self.last_ms = pack["stop_lock"], pack["freshness_ms"], None, None
         self.last_now: int | None = None
 
     def update(self, snap: dict) -> bool:
-        # 프론트 연동: 기어·속도 값이 들어올 때마다 호출하고, 통역 버튼 활성화·STT 시작·전송·TTS 직전에도 호출
+
         now = snap["now_ms"]
         if type(now) is not int or now < 0:
             self.since = self.last_ms = self.last_now = None
@@ -319,7 +314,7 @@ class StopLock:
         mps = _speed_mps(speed) if speed else None
         stopped = bool(gear and gear.get("value") == "P" and mps is not None and mps <= self.cfg["max_speed_mps"])
         observed_ms = speed["ts_ms"] if speed else None
-        # 검증: 관측 공백(속도 신선도 초과)이나 시각 역행이 있으면 정차 유지 시간을 처음부터 다시 잰다
+
         gap = (self.last_ms is None or observed_ms is None
                or not 0 <= observed_ms - self.last_ms <= self.fresh["speed"]
                or self.last_now is not None and now < self.last_now)
@@ -332,6 +327,7 @@ class StopLock:
         return observed_ms - self.since >= self.cfg["sustain_ms"]
 
 
+# 시나리오
 def run_scenarios(path: Path, pack: dict | None = None) -> list[dict]:
     pack = pack or load_pack()
     results = []

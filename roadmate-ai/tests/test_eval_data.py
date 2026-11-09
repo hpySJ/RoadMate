@@ -1,3 +1,4 @@
+# 테스트
 import json
 import hashlib
 from pathlib import Path
@@ -31,7 +32,6 @@ def test_sizes_and_unique_ids():
 
 
 def test_no_exact_duplicates_between_legacy_sets_and_prompt_examples():
-    # 기존 시험은 틀 노출이 확인돼 퇴역했다. 여기서는 원문 완전 중복만 확인한다.
     assert not {c["group_id"] for c in DEV} & {c["group_id"] for c in TEST}
     norm = lambda s: "".join(s.lower().split())  # noqa: E731
     shots = {norm(e["input"]["utterance"]) for e in P.examples("translate")} | {
@@ -73,7 +73,6 @@ def test_prompt_exposure_is_recorded_instead_of_called_held_out():
 
 
 def test_general_set_is_in_declared_language():
-    # 검증: 일반 평가셋 문장이 버튼 언어와 같아야 정상 번역 경로를 시험한다
     assert not [c["id"] for c in GENERAL + NATURAL if looks_like_other_language(c["text"], c["source_locale"])]
 
 

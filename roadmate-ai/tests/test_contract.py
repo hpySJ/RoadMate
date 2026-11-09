@@ -1,3 +1,4 @@
+# 테스트
 import asyncio
 import dataclasses
 import json
@@ -14,11 +15,10 @@ from inference import MockClient, ModelBadOutput
 ROOT = Path(__file__).resolve().parents[1]
 BASE = Settings.from_env()
 SETTINGS = dataclasses.replace(BASE, model_backend="mock", model_timeout_s=30.0, busy_wait_s=0.05, cancel_settle_s=0.1,
-                               dedupe_ttl_s=30, max_text_chars=400, internal_token="")  # 개발 PC의 .env와 무관하게
+                               dedupe_ttl_s=30, max_text_chars=400, internal_token="")
 
 
 class FakeLlama(MockClient):
-    """의미 검증까지 실행되는 가짜 모델(출력을 직접 지정)."""
 
     is_mock = False
     model_id = SETTINGS.model_id
@@ -47,7 +47,7 @@ def test_translate_ok_and_ready(client):
     assert r.status_code == 200, r.text
     d = r.json()
     assert d["status"] == "ok" and d["model_id"] == "mock" and d["translated_text"].startswith("[모의 번역]")
-    assert d["prompt_version"] == "translate-v12" and r.headers["content-type"].endswith("charset=utf-8")
+    assert d["prompt_version"] == "translate-v11" and r.headers["content-type"].endswith("charset=utf-8")
     assert client.get("/health/live").json() == {"status": "ok"}
     ready = client.get("/health/ready")
     assert ready.status_code == 200 and ready.json()["ready"] is True
@@ -66,7 +66,7 @@ def test_dedupe_and_conflict():
 @pytest.mark.parametrize("patch,code", [
     ({"target_locale": "en-US"}, "invalid_input"),
     ({"source_locale": "ja-JP"}, "invalid_input"),
-    ({"source_locale": "es-US", "target_locale": "en-US"}, "invalid_input"),  # 통역은 한국어와 외국어 한 쌍
+    ({"source_locale": "es-US", "target_locale": "en-US"}, "invalid_input"),
     ({"text": "   "}, "invalid_input"),
     ({"extra": 1}, "invalid_input"),
     ({"engine_bundle": "other"}, "bundle_mismatch"),
@@ -82,7 +82,6 @@ def test_cancel_epoch_monotonic(client):
     r = client.post("/internal/v1/translate", json=body(session_epoch=3))
     assert r.status_code == 409 and r.json()["error_code"] == "epoch_cancelled"
     assert client.post("/internal/v1/translate", json=body(request_id="r2", session_epoch=4)).status_code == 200
-    # 늦게 도착한 epoch 2 취소가 epoch 4를 취소하지 않는다
     late = client.post("/internal/v1/cancel", json={"session_id": "s1", "session_epoch": 2}).json()
     assert late["cancelled_through_epoch"] == 3
     assert client.post("/internal/v1/translate", json=body(request_id="r3", session_epoch=4, turn_id=2)).status_code == 200
@@ -409,7 +408,7 @@ def test_timeout_504():
     with TestClient(create_app(s, MockClient(delay_s=1.0))) as c:
         r = c.post("/internal/v1/translate", json=body())
         assert r.status_code == 504 and r.json()["error_code"] == "model_timeout"
-        assert c.post("/internal/v1/translate", json=body(request_id="r2")).status_code == 504  # 슬롯이 다시 열림
+        assert c.post("/internal/v1/translate", json=body(request_id="r2")).status_code == 504
 
 
 async def _async_client(app):
@@ -425,7 +424,7 @@ def test_busy_429_and_inflight_cancel():
                 await asyncio.sleep(0.1)
                 busy = await c.post("/internal/v1/translate", json=body(request_id="r2", session_id="s2"))
                 assert busy.status_code == 429 and busy.headers["retry-after"] == "1"
-                same = asyncio.create_task(c.post("/internal/v1/translate", json=body()))  # 같은 요청은 같은 작업을 기다림
+                same = asyncio.create_task(c.post("/internal/v1/translate", json=body()))
                 cancel = await c.post("/internal/v1/cancel", json={"session_id": "s1", "session_epoch": 1})
                 assert cancel.json()["cancelled_inflight"] == 1
                 r1, r1b = await first, await same
@@ -438,7 +437,6 @@ def test_busy_429_and_inflight_cancel():
 
 
 def test_slot_waiters_dedupe_conflict_and_cancel():
-    # 검증: 슬롯을 기다리는 동안 같은 ID는 합류, 다른 내용은 409, 취소된 대기 요청은 모델을 호출하지 않음
     async def run():
         m = MockClient(delay_s=0.3)
         app = create_app(dataclasses.replace(SETTINGS, busy_wait_s=2.0), m)
@@ -458,13 +456,12 @@ def test_slot_waiters_dedupe_conflict_and_cancel():
                 rs = await asyncio.gather(first, a1, a2, q, w)
         assert conflict.status_code == 409 and conflict.json()["error_code"] == "request_id_conflict"
         assert [r.status_code for r in rs] == [200, 200, 200, 200, 409]
-        assert m.calls == 3  # x, r(1회), q
+        assert m.calls == 3
 
     asyncio.run(run())
 
 
 class StuckModel(MockClient):
-    """timeout 뒤에도 llama-server가 계산 중인 상태."""
 
     async def wait_idle(self, max_s):
         return False
@@ -489,7 +486,7 @@ def test_destination_match_and_not_found():
     with TestClient(create_app(SETTINGS, fake)) as c:
         a = c.post("/internal/v1/parse-destination", json={**db, "text": "Take me to Seongsan Sunrise Peak"}).json()
         assert a["status"] == "ok" and a["candidates"][0]["poi_id"] == "seongsan-ilchulbong"
-        assert a["needs_confirmation"] is True  # 좌표 미검증 장소는 항상 확인
+        assert a["needs_confirmation"] is True
         b = c.post("/internal/v1/parse-destination", json={**db, "request_id": "r2", "text": "Go to Lotte World"}).json()
         assert b["status"] == "not_found" and b["candidates"] == []
         o = c.post("/internal/v1/parse-destination", json={**db, "request_id": "r3", "text": "Turn on the AC"}).json()
@@ -497,7 +494,6 @@ def test_destination_match_and_not_found():
 
 
 def test_destination_found_from_utterance_when_query_is_wrong():
-    # 검증: 모델 검색어가 틀려도(하라산) 발화에 있는 장소 이름(Seongpanak)으로 찾는다
     wrong = {"intent": "set_destination", "query_original": "Hallasan", "query_ko_candidate": "하라산",
              "region_hint": None, "category_hint": "mountain", "needs_confirmation": False}
     falls = {**wrong, "query_original": "the waterfall in Seogwipo", "query_ko_candidate": "서귀포의 물결"}
@@ -528,7 +524,6 @@ def test_place_search_partial_names_and_synonyms(queries, utterance, top):
 
 
 def test_openapi_committed_matches():
-    # 백엔드 연동: docs/openapi.json이 실제 서버 계약과 같아야 한다(변경 시 scripts/export_openapi.py)
     committed = json.loads((ROOT / "docs" / "openapi.json").read_text(encoding="utf-8"))
     assert committed == create_app(SETTINGS, MockClient()).openapi()
 

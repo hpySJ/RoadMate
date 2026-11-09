@@ -1,3 +1,4 @@
+# 테스트
 import csv
 import hashlib
 import json
@@ -123,7 +124,6 @@ def test_duplicate_ids_hash_change_and_locked_metadata_are_rejected(tmp_path):
     folder = tmp_path / "locked"
     folder.mkdir()
     (folder / "run.json").write_text('{"dataset":"test.locked.synthetic.jsonl"}', encoding="utf-8")
-    # No result file: reject its metadata before trying to access locked result contents.
     with pytest.raises(ValueError, match="Locked"):
         export.export_runs([folder])
 

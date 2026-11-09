@@ -1,4 +1,3 @@
-"""번역·목적지 추론 서비스: 프롬프트 → 로컬 모델 → 검증 → 1회 교정 재시도."""
 import json
 import logging
 import re
@@ -15,7 +14,7 @@ ROOT = Path(__file__).resolve().parent
 MIN_RETRY_S = 1.5
 log = logging.getLogger("roadmate.ai")
 
-# 프론트 연동: 말한 사람 언어로 TTS가 읽는 고정 문구(es-MX는 es-US 문구를 같이 쓴다)
+
 WRONG_LANG = {
     "en-US": "It sounds like the other language was spoken. Please speak English, or switch the direction.",
     "es-US": "Parece que habló en otro idioma. Hable en español o cambie la dirección de la traducción.",
@@ -35,7 +34,7 @@ for _d in (WRONG_LANG, SAY_AGAIN, WHICH_PLACE):
     _d["es-MX"] = _d["es-US"]
 CLARIFY_ISSUES = {"bad_clarification", "clarification_wrong_language", "clarification_echo"}
 
-# QWEN 구현: 재시도 때 검사 코드만 주지 않고 무엇을 고칠지 문장으로 알려 준다
+
 REPAIR_HINT = {
     "foreign_script": "Write Korean in Hangul only. No Chinese characters or Japanese.",
     "wrong_language": "Write the translation in the target language.",
@@ -56,6 +55,7 @@ REPAIR_HINT = {
 }
 
 
+# 오류
 class ValidationFailed(ModelError):
     code = "output_validation_failed"
 
@@ -64,6 +64,7 @@ class ValidationFailed(ModelError):
         self.issues = issues
 
 
+# 재시도
 def translation_repair(messages: list[dict], issues: list[str]) -> list[dict]:
     payload = json.loads(messages[-1]["content"])
     kinds = dict.fromkeys(i.split(":")[0] for i in issues)
@@ -97,16 +98,17 @@ def translation_repair(messages: list[dict], issues: list[str]) -> list[dict]:
         + json.dumps(payload["glossary"], ensure_ascii=False)
         + ". Preserve which action or fuel is negated. Do not copy the utterance. JSON only."
     )
-    # 오답을 대화에 넣으면 같은 표현을 재생성하기 쉬워 원문과 교정 지시만 보낸다.
+
     return messages[:-1] + [{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
 
 
+# 후처리
 def _with_meridiem(out, req):
-    # QWEN 구현: 모델이 원문의 오전·오후를 빼면 원문 기준으로 채운다(모델 재호출 없이)
+
     if isinstance(out, dict) and out.get("status") == "ok" and isinstance(out.get("translated_text"), str):
         text = out["translated_text"]
         if req.target_locale == "ko-KR":
-            # 한국어에 남은 6 p.m.도 같은 시각의 한글 표기로 바꾼 뒤 원문과 검증한다.
+
             hints = P._time_hints(text, "en", "ko")
             if hints:
                 def korean_time(m):
@@ -135,7 +137,7 @@ def _normalize_korean_pronouns(out, req):
             or not isinstance(out, dict) or out.get("status") != "ok"
             or not isinstance(out.get("translated_text"), str)):
         return out
-    # 인용은 닫는 따옴표가 빠졌어도 끝까지 보존한다.
+
     quoted = r'''("(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|“[^”]*(?:”|$)|‘[^’]*(?:’|$)|「[^」]*(?:」|$)|『[^』]*(?:』|$)|«[^»]*(?:»|$))'''
     replacements = {"나는": "저는", "내가": "제가", "나를": "저를", "나의": "제",
                     "우리는": "저희는", "우리가": "저희가", "우리를": "저희를",
@@ -144,7 +146,7 @@ def _normalize_korean_pronouns(out, req):
     def rewrite(text, context):
         def pronoun(match):
             word = match.group()
-            # shortcut: 나는/우리는의 동사 용법은 구문 분석 없이 판별할 수 없어 절 시작에서만 바꾼다.
+
             if word in ("나는", "우리는"):
                 prefix = (context + text[:match.start()]).rstrip(" \t")
                 if prefix and prefix[-1] not in ".!?。！？,;:\n":
@@ -157,7 +159,7 @@ def _normalize_korean_pronouns(out, req):
         def possessive(match):
             before = re.search(r"([가-힣]+)\s*$", context + text[:match.start()])
             after = re.match(r"\s+([가-힣]+)", text[match.end():]).group(1)
-            # 목적어 뒤의 내, 활용 어미·보조동사 앞의 내는 '내다'일 수 있어 보존한다.
+
             if (before and before[1].endswith(("을", "를"))
                     or after.endswith(("요", "니다", "다", "고", "면", "며", "게", "던", "도록"))
                     or re.match(r"주(?:세|시|실|셔|셨|십|고|지|면|는|겠)|줄|줘|줬|줍|드(?:리|릴|려|렸)|볼|봐|봤|본|놓|보내", after)):
@@ -165,7 +167,7 @@ def _normalize_korean_pronouns(out, req):
             return "제"
 
         text = re.sub(r"(?<!\w)내(?=\s+[가-힣])", possessive, text)
-        # 붙여 쓴 우리말·상호 등은 소유 표현으로 단정하지 않는다.
+
         text = re.sub(r"(?<!\w)우리(?=\s+[가-힣])", "저희", text)
         return text
 
@@ -177,7 +179,6 @@ def _normalize_korean_pronouns(out, req):
     return {**out, "translated_text": "".join(result)}
 
 
-# 검증: 이름 단어 비교에서 빼는 기능어(playa de Hamdeok의 de가 playa de Hyeopjae와 겹쳐 점수를 올리지 않게)
 NAME_STOP = {"de", "del", "la", "el", "los", "las", "a", "al", "en", "the", "of", "to"}
 
 
@@ -186,15 +187,16 @@ def _words(s: str) -> set:
 
 
 def _key(s: str) -> str:
-    # 검증: 비교용 이름. 기능어를 빼야 playa de Hamdeok가 playa de Hyeopjae와 비슷해 보이지 않는다
+
     return _norm(_place(" ".join(w for w in s.split() if P.fold(w.lower()) not in NAME_STOP)))
 
 
 def _place(s: str) -> str:
-    # 검증: 장소 종류의 다른 말은 하나로 본다(중문 바다 = 중문 해변 = 중문 해수욕장)
+
     return re.sub(r"바다|해변|비치", "해수욕장", s)
 
 
+# 장소 검색
 class PoiCatalog:
     def __init__(self, path: Path = ROOT / "packs" / "poi.demo.json"):
         d = json.loads(path.read_text(encoding="utf-8"))
@@ -203,8 +205,8 @@ class PoiCatalog:
 
     @staticmethod
     def _said(name: str, utt_norm: str, utt_words: set) -> float:
-        # 검증: 모델이 검색어를 틀리게 써도 발화에 장소 이름이 있으면 찾는다(성판악, Udo Island ferry)
-        # 파라미터 튜닝: 이름 전체 0.8, 일부(떨어져 나온 한국어 토큰·영어 단어 2/3 이상) 0.75
+
+
         if re.search("[가-힣]", name):
             toks = [_norm(_place(t)) for t in name.split()]
             if len(_norm(_place(name))) >= 3 and _norm(_place(name)) in utt_norm:
@@ -218,8 +220,8 @@ class PoiCatalog:
         return 0.75 if len(words) >= 3 and hit >= 2 and hit * 3 >= 2 * len(words) else 0.0
 
     def search(self, queries: list[str], region_hint: str | None, limit: int = 3, utterance: str = "") -> list[dict]:
-        # QWEN 구현: 모델이 만든 검색어 → 검증된 목록에서만 장소를 고른다(좌표 생성 금지)
-        # 검증: "해변/바다", "the beach", "la playa"처럼 종류만 말한 검색어는 특정 해수욕장으로 확정하지 않는다(확인 질문으로 감)
+
+
         qs = [q for q in (_key(q) for q in queries if q) if q not in ("해수욕장", "beach", "playa")]
         utt_norm, utt_words = _norm(_place(utterance)), _words(utterance)
         scored = []
@@ -242,7 +244,7 @@ class PoiCatalog:
                 rh = _norm(region_hint)
                 if rh and (rh in _norm(p["region_ko"]) or rh in _norm(p.get("region_en", ""))):
                     best = min(1.0, best + 0.05)
-            # 파라미터 튜닝: 후보 최소 점수
+
             if best >= 0.62:
                 scored.append((best, p))
         scored.sort(key=lambda x: -x[0])
@@ -254,6 +256,7 @@ class PoiCatalog:
         ]
 
 
+# 모델
 class Engine:
     def __init__(self, client, settings):
         self.client = client
@@ -267,6 +270,7 @@ class Engine:
         if looks_like_other_language(req.text, req.source_locale):
             return {"status": "clarification_required", "translated_text": None,
                     "clarification_question": WRONG_LANG[req.source_locale], "spanish_question_restored": False}
+        # 프롬프트 호출
         messages = P.translate_messages(req.source_locale, req.target_locale, req.scenario, req.text)
         question_restored = P.restore_spanish_question(req.text, req.source_locale) != req.text
         log.info("translation_input %s", json.dumps({"request_id": req.request_id,
@@ -286,11 +290,11 @@ class Engine:
         if not issues:
             return {**out, "spanish_question_restored": question_restored}
         if set(issues) <= CLARIFY_ISSUES:
-            # QWEN 구현: 확인 질문만 잘못 썼으면 다시 생성하지 않고 말한 사람 언어의 고정 문구로 바꾼다(재생할 번역 없음)
+
             return {"status": "clarification_required", "translated_text": None,
                     "clarification_question": SAY_AGAIN[req.source_locale],
                     "spanish_question_restored": question_restored}
-        # QWEN 구현: 검증 실패 시 이유를 알려 주고 한 번만 결정적(temperature 0)으로 다시 생성
+
         if deadline - time.monotonic() < MIN_RETRY_S:
             raise ValidationFailed(issues)
         repair = translation_repair(messages, issues)

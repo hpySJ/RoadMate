@@ -1,4 +1,4 @@
-﻿# llama.cpp Windows 바이너리(기본 CUDA 12.4) + 같은 태그 소스(LoRA 변환기) 설치
+# 모델 런타임
 param(
     [string]$Tag = "",
     [ValidateSet("cuda-12.4", "cuda-13.4", "vulkan", "cpu")][string]$Backend = ""
@@ -15,7 +15,7 @@ New-Item -ItemType Directory -Force $dest, $tmp | Out-Null
 
 $base = "https://github.com/ggml-org/llama.cpp/releases/download/$Tag"
 $assets = @("llama-$Tag-bin-win-$Backend-x64.zip")
-# QWEN 구현: CUDA 빌드는 cudart DLL을 같은 폴더에 둔다
+
 if ($Backend -like "cuda-*") { $assets += "cudart-llama-bin-win-$Backend-x64.zip" }
 
 $hashes = [ordered]@{}

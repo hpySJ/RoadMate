@@ -1,4 +1,4 @@
-"""Unblind review workbooks and summarize advisory AI opinions, separately from user decisions."""
+# 평가
 import argparse
 import json
 import math
@@ -7,7 +7,7 @@ from pathlib import Path
 
 try:
     from .export_review import ISSUES, REVIEWERS, VERDICTS, cell, issue_types, read_key, read_review, write_files
-except ImportError:  # Direct invocation: python eval/score_review.py
+except ImportError:
     from export_review import ISSUES, REVIEWERS, VERDICTS, cell, issue_types, read_key, read_review, write_files
 
 
@@ -208,7 +208,7 @@ def summary_markdown(result):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='블라인드 AI 검토 결과를 설정별로 집계합니다.')
     parser.add_argument("review", type=Path)
     parser.add_argument("--key", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)

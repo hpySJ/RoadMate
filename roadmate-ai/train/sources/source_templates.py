@@ -1,9 +1,4 @@
-"""Source locales/scenarios and a small destination-retention supplement.
-
-Bulk conversational sources are written by the teacher, not expanded templates.
-No translation targets are stored here.
-"""
-
+# 원문
 SCENARIOS = ("gas_station", "parking", "rental_counter", "accident", "general")
 DIRECTIONS = (("en-US", "ko-KR"), ("es-US", "ko-KR"), ("es-MX", "ko-KR"),
               ("ko-KR", "en-US"), ("ko-KR", "es-US"), ("ko-KR", "es-MX"))

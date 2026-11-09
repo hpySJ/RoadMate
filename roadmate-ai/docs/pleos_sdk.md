@@ -4,14 +4,14 @@
 
 공식 문서와 구현 증거를 구분합니다. 10월 19일 릴리스 노트는 Vehicle 2.3.1, NaviHelper 3.0.5, STT·TTS 3.3.1, FusedLocation 1.1.2를 나열하지만, Vehicle 개요는 SDK 2.3.2·Service 2.3.21 기준입니다. 실제 설치 SDK·서비스의 버전·권한·지원 여부를 확인한 다음 이벤트를 전달합니다. [SDK 릴리스 노트](https://document.pleos.ai/en/docs/pleos-only/release-note/sdk-release-note) · [Vehicle 개요](https://document.pleos.ai/en/docs/pleos-only/connect-sdk-pleos/Vehicle/intro)
 
-2026년 11월 9일 팀 Android `895bb0801ee840f1cf4c83b1671752e35c002a7d`의 클론을 확인했습니다. 기어·방향지시등은 Pleos Vehicle 2.3.2, 속도는 Android `CarPropertyManager`에서 `VehiclePropertyIds.PERF_VEHICLE_SPEED`로 받으며 Kotlin 안내 규칙·TTS·음성 큐도 있습니다. 팀 README에는 기어·방향지시등·속도 표시·4개 언어 TTS의 에뮬레이터 확인 기록이 있습니다. 이번 검토에서 빌드·에뮬레이터를 재실행한 것은 아닙니다. STT 앱 의존성·호출, HTTP 통역 연결, `INTERNET` 권한은 아직 없습니다. [Android 검증 기록](https://github.com/roadmate-korea/roadmate-android/blob/895bb0801ee840f1cf4c83b1671752e35c002a7d/README.md#L101)
+2026년 11월 10일 팀 Android [`9945ab18`](https://github.com/roadmate-korea/roadmate-android/tree/9945ab18da1fafa1fd555fddd6ffd83323f8d0ea)의 코드를 확인했습니다. 기어·속도·Kotlin 안내·TTS에 더해 ON_DEVICE STT와 `HttpTranslationClient`가 구현돼 있습니다. HTTP 요청은 AI의 `/translate` 계약과 맞습니다. `INTERNET` 권한·debug cleartext 설정은 아직 없고 서버 URL 기본값도 비어 있습니다. Android 빌드·에뮬레이터는 실행하지 않았습니다. 아래 2~3장의 주행 정책 비교는 이전 `895bb08` 검토 기록이며 실제 신호·정책 동등성 확인은 별도입니다.
 
 ## 한눈에 보기
 
 | SDK | 앱에서 하는 일 | AI 파트와 맞닿는 곳 |
 |---|---|---|
-| SpeechToText | 정차 중 통역 버튼을 누르면 말을 받아 적음 | 최종 인식 문장 → `/internal/v1/translate`의 `text`. 인식에 쓴 locale → `source_locale` |
-| TextToSpeech | 번역문, 확인 질문, 주행 안내를 읽음 | `translated_text`는 `target_locale`로, `clarification_question`은 `source_locale`로 읽음 |
+| SpeechToText | 정차 중 통역 버튼을 누르면 말을 받아 적음 | 최종 인식 문장 → `/translate`의 `text`, locale → `from`·`to` |
+| TextToSpeech | 번역문·주행 안내를 읽음 | `/translate`의 `text`는 목표 locale로 재생. 현재 앱은 재질문을 문장 카드 안내로 대체 |
 | 차량 정보 | 기어·방향지시등은 Pleos Vehicle, 속도는 Android CarPropertyManager로 수신 구현 | `StopLock.update()`와 스냅샷의 `gear`·`speed`·`turn_signal`; 원본 정밀도·신선도 전달과 정차 잠금은 추가 구현 필요 |
 | NaviHelper | 회전 안내(TBT), 현재 도로 제한속도, 주의 지점, 목적지 설정 | 스냅샷의 `tbt`·`current_speed_limit`·`school_zone`, 목적지 후보 좌표로 경로 설정 |
 | FusedLocation | `addProximityAlert`로 스쿨존 진입·이탈 | 스냅샷의 `school_zone`(NaviHelper 주의 지점이 안 올 때) |
@@ -29,7 +29,7 @@
 | `es-US`, `es-MX` | 지원 | 지원(같은 문구) |
 | `fr-CA` | **지원 안 함**(보내면 422 `invalid_input`) | 지원 |
 
-- 프랑스어 사용자는 주행 안내만 프랑스어로 듣습니다. 앱은 프랑스어 사용자에게 통역 버튼을 숨기거나, 영어로 통역할지 고르게 합니다.
+- 프랑스어 주행 안내는 지원하지만 통역 API는 지원하지 않습니다. 현재 앱이 `fr-CA`를 보내면 422 이후 문장 카드 안내로 전환합니다.
 
 | 통역 방향 | STT locale | 요청 `source_locale` → `target_locale` | TTS locale |
 |---|---|---|---|
@@ -40,7 +40,7 @@
 
 - `es-US`와 `es-MX`는 같은 스페인어로 처리합니다. 온보딩에서 고른 값을 그대로 보내면 됩니다. 번역문은 중남미식 존댓말(usted)이고 원화는 `30,000 wones`, 시각은 `3 p. m.`처럼 씁니다.
 - STT는 `request()` 전에 `setLocale(source_locale)`을 설정합니다. TTS는 매 `speak()` 전에 읽을 문장의 locale을 설정합니다. TTS locale을 생략하면 이전 설정, 이전 설정도 없으면 시스템 언어를 사용합니다. 번역 후 주행 안내를 읽을 때도 온보딩 locale로 다시 설정합니다. [TTS 언어 설정](https://document.pleos.ai/en/docs/pleos-only/connect-sdk-pleos/TextToSpeech/set-locale)
-- `status`가 `clarification_required`이면 번역문이 없습니다. 확인 질문만 말한 사람 언어로 읽습니다. 고정 문구(다른 언어로 말했을 때, 알아듣지 못했을 때)도 한국어·영어·스페인어로 준비돼 있습니다.
+- 재질문이면 번역문이 없습니다. 내부 API에는 `clarification_question`, 앱 `/translate`에는 `clarification`과 `clarification_locale`을 반환합니다. 현재 Android는 질문을 표시·재생하지 않고 문장 카드 안내로 대체합니다.
 - STT `ResultListener.onUpdated(stt, completed)`에서 `completed == true`인 비어 있지 않은 문장만 turn당 한 번 보냅니다. 중간 결과는 화면 표시용이고, `onEndedRecognition()`만으로 번역 요청을 만들지 않습니다. 인식 오류는 빈 문장 번역 대신 재시도 상태로 처리합니다. [STT 콜백](https://document.pleos.ai/en/docs/pleos-only/connect-sdk-pleos/SpeechToText/result-listeners)
 - 앱의 음성 큐가 STT 녹음과 TTS 재생을 조정합니다. 자기 음성을 다시 인식하지 않도록 번역 TTS가 끝난 뒤 다음 STT를 시작합니다. 정차 조건 이탈·언어 변경·turn 취소 때 이전 번역의 대기 음성도 버립니다. 이는 앱 구현 계약이며 SDK가 자동으로 보장하는 동작이 아닙니다.
 - 주행 안내의 `GuidanceEngine.mark_played()`는 해당 발화의 TTS `onDone()`에서 한 번만 호출합니다. `speak()` 호출, `onStart()`, `onStop()`, `onError()`에서는 재생 횟수·쿨다운을 기록하지 않습니다. 콜백에는 현재 재생 중인 발화와 `clock_epoch`를 연결하고 취소된 발화나 이전 시계 구간의 늦은 콜백은 버립니다. [TTS 완료·중단 콜백](https://document.pleos.ai/en/docs/pleos-only/connect-sdk-pleos/TextToSpeech/event-listeners)
@@ -61,7 +61,7 @@
 - `rules-v5` 기준으로 기어 `P`와 속도가 모두 유효하고, 속도 절댓값이 0.1m/s 이하인 **실제 관측 구간**이 1초 이상일 때만 통역 버튼을 켭니다. 같은 속도 표본을 반복 조회하거나 `now_ms`만 늘려서 정차 시간을 채우지 않습니다.
 - `gear`는 5초, `speed`는 1.5초 안의 관측값이어야 하며 값마다 `value`, `status`, `ts_ms`를 넣습니다. 속도에는 `unit`도 반드시 넣으며 `m/s` 또는 `km/h`만 허용합니다. 누락·다른 단위·NaN·무한대·문자열 값은 사용하지 않습니다. 어댑터가 원본 단위를 확인한 뒤 넘겨야 하며 `km/h`는 엔진이 m/s로 환산합니다.
 - `ts_ms`와 `now_ms`는 같은 단조 시계의 음이 아닌 정수 밀리초입니다. `ts_ms`는 표본의 실제 관측 시각으로 유지하고, 캐시를 읽을 때 새 시각으로 덮어쓰지 않습니다. 관측 실패·미지원은 `valid`로 꾸미지 않습니다.
-- STT 시작, 요청 전송, 번역 도착, TTS 직전에 다시 확인합니다. 그사이 P가 풀리면 백엔드가 `/internal/v1/cancel`을 호출하고 도착한 번역은 읽지 않습니다.
+- STT 시작, 요청 전송, 번역 도착, TTS 직전에 다시 확인합니다. 현재 Android는 P 해제·화면 이탈 시 coroutine을 취소하고 HTTP 연결을 닫습니다. 별도 내부 API 구성을 쓰는 경우 `/internal/v1/cancel`로 epoch를 취소하며, 어느 경로든 취소 뒤 도착한 번역은 읽지 않습니다.
 - NaviHelper `onDrivingInfo`는 후보일 뿐입니다. 실제 전달 필드·단위·주기·유효성은 확인되지 않았으므로, 콜백 이름만으로 속도나 기어를 얻는다고 가정하지 않습니다. 필요한 값이 확인되지 않으면 위 표의 차단을 유지합니다.
 - 차량 좌표, 속도, 기어 값은 통역 API로 보내지 않습니다.
 
@@ -88,7 +88,7 @@ NaviHelper 이벤트 전달 여부는 내비 앱 구현에 따라 달라집니�
 
 규칙을 Kotlin으로 옮긴 뒤에는 `packs/fixtures/guidance_scenarios.json`의 시나리오로 결과가 같은지 확인합니다.
 
-### Android 895bb08과 맞춰야 할 정책
+### 주행 정책 비교 기록(895bb08 기준)
 
 | 항목 | 현재 Kotlin | AI 기준 `rules-v5` |
 |---|---|---|
@@ -133,7 +133,7 @@ NaviHelper 3.0.5 릴리스 노트는 `RouteInfo` 등의 생성자 좌표 순서�
 
 로컬 시연은 `APK → AI(8000)/translate → 모델(8081)`로 연결합니다. AI는 계속 `127.0.0.1:8000`에 바인드하며 이 경로에는 토큰이 필요 없습니다. 같은 PC의 에뮬레이터에서 주소는 `http://10.0.2.2:8000/translate`입니다. 다른 PC에는 `10.0.2.2` 별칭이 적용되지 않습니다. 시연할 GPU PC에서 모델과 AI를 실행하며 외부 접속 경로가 없는 DLPC를 시연 서버로 전제하지 않습니다.
 
-팀 `HttpTranslationClient`의 요청 필드를 서버가 다음처럼 받습니다. 앱 코드는 바꾸지 않습니다.
+팀 `HttpTranslationClient`의 요청 필드를 서버가 다음처럼 받습니다. AI 쪽 요청·응답 매핑이며 Android 코드 변경은 포함하지 않습니다.
 
 ```json
 {"text":"최종 STT 문장","from":"ko-KR","to":"en-US","situation":"rental"}
@@ -146,6 +146,8 @@ NaviHelper 3.0.5 릴리스 노트는 `RouteInfo` 등의 생성자 좌표 순서�
 - 입력 오류 `422 invalid_input`·`text_too_long`, 검사 거절 `502 output_validation_failed`, 시간 초과 `504 model_timeout`, 혼잡 `429 busy` 등은 기존 오류 코드·본문을 유지합니다.
 
 `/internal/v1/*`의 요청·응답·토큰 검사는 그대로입니다. `/translate`는 앱이 ID를 보내지 않으므로 HTTP 재전송을 같은 턴으로 합치거나 앱의 epoch 취소를 전달하는 계약은 없습니다. 연결이 끊기면 기존 서버의 연결 종료 감지로 작업을 취소합니다. 정차 해제·화면 전환·언어 변경 뒤 늦게 온 응답을 앱이 표시·재생하지 않는지 별도로 확인합니다.
+
+Android `9945ab18`의 전체 HTTP 제한은 3초, 응답 상한은 64KiB입니다. AI 기본 제한은 8초이므로 앱 연결 시연에서는 `MODEL_TIMEOUT_S=2.5`로 실행하고 실제 응답 시간을 측정합니다. 앱의 권한·debug HTTP·서버 URL 설정과 APK 빌드는 Android 담당 범위입니다.
 
 시연 확인 순서는 다음과 같습니다.
 

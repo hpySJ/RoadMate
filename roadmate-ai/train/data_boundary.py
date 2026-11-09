@@ -1,4 +1,4 @@
-"""학습 경계: 슬롯 치환 틀 비교와 실제 추론 입력 파일의 식별값."""
+# 데이터 경계
 import hashlib
 import json
 import re
@@ -17,7 +17,6 @@ from eval.stt_format import normalize_source  # noqa: E402
 
 @lru_cache(maxsize=8192)
 def fingerprint(text: str, locale: str) -> str:
-    # shortcut: 명시된 슬롯과 군더더기만 지운다. 의역·관용구의 의미 중복은 사람이 검수해야 한다.
     lang = P.LANG_KEY[locale]
     text = P.fold(text).lower()
     spans = [(s, e, "[fuel]") for s, e, _, cat in P.concept_spans(text, locale) if cat == "fuel"]
@@ -90,7 +89,6 @@ def protected_templates(root: Path, *, include_locked: bool = True, include_stt:
 
 
 def overlaps(text: str, locale: str, protected: set[str]) -> bool:
-    """Exclude exact/slot and near duplicates without exposing protected sentences."""
     candidate = fingerprint(text, locale)
     if candidate in protected:
         return True
@@ -129,7 +127,6 @@ def server_prompt_hashes(root: Path) -> dict[str, str]:
 
 
 def inference_overlaps(root: Path) -> list[dict[str, str]]:
-    """Sealed sentence audit: diagnostics contain IDs and artifact paths, never held-out text."""
     def strings(value):
         if isinstance(value, str):
             yield value
@@ -141,7 +138,6 @@ def inference_overlaps(root: Path) -> list[dict[str, str]]:
                 yield from strings(item)
 
     def key(text, locale):
-        # Courtesy words and slot substitutions must not disguise copied sentences.
         text = re.sub(r"\b(?:please|por favor)\b|(?<![가-힣])좀\s+", "", text, flags=re.I)
         return fingerprint(text, locale).partition(":")[2]
 
@@ -173,7 +169,6 @@ def inference_overlaps(root: Path) -> list[dict[str, str]]:
                     if (artifact, locale) not in cache:
                         cache[artifact, locale] = [key(v, locale) for v in values]
                     candidates = cache[artifact, locale]
-                    # Courtesy + a place name is vocabulary sharing, not a copied sentence template.
                     full_copy = original and any(original == exact(v) for v in values)
                     near_copy = substantive and len(expected) >= 12 and any(len(value) >= 12
                         and (SequenceMatcher(None, expected, value).ratio() >= .9 or expected in value)

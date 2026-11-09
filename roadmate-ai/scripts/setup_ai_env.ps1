@@ -1,4 +1,4 @@
-﻿# AI 서버 Python 환경(.venv) 구성: lock 파일 기준 설치
+# 서버 환경
 param([string]$Python = "3.11")
 . "$PSScriptRoot\_common.ps1"
 

@@ -1,8 +1,4 @@
-"""학습: 선생 모델 초안 + AI 표본 검토 기록 → group_id 단위 80/10/10 분할.
-
-사용: python train/prepare_data.py --inputs train/data/distill.draft.jsonl --ai-review sample.evidence.json
-      (스모크 시험만) --allow-draft
-"""
+# 데이터 준비
 import argparse
 import glob
 import hashlib
@@ -18,7 +14,7 @@ import prompting as P  # noqa: E402
 from config import MODEL_PROFILES, TEACHER_PROFILES, load_manifest  # noqa: E402
 from validation import looks_like_other_language, validate_destination, validate_translation  # noqa: E402
 from data_boundary import fingerprint, protected_templates, record_overlaps, server_prompt_hashes  # noqa: E402
-from distill import PENDING, REVIEWED, filter_issues, verify_ai_review, verify_teacher_record  # noqa: E402
+from distill import PENDING, REVIEWED, balanced_sources, filter_issues, verify_ai_review, verify_teacher_record  # noqa: E402
 from train.source_mix import POLICY_VERSION, check_source_mix, source_mix  # noqa: E402
 from eval import stt_format as STT  # noqa: E402
 
@@ -36,13 +32,12 @@ def load_jsonl(path: Path) -> list[dict]:
 
 
 def build(rec: dict) -> dict:
-    # 학습: 서버 추론과 같은 빌더(prompting.py)로 prompt 생성 → 학습·추론 프롬프트 불일치 방지
     if rec["task"] == "translate":
         prompt = P.translate_messages(rec["source_locale"], rec["target_locale"], rec["scenario"], rec["text"])
     else:
         prompt = P.destination_messages(rec["source_locale"], rec["text"])
     meta = {k: rec.get(k) for k in ("group_id", "task", "source_locale", "target_locale", "scenario", "text",
-                                   "source_origin", "source_generation")}
+                                   "source_origin", "source_generation", "source_provenance")}
     if "stt_copy" in rec:
         meta["stt_copy"] = rec["stt_copy"]
     return {"prompt": prompt, "completion": [{"role": "assistant", "content": P.completion_text(rec["output"])}], "meta": meta}
@@ -62,7 +57,6 @@ def check(rec: dict) -> list[str]:
 
 
 def duplicate_groups(recs: list[dict]) -> list[str]:
-    # 검증: 같은 틀의 슬롯 변형도 group_id가 갈리면 분할을 넘을 수 있으니 멈춘다.
     groups_by_text: dict[str, set] = {}
     for r in recs:
         groups_by_text.setdefault(fingerprint(r["text"], r["source_locale"]), set()).add(r["group_id"])
@@ -70,7 +64,6 @@ def duplicate_groups(recs: list[dict]) -> list[str]:
 
 
 def split_groups(groups: list[str], seed: int) -> dict[str, str]:
-    # 학습: group_id 해시로 80/10/10 분할 → 자료를 추가해도 기존 그룹의 분할이 바뀌지 않는다(같은 원문·변형은 같은 분할)
     def bucket(g: str) -> int:
         return int(hashlib.sha256(f"{seed}:{g}".encode()).hexdigest(), 16) % 100
     return {g: "validation" if bucket(g) < 10 else "test" if bucket(g) < 20 else "train" for g in groups}
@@ -85,7 +78,6 @@ def copies_ratio(value: str) -> float:
 
 def augment_stt(recs: list[dict], ratio: float, seed: int, blocked: set[str], assign: dict[str, str],
                 *, strict_mix: bool = True) -> tuple[list[dict], dict]:
-    """원본 증거를 검증한 뒤 입력만 증강한다. 사본을 새 선생 응답으로 검증하지 않는다."""
     if not 0 <= ratio <= 1:
         raise ValueError("STT copies ratio must be finite and between 0 and 1")
     transform_hash = sha(Path(STT.__file__))
@@ -103,10 +95,9 @@ def augment_stt(recs: list[dict], ratio: float, seed: int, blocked: set[str], as
         return hashlib.sha256(f"{seed}:".encode() + json.dumps(identity, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
     selected = [rec for key in sorted(strata) for rec in sorted(strata[key], key=rank)[:int(len(strata[key]) * ratio)]]
     copies, skipped = [], Counter()
-    # 선생 사본을 먼저 반영한 뒤 보조 사본의 상한을 계산한다.
     for rec in sorted(selected, key=lambda rec: (rec.get("source_origin") != "teacher_generated", rank(rec))):
         text = STT.normalize_source(rec["text"], rec["source_locale"])
-        if text == rec["text"]:
+        if text == rec["text"] and ratio < 1:
             skipped["unchanged"] += 1
             continue
         copy = {**rec, "text": text, "stt_copy": {"parent_id": rec.get("id"), "parent_text": rec["text"],
@@ -167,14 +158,17 @@ def main():
     recs, errors = [], []
     for path in map(Path, a.inputs):
         source_rows = load_jsonl(path)
+        excluded = set()
         if not a.allow_draft and any(r.get("review_status") == PENDING for r in source_rows):
             try:
-                verify_ai_review(path, source_rows, evidence or {})
+                excluded = verify_ai_review(path, source_rows, evidence or {}) or set()
             except (KeyError, TypeError, ValueError) as error:
                 errors.append(f"{path.name}: {error}")
                 continue
         for i, r in enumerate(source_rows):
             where = f"{path.name}:{i + 1}"
+            if r.get("id") in excluded:
+                continue
             if r.get("review_status") not in ("approved", PENDING) and not a.allow_draft:
                 continue
             if record_overlaps(r, blocked):
@@ -205,7 +199,19 @@ def main():
     for split in ("train", "validation"):
         if split not in assign.values():
             sys.exit(f"{split} split is empty ({len(assign)} groups): add more groups or change --seed")
+    supplemental_rebalance_ids = []
     try:
+        if a.teacher == "8b-q4" and not a.allow_draft:
+            retained = []
+            for split in ("train", "validation", "test"):
+                part = [rec for rec in recs if assign[rec["group_id"]] == split]
+                if part:
+                    retained.extend(balanced_sources(part, a.seed))
+            retained_ids = {rec["id"] for rec in retained}
+            supplemental_rebalance_ids = sorted(rec["id"] for rec in recs if rec["id"] not in retained_ids)
+            recs = retained
+            retained_groups = {rec["group_id"] for rec in recs}
+            assign = {group: split for group, split in assign.items() if group in retained_groups}
         if not a.allow_draft:
             check_source_mix(recs)
             for split in ("train", "validation", "test"):
@@ -216,11 +222,15 @@ def main():
                     except ValueError as error:
                         sys.exit(f"{split}: {error}")
         recs, stt_copies = augment_stt(recs, a.stt_copies_ratio, a.seed, blocked, assign, strict_mix=not a.allow_draft)
+        if (a.teacher == "8b-q4" and not a.allow_draft and a.stt_copies_ratio == 1
+                and stt_copies["added_rows"] != stt_copies["original_translation_rows"]):
+            raise ValueError(f"8B self-teacher requires one safe STT copy per translation: {stt_copies['skipped']}")
         overall_mix = source_mix(recs) if a.allow_draft else check_source_mix(recs)
     except ValueError as error:
         sys.exit(str(error))
 
     rows = [build(r) for r in recs]
+    token_counts = None
     if a.tokenizer:
         from transformers import AutoTokenizer
         if not a.tokenizer_revision:
@@ -234,6 +244,10 @@ def main():
         print(f"tokens p50={s[len(s) // 2]} p95={s[int(len(s) * .95) - 1 if len(s) > 1 else 0]} max={s[-1]} limit={a.max_length}")
         if too_long:
             sys.exit(f"{len(too_long)} rows exceed max_length (정답 잘림 방지): {too_long[:10]}")
+        token_counts = {"total": sum(lens), "by_split": {
+            split: sum(n for row, n in zip(rows, lens) if assign[row["meta"]["group_id"]] == split)
+            for split in ("train", "validation", "test")},
+            "tokenizer": a.tokenizer, "tokenizer_revision": a.tokenizer_revision}
 
     parts = {split: [r for r in rows if assign[r["meta"]["group_id"]] == split]
              for split in ("train", "validation", "test")}
@@ -271,6 +285,8 @@ def main():
         "target_source": "synthetic_or_unreviewed" if a.allow_draft else "qwen_teacher",
         "human_reviewed": False,
         "ai_review_sha256": evidence_hash,
+        "excluded_sample_ids": sorted((evidence or {}).get("excluded_ids", [])) if not a.allow_draft else [],
+        "supplemental_rebalance_ids": supplemental_rebalance_ids,
         "teacher_profile": a.teacher if not a.allow_draft else None,
         "teacher_model": teacher["model"] if teacher and not a.allow_draft else None,
         "source_mix_policy": POLICY_VERSION,
@@ -280,6 +296,7 @@ def main():
         "glossary_version": P.glossary()["version"],
         "prompt_hashes": prompt_hashes,
         "counts": counts,
+        "token_counts": token_counts,
         "groups": len(assign),
         "outputs": {f"{s}.jsonl": sha(out / f"{s}.jsonl") for s in counts},
     }, ensure_ascii=False, indent=1), encoding="utf-8")

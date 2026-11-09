@@ -1,7 +1,4 @@
-"""평가 두 번(예: 다듬기 끔/켬)을 같은 문장끼리 나란히 놓은 CSV를 만든다. 사람이 better 칸에 a/b/same을 적는다.
-
-사용: .venv/bin/python eval/compare.py eval/results/<A 폴더> eval/results/<B 폴더>
-"""
+# 평가
 import csv
 import json
 import sys

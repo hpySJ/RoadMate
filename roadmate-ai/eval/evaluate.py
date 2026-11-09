@@ -1,8 +1,4 @@
-"""평가: 실행 중인 AI 서버(HTTP)로 eval jsonl을 돌려 자동 지표와 사람 검토용 CSV를 만든다.
-
-사용: .venv\\Scripts\\python.exe eval\\evaluate.py --file eval\\dev.jsonl --label q4-prompt-v1
-잠근 시험(eval\\test.locked.jsonl)은 설정을 확정한 뒤 한 번만 실행한다.
-"""
+# 평가
 import argparse
 import csv
 import hashlib
@@ -71,7 +67,6 @@ TRANSLATIONESE_PATTERNS = {
 
 
 def translationese_stats(rows: list[dict]) -> dict:
-    """최종 한국어 출력의 검토 신호이며 오류·통과 판정에 사용하지 않는다."""
     counts = dict.fromkeys([*TRANSLATIONESE_PATTERNS, "latin_word", "mixed_politeness_same_sentence"], 0)
     eligible = flagged = 0
     for row in rows:
@@ -84,9 +79,7 @@ def translationese_stats(rows: list[dict]) -> dict:
         found = {name for name, pattern in TRANSLATIONESE_PATTERNS.items() if re.search(pattern, text)}
         if any(not word.isupper() for word in latin_words(text)):
             found.add("latin_word")
-        # 마침표·물음표·느낌표·줄바꿈을 문장 경계로 삼고, 쉼표로 이어진 절은 함께 본다.
         for sentence in re.split(r"[.!?。！？\r\n]+", text):
-            # 합니다/됩니다/습니다는 '니다' 직전 음절의 받침이 ㅂ이다. '아니다'는 제외한다.
             formal = any((ord(ending[0]) - 0xAC00) % 28 == 17
                          for ending in re.findall(r"[가-힣]니다(?=\s|[,;:]|$)", sentence))
             if formal and re.search(r"요(?=\s*(?:[,;:]|$))", sentence):
@@ -109,7 +102,6 @@ def translationese_summary(stats: dict) -> list[str]:
 
 
 def attach_attempts(rows: list[dict], path: Path) -> dict:
-    """서버의 opt-in 로그만 읽는다. 검사 통과는 의미 정확도와 별개다."""
     by_id = {}
     stats = Counter(translate_cases=0, traced_cases=0, retried=0, recovered=0, identical=0,
                     incomplete=0, log_errors=0, first_attempts=0, first_wrong_language=0)
@@ -196,7 +188,6 @@ def retry_summary(stats: dict) -> list[str]:
 
 
 def final_input_digest(path: Path) -> str:
-    # 검수 메타데이터나 행 순서만 바꿔 같은 시험을 다시 고르지 못하게 입력으로 식별한다.
     cases = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     inputs = [json.dumps({k: c.get(k) for k in ("task", "source_locale", "target_locale", "scenario", "text")},
                          ensure_ascii=False, sort_keys=True) for c in cases]
@@ -204,7 +195,6 @@ def final_input_digest(path: Path) -> str:
 
 
 def reserve_final(path: Path, ready: dict) -> str:
-    """같은 자료의 재시도를 막는 로컬 기록. 삭제·변조를 막는 전자서명은 아니다."""
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     directory = ROOT / "run" / "final-evaluations"
     directory.mkdir(parents=True, exist_ok=True)
@@ -270,7 +260,7 @@ def main():
             path = "/internal/v1/translate"
         else:
             path = "/internal/v1/parse-destination"
-        for _ in range(20):  # 429 busy면 잠시 뒤 재시도
+        for _ in range(20):
             t0 = time.perf_counter()
             r = client.post(f"{a.url}{path}", json=req)
             wall = int((time.perf_counter() - t0) * 1000)
@@ -293,7 +283,6 @@ def main():
     with (out_dir / "results.jsonl").open("w", encoding="utf-8") as f:
         for row in rows:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
-    # 검증: 의미 보존은 사람이 판정한다(human_meaning_ok, critical_error 칸)
     with (out_dir / "review.csv").open("w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)
         w.writerow(["id", "task", "direction", "text", "reference", "output", "auto_pass", "flags",
@@ -324,7 +313,7 @@ def main():
         p = sum(r["pass"] for r in rs)
         lines.append(f"| {task} | {len(rs)} | {p} | {p / len(rs):.1%} |")
     cats = sorted({r["case"]["category"] for r in rows if r["case"].get("category")})
-    if cats:  # 일반 평가셋: 상황별로 약한 곳을 본다
+    if cats:
         lines += ["", "| category | n | auto pass | pass rate |", "|---|---:|---:|---:|"]
         for cat in cats:
             rs = [r for r in rows if r["case"].get("category") == cat]
@@ -333,7 +322,6 @@ def main():
     lat = [r["body"]["latency_ms"] for r in rows if r["http"] == 200 and "latency_ms" in r["body"]]
     wall = [r["wall_ms"] for r in rows if r["http"] == 200]
     errors = Counter(f for r in rows for f in r["flags"] if f.startswith("http_"))
-    # 검증: 502가 어떤 검사에 걸렸는지 종류별로 센다(number_missing:18 → number_missing)
     issues = Counter(i.split(":")[0] for r in rows if r["http"] == 502
                      for i in (r["body"].get("message") or "").split(", ") if i)
     lines += ["", f"- model latency p50/p95 ms: {pct(lat, .5)} / {pct(lat, .95)}",

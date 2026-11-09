@@ -1,4 +1,4 @@
-"""Source composition for distillation; teacher answers are verified separately."""
+# 원문 구성
 from collections import Counter
 
 from train.data_boundary import fingerprint

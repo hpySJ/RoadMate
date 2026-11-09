@@ -1,4 +1,3 @@
-"""고정 모델의 tokenizer 디렉터리로 개발 문장·최대 입력·교정 재시도의 토큰 예산을 잰다."""
 import argparse
 import json
 import sys
@@ -12,8 +11,9 @@ from engine import REPAIR_HINT, translation_repair  # noqa: E402
 from validation import latin_tokens  # noqa: E402
 
 
+# 토큰 예산
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description="고정 모델의 tokenizer 디렉터리로 개발 문장·최대 입력·교정 재시도의 토큰 예산을 잰다.")
     ap.add_argument("--tokenizer-dir", type=Path, required=True, help="manifest base_revision의 tokenizer.json/config 경로")
     ap.add_argument("--manifest", type=Path, help="MODEL_PROFILE 대신 검사할 모델 manifest")
     ap.add_argument("--chat-template", type=Path, help="llama-server /props의 chat_template을 저장한 Jinja 파일")
@@ -43,7 +43,6 @@ def main() -> int:
 
     cases = [json.loads(line) for name in ("dev.jsonl", "general.jsonl", "general_es.jsonl", "naturalness.dev.jsonl")
              for line in (ROOT / "eval" / name).read_text(encoding="utf-8").splitlines() if line.strip()]
-    # 난해한 한국어 400자도 API가 허용하므로 짧은 평가 문장만 재지 않는다.
     for target in ("en-US", "es-US"):
         cases.append({"id": f"max-ko-{target}", "task": "translate", "source_locale": "ko-KR", "target_locale": target,
                       "scenario": "general", "text": ("가나다라마바사아자차카타파하" * 29)[:400]})
@@ -54,7 +53,6 @@ def main() -> int:
     cases.append({"id": "max-es-stt-question-ko", "task": "translate", "source_locale": "es-US",
                   "target_locale": "ko-KR", "scenario": "general",
                   "text": ("puede guardar la bolsa junto al mostrador " * 12)[:400]})
-    # 400자에 여러 용어가 함께 있는 입력도 측정해 선택 힌트가 늘어나는 경우를 포함한다.
     for source in ("en-US", "es-US"):
         lang = P.LANG_KEY[source]
         terms = [e[lang][0] for e in P.glossary()["entries"]]
@@ -66,7 +64,6 @@ def main() -> int:
             continue
         messages = P.translate_messages(c["source_locale"], c["target_locale"], c["scenario"], c["text"])
         check(c["id"], messages, P.TRANSLATE_MAX_TOKENS)
-        # 모든 교정 지시와 혼합 문자 교정의 원문 단어 전체를 예약해 상한을 잰다. 오답 초안은 넣지 않는다.
         issues = list(REPAIR_HINT) + [f"mixed_script:{w}" for w in latin_tokens(c["text"])]
         check(c["id"] + ":retry", translation_repair(messages, issues), P.TRANSLATE_MAX_TOKENS)
     report = {"context": limit, "tokenizer_dir": str(args.tokenizer_dir), "manifest": str(args.manifest),

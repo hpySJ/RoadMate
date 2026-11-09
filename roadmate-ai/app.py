@@ -1,4 +1,3 @@
-"""로드메이트 코리아 AI 서버 (FastAPI). 실행: uvicorn app:app --host 127.0.0.1 --port 8000 --workers 1"""
 import asyncio
 import hmac
 import logging
@@ -21,9 +20,10 @@ from sessions import ModelSlot, TurnRegistry, payload_hash
 from validation import HANGUL
 
 log = logging.getLogger("roadmate.ai")
-API_VERSION = "1.5.0"  # 백엔드 연동: 계약이 바뀌면 올리고 docs/openapi.json 재생성
+API_VERSION = "1.5.0"
 
 
+# 응답
 class UTF8JSONResponse(JSONResponse):
     media_type = "application/json; charset=utf-8"
 
@@ -39,9 +39,10 @@ def _error(status, code, message="", request_id=None, headers=None):
 
 
 ERROR_RESPONSES = {c: {"model": ErrorBody} for c in (401, 409, 410, 422, 429, 502, 503, 504)}
-ERROR_RESPONSES[422]["description"] = "Invalid input"  # Python 버전별 HTTPStatus 설명 차이를 계약에서 제거
+ERROR_RESPONSES[422]["description"] = "Invalid input"
 
 
+# API
 def create_app(settings: Settings | None = None, client=None) -> FastAPI:
     s = settings or Settings.from_env()
     st: dict = {}
@@ -77,18 +78,18 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
         msg = "; ".join(f"{'.'.join(map(str, err['loc'][1:]))}: {err['msg']}" for err in e.errors())[:500]
         return _error(422, "invalid_input", msg, body.get("request_id") if isinstance(body.get("request_id"), str) else None)
 
-    # 백엔드 연동: 백엔드만 호출하도록 내부 토큰 검사(AI_INTERNAL_TOKEN 설정 시)
+
     async def auth(x_internal_token: str | None = Header(default=None)):
         if s.internal_token and not hmac.compare_digest(x_internal_token or "", s.internal_token):
             raise ApiError(401, "unauthorized")
 
     async def _settle_slot():
-        # QWEN 구현: 취소·timeout 뒤 llama-server 계산이 실제로 끝났을 때만 슬롯을 연다(그 전까지 429 busy)
+
         async def settle():
             try:
                 while not await st["client"].wait_idle(s.cancel_settle_s):
                     log.warning("llama-server still processing after cancel/timeout; slot stays busy")
-                    await asyncio.sleep(0.5)  # wait_idle이 즉시 False여도 이벤트 루프를 막지 않게
+                    await asyncio.sleep(0.5)
             finally:
                 st["slot"].release()
 
@@ -96,7 +97,7 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
         await asyncio.wait({st["settle"]}, timeout=s.cancel_settle_s)
 
     async def _guarded(kind: str, req, timeout_s: float, wait_s: float):
-        # 파라미터 튜닝: 대기열 없이 busy_wait_s만 기다림. 대기 중 취소되면 모델을 호출하지 않는다
+
         if not await st["slot"].try_acquire(wait_s):
             raise ApiError(429, "busy", "model is serving another turn", req.request_id, {"Retry-After": "1"})
         engine = st["engine"]
@@ -150,7 +151,7 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
         if state == "done":
             return obj
         if state == "new":
-            # 검증: 슬롯 대기 전에 등록(조회~등록 사이 await 없음) → 대기 중 같은 ID는 합류·충돌 409, 취소는 대기 작업을 취소
+
             task = asyncio.create_task(_guarded(kind, req, s.model_timeout_s, s.busy_wait_s))
             entry = reg.start(rid, req.session_id, req.session_epoch, phash, task)
 
@@ -200,7 +201,7 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
             latency_ms=latency,
         ).model_dump()
 
-    # 로컬 시연: Android의 간단한 계약을 같은 검사·슬롯·timeout 경로로 연결한다.
+
     @app.post("/translate", response_model=AppTranslateResponse | AppTranslateClarification,
               responses=ERROR_RESPONSES)
     async def app_translate(req: AppTranslateRequest, request: Request):
@@ -219,23 +220,23 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
         result = await run_turn(request, turn, "translate", build_translate)
         if result["status"] == "ok":
             return {"text": result["translated_text"]}
-        # Android optString("text")가 JSON null을 문자열로 읽으므로 키를 생략한다.
+
         return {"clarification": result["clarification_question"],
                 "clarification_locale": req.source_locale}
 
-    # 백엔드 연동: 백엔드 → POST /internal/v1/translate (최종 STT 문장 1개)
+
     @app.post("/internal/v1/translate", response_model=TranslateResponse, responses=ERROR_RESPONSES,
               dependencies=[Depends(auth)])
     async def translate(req: TranslateRequest, request: Request):
         return await run_turn(request, req, "translate", build_translate)
 
-    # 백엔드 연동: 백엔드 → POST /internal/v1/parse-destination
+
     @app.post("/internal/v1/parse-destination", response_model=DestinationResponse, responses=ERROR_RESPONSES,
               dependencies=[Depends(auth)])
     async def parse_destination(req: DestinationRequest, request: Request):
         return await run_turn(request, req, "destination", build_destination)
 
-    # 백엔드 연동: APK P 해제·이동 시 백엔드가 전달하는 취소
+
     @app.post("/internal/v1/cancel", response_model=CancelResponse, responses=ERROR_RESPONSES,
               dependencies=[Depends(auth)])
     async def cancel(req: CancelRequest):
@@ -248,7 +249,7 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
         return {"status": "ok"}
 
     async def _self_check() -> str:
-        # 검증: 준비 확인용 짧은 번역 1회(성공 결과만 캐시)
+
         if st["self_check"] == "ok":
             return "ok"
         req = TranslateRequest(request_id="selfcheck", session_id="selfcheck", session_epoch=0, turn_id=0,
@@ -264,7 +265,7 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
             st["self_check"] = e.code
         return st["self_check"]
 
-    # 백엔드 연동: 백엔드·개발 도구의 준비 확인
+
     @app.get("/health/ready")
     async def ready():
         c = st["client"]
@@ -301,5 +302,5 @@ def create_app(settings: Settings | None = None, client=None) -> FastAPI:
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-logging.getLogger("httpx").setLevel(logging.WARNING)  # llama-server 호출마다 찍히는 요청 줄은 숨긴다
+logging.getLogger("httpx").setLevel(logging.WARNING)
 app = create_app()
