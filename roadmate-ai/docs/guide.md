@@ -219,16 +219,18 @@ done
 
 소문자·문장부호 없는 입력에 대한 견고성을 비교한다. `general`, `general_es`, `naturalness.dev` 세 파일의 `text`만 바꾼 사본을 만들고 원본·정답·기대값·ID·행 순서는 유지한다. locked 파일은 읽거나 바꾸지 않는다. 아래 도구는 프롬프트·검사기·서버를 수정하거나 시작하지 않는다.
 
-    .venv/bin/python eval/stt_format.py --out-dir run/stt-input-01
+    .venv/bin/python eval/stt_format.py --out-dir run/stt-input-02
 
-변환 규칙은 소문자화, Unicode 문장부호를 공백으로 치환, 낱말 내부 apostrophe 제거, 공백 정리다. 악센트·숫자·Unicode 기호는 유지한다. 시각·소수점 등 숫자 내부 문장부호도 공백으로 바뀌므로 원문과 변형을 함께 확인한다. 이는 텍스트 형식 모사이며, 실제 음성 인식의 낱말 오인식·누락이나 숫자 표기 방식을 재현한 결과가 아니다. `stt_manifest.json`에 변환 버전·규칙·원본/사본 SHA256·변경 건수를 남긴다. 기존 폴더는 덮어쓰지 않는다.
+`stt-format-v2`는 소문자화·문장부호 제거·공백 정리를 하되 apostrophe(`don't`)와 숫자 내부 문장부호를 보존한다. 영어의 오전·오후가 명시된 유효한 시각은 `HMM a m/p m`, 쉼표가 있는 정수 금액은 `N thousand M`으로 바꾼다(나머지가 0이면 생략). 소수점·음수·퍼센트와 한국어·스페인어의 숫자 표기·단위는 유지한다. 한국어 물음표는 제거한다.
+
+근거는 사용자가 관찰한 Pleos 에뮬레이터 v2.1.0, ON_DEVICE, TTS 녹음 주입 결과다. `stt_manifest.json`에 이 관찰의 원문·인식 결과, 독립 재현 여부(false), 변환 버전·규칙·원본/사본 SHA256·변경 건수를 남긴다. 이는 **형식 모사**이며 STT 오류율을 재현한 실험은 아니다. `won`이 `one`·`1`로 들리거나 `red`가 끼는 현상은 기록만 하고 사본에 주입하지 않는다. 기존 v1 폴더는 덮어쓰지 말고 새 폴더를 사용한다.
 
 진행 중인 DLPC 작업이 끝난 뒤, 같은 모델·프롬프트·서버 설정에서 원본과 사본을 차례로 평가한다. `MODEL_PROFILE`은 실행 중인 서버와 맞춘다.
 
 ```bash
 for dataset in general general_es naturalness.dev; do
-  .venv/bin/python eval/evaluate.py --file "eval/$dataset.jsonl" --label original-stt01
-  .venv/bin/python eval/evaluate.py --file "run/stt-input-01/$dataset.jsonl" --label stt-stt01
+  .venv/bin/python eval/evaluate.py --file "eval/$dataset.jsonl" --label original-stt02
+  .venv/bin/python eval/evaluate.py --file "run/stt-input-02/$dataset.jsonl" --label stt-stt02
 done
 ```
 
@@ -239,12 +241,16 @@ done
   --pair <general_원본_결과> <general_STT_결과> \
   --pair <general_es_원본_결과> <general_es_STT_결과> \
   --pair <naturalness_원본_결과> <naturalness_STT_결과> \
-  --out-dir run/stt-report-01
+  --out-dir run/stt-report-02
 ```
 
-`summary.md`·`summary.json`은 FAIL·502의 원본/STT 건수와 증감, 새 실패·회복 ID, 질문·부탁 표현 표지의 변화를 집계한다. `changes.csv`에는 원문·STT 입력·두 출력·기대 번역과 검토 칸을 나란히 남긴다. 질문·부탁 표지는 **검토 후보이며 의미 변경 판정이 아니다**. 특히 물음표만으로 질문과 부탁을 구분하지 않으며, 확인 질문·502는 번역 의도 판정에서 제외한다. 표지가 같아도 뜻이 달라질 수 있으므로 바뀐 출력 전체를 확인한다. 서로 다른 모델·팩·런타임 설정, 변조된 결과, 누락된 ID나 `text` 이외 평가 기준 변경은 비교를 거절한다. mock은 `--allow-mock`으로 도구 점검에만 허용한다.
+`summary.md`·`summary.json`은 FAIL·502의 원본/STT 건수와 증감, 새 실패·회복 ID, 질문·부탁 표현 표지의 변화를 집계한다. **숫자가 있는 원문**은 데이터셋별·전체에서 같은 지표를 별도 집계한다. 기준은 원문에 Unicode 십진 숫자가 하나 이상 있는 경우이며 `three` 같은 숫자 단어는 포함하지 않는다. `changes.csv`의 `numeric_source`로 이 행들만 볼 수 있다. CSV에는 원문·STT 입력·두 출력·기대 번역과 검토 칸을 나란히 남긴다. 질문·부탁 표지는 **검토 후보이며 의미 변경 판정이 아니다**. 특히 물음표만으로 질문과 부탁을 구분하지 않으며, 확인 질문·502는 번역 의도 판정에서 제외한다. 표지가 같아도 뜻이 달라질 수 있으므로 바뀐 출력 전체를 확인한다. 서로 다른 모델·팩·런타임 설정, 변조된 결과, 누락된 ID나 `text` 이외 평가 기준 변경은 비교를 거절한다. mock은 `--allow-mock`으로 도구 점검에만 허용한다.
 
-실제 비교 결과와 검토가 끝난 뒤 프롬프트·검사기 변경 여부를 별도로 정한다.
+검사기는 apostrophe 없는 영어 부정 축약형도 일반 부정·연료 부정으로 읽는다. `HMM a m/p m`은 유효한 시·분 범위와 오전·오후가 있을 때만 시각으로 읽고, `N thousand M won`은 하나의 금액으로 비교한다. 잘못된 숫자·통화·오전/오후·연료 방향은 계속 거절한다. 프롬프트·예시·힌트 규칙은 이번 변경에서 유지했으며, 실제 비교 결과를 본 뒤 변경 여부를 정한다.
+
+축약형은 단어 전체가 일치할 때만 인식한다. 다만 `cant`(기울기)·`wont`(습관)처럼 실제 일반어와 겹치는 드문 용법은 부정 오탐 가능성이 남는다. 복합 금액은 서로 다른 통화나 뒤에 이어지는 숫자 단어·배수·분수를 한 금액으로 합치지 않는다.
+
+`one`·`1`을 `won`으로 자동 보정하지 않는다. 둘 다 실제 수량·번호일 수 있고 `one red car`의 `red`도 실제 색상이다. 붙여 인식한 `thousand1`·`thousand500red`는 숫자 경계나 백 단위가 손실됐을 수 있어 금액을 확정할 수 없다. 통화 단서가 사라진 입력은 기존 숫자 검사만으로 원화를 보장할 수 없으므로 이 사본 비교와 별도로 실제 STT 원문·음성의 확인이 필요하다.
 
 ### 서버가 자동으로 하는 출력 검증(`validation.py`)
 JSON 계약 → 목표 언어 문자 → 설명문 섞임 → 길이 → 숫자·금액·시간·전화번호 보존(3만 원=30,000 won, 오후 3시=3 p.m. / 원↔달러, 오전↔오후가 바뀌면 실패) → 부정 보존 → 연료 용어(gas는 휘발유로 확정 금지)와 연료별 긍정·부정(“휘발유, 경유 말고”가 뒤집히면 실패) → 좌/우. 실패하면 이유를 붙여 **한 번만** temperature 0으로 다시 생성하고, 그래도 실패하면 502로 재생을 막는다.
@@ -423,7 +429,7 @@ GGUF 어댑터와 .gguf.json 출처 파일을 만들며 기본 manifest를 수�
 
 ## 11. 검증 상태
 
-현재 버전은 14B 토크나이저 테스트를 포함한 `python scripts/verify_mvp.py --local`로 API·번역 검증·학습 경계·STT 형식 비교·개인화 회귀 1,591건과 주행 시나리오를 통과했다. 결과는 `run/verify-ed94dc5e4d/`에 기록한다. 14B 검사에는 8.3절의 `SOURCE_TOKENIZER_DIR` 설정을 사용했으며, 설정이 없으면 해당 4건은 건너뛴다. 이 명령은 실제 모델 번역이나 SDK 기기 시험이 아니다.
+현재 버전은 14B 토크나이저 테스트를 포함한 `python scripts/verify_mvp.py --local`로 API·번역 검증·학습 경계·STT 형식 비교·개인화 회귀 1,689건과 주행 시나리오를 통과했다. 결과는 `run/verify-4ef5841ed0/`에 기록한다. 14B 검사에는 8.3절의 `SOURCE_TOKENIZER_DIR` 설정을 사용했으며, 설정이 없으면 해당 4건은 건너뛴다. 이 명령은 실제 모델 번역이나 SDK 기기 시험이 아니다.
 
 실제 모델 품질의 완료 기준과 실행 순서는 [mvp_acceptance.md](mvp_acceptance.md)에 있다. 평가기는 mock을 기본 거절하고, 실제 서버의 코드·팩 해시와 실행 설정을 기록한다. 자연스러움과 의미 보존은 review.csv에 별도로 검토해야 한다. 기존 버전의 모델 평가 수치를 이번 버전의 성적으로 쓰지 않는다.
 

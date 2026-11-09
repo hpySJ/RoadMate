@@ -42,10 +42,10 @@ def pair(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     (root / "eval").mkdir(parents=True)
     monkeypatch.setattr(C, "ROOT", root)
-    def create(dataset="general.jsonl", *, mock=False):
+    def create(dataset="general.jsonl", *, mock=False, sources=None):
         cases = [{"id": f"synthetic-{i}", "task": "translate", "text": text, "source_locale": "en-US",
                   "target_locale": "ko-KR", "scenario": "general", "reference": "문서 표를 확인해 주세요.",
-                  "must_include": ["표"], "expect_status": "ok"} for i, text in enumerate([
+                  "must_include": ["표"], "expect_status": "ok"} for i, text in enumerate(sources or [
                       "Could You Please Inspect This Label?", "Please Look At That Label.",
                       "Can You Examine A Label?", "Please Check The Other Label.",
                       "Is This The Label?", "Where Is A Spare Label?"])]
@@ -60,7 +60,7 @@ def pair(tmp_path, monkeypatch):
         stt = [ok("표를 확인해 주세요."), ok("다른 문서예요."), ok("그 표를 확인해 주세요."),
                blocked, clarifies, ok("그 표를 봐 주세요.")]
         original = [{"case": copy.deepcopy(case), **copy.deepcopy(value)} for case, value in zip(cases, original)]
-        stt = [{"case": {**copy.deepcopy(case), "text": normalize_source(case["text"])}, **copy.deepcopy(value)}
+        stt = [{"case": {**copy.deepcopy(case), "text": normalize_source(case["text"], case["source_locale"])}, **copy.deepcopy(value)}
                for case, value in zip(cases, stt)]
         return (save_run(tmp_path / (dataset + "-original"), original, dataset, raw, mock),
                 save_run(tmp_path / (dataset + "-stt"), stt, dataset, variant_bytes(cases), mock))
@@ -115,6 +115,48 @@ def test_cli_aggregates_datasets_and_preserves_existing_reports(pair, tmp_path):
     before = (out / "summary.json").read_bytes()
     assert C.main(arguments) == 1
     assert (out / "summary.json").read_bytes() == before
+
+
+def test_numeric_cohort_is_separate_in_csv_dataset_and_total_statistics(pair, tmp_path):
+    sources = ["Could You Inspect It At 4:15 p.m.?", "The Fee Is 8,400 Won.",
+               "Can You Examine Label １２?", "Please Check Label ٣.",
+               "Is This The Label?", "Where Are Three Spare Labels?"]
+    first, second = pair(sources=sources), pair("general_es.jsonl", sources=sources)
+    out = tmp_path / "numeric-report"
+    assert C.main(["--pair", *map(str, first), "--pair", *map(str, second), "--out-dir", str(out)]) == 0
+    report = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    numeric = report["datasets"]["general.jsonl"]["numeric"]
+    assert numeric["rows"] == 4
+    assert numeric["FAIL"] == {"original": 1, "stt": 2, "delta": 1}
+    assert numeric["502"] == {"original": 1, "stt": 1, "delta": 0}
+    assert numeric["new_failures"] == ["general.jsonl:synthetic-1", "general.jsonl:synthetic-3"]
+    assert numeric["recovered"] == ["general.jsonl:synthetic-2"]
+    assert numeric["signals"]["eligible_pairs"] == 2
+    assert report["aggregate"]["numeric"]["rows"] == 8
+    assert report["aggregate"]["numeric"]["FAIL"] == {"original": 2, "stt": 4, "delta": 2}
+    assert report["aggregate"]["numeric"]["502"] == {"original": 2, "stt": 2, "delta": 0}
+    with (out / "changes.csv").open(encoding="utf-8-sig", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    assert [r["numeric_source"] for r in rows[:6]] == ["True"] * 4 + ["False"] * 2
+    assert rows[0]["original_source"] == sources[0] and rows[0]["stt_source"] == "could you inspect it at 415 p m"
+    assert "숫자가 포함된 원문만 비교" in (out / "summary.md").read_text(encoding="utf-8")
+
+
+def test_comparison_passes_source_locale_and_marks_korean_digit_amounts(pair):
+    original, stt = pair()
+    canonical = C.ROOT / "eval/general.jsonl"
+    cases = [json.loads(line) for line in canonical.read_text(encoding="utf-8").splitlines()]
+    cases[0].update(text="4:15에 5만 원어치 표를 보여 주세요.", source_locale="ko-KR", target_locale="en-US")
+    raw = raw_rows(cases)
+    canonical.write_bytes(raw)
+    for folder, is_stt in ((original, False), (stt, True)):
+        change_rows(folder, lambda rows: rows[0].update(case={**cases[0], "text":
+            normalize_source(cases[0]["text"], "ko-KR") if is_stt else cases[0]["text"]}))
+        change_meta(folder, lambda meta: meta.update(dataset_sha256=C.sha(variant_bytes(cases) if is_stt else raw)))
+    rows, _ = C.compare_pair(original, stt)
+    assert rows[0]["numeric_source"] is True
+    assert rows[0]["stt_source"] == normalize_source(cases[0]["text"], "ko-KR")
+    assert "4:15" in rows[0]["stt_source"]
 
 
 @pytest.mark.parametrize("field,value", [("text", "changed source"), ("must_include", []),

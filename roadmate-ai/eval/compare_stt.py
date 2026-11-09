@@ -18,6 +18,8 @@ from eval.stt_format import DATASETS, STT_FORMAT_VERSION, normalize_source, vari
 NOTICE = ("질문·부탁 표지는 표현을 찾는 참고 신호이며 의미 정확도 판정이 아닙니다. "
           "물음표 변화만으로 뜻이 바뀌었다고 판정하지 않습니다. "
           "502·확인 질문 등 양쪽 모두 성공한 번역이 아닌 행은 표지 비교에서 제외합니다.")
+NUMERIC_DEFINITION = ("원문에 Unicode 십진 숫자(\\d, Nd)가 하나 이상 있는 행입니다. "
+                      "한국어의 5만 원·4시, 전각·아라비아 숫자도 포함하며 three·삼 같은 숫자 단어만 있는 행은 제외합니다.")
 CUES = {
     "en": {"question": r"^\s*(?:can|could|would|will|do|does|did|is|are|was|were|have|has|may|what|where|when|why|how|which)\b",
            "request": r"\bplease\b|\b(?:could|would|can|will)\s+you\b"},
@@ -26,7 +28,7 @@ CUES = {
     "es": {"question": r"^\s*¿?\s*(?:puedo|puede|pueden|podría|dónde|cuánto|cuánta|cuántos|cuántas|qué|cómo|cuál|hay)\b",
            "request": r"\bpor\s+favor\b|\b(?:deme|dígame|ayúdeme|indíqueme)\b"},
 }
-FIELDS = ["dataset", "id", "task", "direction", "original_source", "stt_source", "reference",
+FIELDS = ["dataset", "id", "task", "direction", "original_source", "stt_source", "reference", "numeric_source",
           "original_output", "stt_output", "output_changed", "original_http", "stt_http",
           "original_status", "stt_status", "original_FAIL", "stt_FAIL", "original_flags", "stt_flags",
           "signals_eligible", "original_signal", "stt_signal", "original_question_punctuation",
@@ -112,7 +114,7 @@ def compare_pair(original_folder, stt_folder, allow_mock=False):
     expected = {case["id"]: case for case in cases}
     if not expected or len(expected) != len(cases):
         raise ValueError("Canonical dataset has missing or duplicate IDs")
-    variant = {cid: {**case, "text": normalize_source(case["text"])} for cid, case in expected.items()}
+    variant = {cid: {**case, "text": normalize_source(case["text"], case["source_locale"])} for cid, case in expected.items()}
     a, pa, identity, mock = strict_run(original_folder, expected, sha(raw), allow_mock)
     b, pb, other_identity, other_mock = strict_run(stt_folder, variant, sha(variant_bytes(cases)), allow_mock)
     if pb["metadata"]["dataset"] != dataset or identity != other_identity or mock != other_mock:
@@ -131,7 +133,8 @@ def compare_pair(original_folder, stt_folder, allow_mock=False):
         states = [r["body"].get("status", "missing") if r["http"] == 200 else f"http_{r['http']}"
                   for r in (original, transformed)]
         rows.append(dict(zip(FIELDS, [dataset, cid, case["task"], f"{case['source_locale']}->{case.get('target_locale', '')}",
-            case["text"], transformed["case"]["text"], case.get("reference", ""), left, right, left != right,
+            case["text"], transformed["case"]["text"], case.get("reference", ""), bool(re.search(r"\d", case["text"])),
+            left, right, left != right,
             original["http"], transformed["http"], *states, not original["pass"], not transformed["pass"],
             " | ".join(original["flags"]), " | ".join(transformed["flags"]), eligible,
             cues[0]["label"] if eligible else "unavailable", cues[1]["label"] if eligible else "unavailable",
@@ -162,6 +165,10 @@ def measures(rows):
                               r["original_question_punctuation"] != r["stt_question_punctuation"]]}}
 
 
+def cohort_measures(rows):
+    return {**measures(rows), "numeric": measures([row for row in rows if row["numeric_source"]])}
+
+
 def markdown(report):
     lines = ["# STT 형식 비교", "", NOTICE, "", f"- 정규화 버전: {report['transform_version']}",
              f"- 실행 종류: {'MOCK 계약 시험 — 품질 근거 아님' if report['mock'] else '실제 모델 기록 비교'}",
@@ -175,6 +182,21 @@ def markdown(report):
         lines += [f"\n- {name} 새 FAIL: {', '.join(stats['new_failures']) or '없음'}",
                   f"- {name} 회복: {', '.join(stats['recovered']) or '없음'}",
                   f"- {name} 502 전이(False=502 아님): {json.dumps(stats['502_transitions'], ensure_ascii=False)}"]
+    lines += ["", "## 숫자가 포함된 원문만 비교", "", report["numeric_definition"], "",
+              "| dataset | 숫자 행 n | FAIL 원본→STT | Δ | 502 원본→STT | Δ |", "|---|---:|---:|---:|---:|---:|"]
+    for name, stats in [*report["datasets"].items(), ("TOTAL", report["aggregate"])]:
+        nums = stats["numeric"]
+        lines.append(f"| {name} | {nums['rows']} | {nums['FAIL']['original']}→{nums['FAIL']['stt']} | {nums['FAIL']['delta']:+d} | "
+                     f"{nums['502']['original']}→{nums['502']['stt']} | {nums['502']['delta']:+d} |")
+    for name, stats in [*report["datasets"].items(), ("TOTAL", report["aggregate"])]:
+        nums, sig = stats["numeric"], stats["numeric"]["signals"]
+        lines += [f"\n- {name} 숫자 행 새 FAIL: {', '.join(nums['new_failures']) or '없음'}",
+                  f"- {name} 숫자 행 회복: {', '.join(nums['recovered']) or '없음'}",
+                  f"- {name} 숫자 행 502 전이(False=502 아님): {json.dumps(nums['502_transitions'], ensure_ascii=False)}",
+                  f"- {name} 숫자 행 표현 표지: 성공 번역 쌍 {sig['eligible_pairs']}, 출력 변경 {sig['changed_outputs']}, "
+                  f"표지 변경 {sig['label_changed']}, 물음표 변화 {sig['question_punctuation_changed']}",
+                  f"- 표현 전이: {json.dumps(sig['label_transitions'], ensure_ascii=False)}",
+                  f"- 참고 행: {', '.join(sig['advisory_rows']) or '없음'}"]
     lines += ["", "## 질문·부탁 표현 표지 (참고)", "",
               "question/request/both/unmarked는 아래 표현 검색 결과입니다. could you처럼 두 표지가 함께 나타날 수 있습니다.",
               "물음표는 별도 집계이며 question 표지를 만드는 조건이 아닙니다. 이 집계에는 의미 변화 건수가 없습니다."]
@@ -202,11 +224,12 @@ def main(argv=None):
             rows, pair = compare_pair(original, stt, args.allow_mock)
             if pair["dataset"] in datasets or pairs and pair["signature"] != pairs[0]["signature"]:
                 raise ValueError("Duplicate dataset or mixed configurations across pairs")
-            datasets[pair["dataset"]] = measures(rows)
+            datasets[pair["dataset"]] = cohort_measures(rows)
             all_rows.extend(rows)
             pairs.append(pair)
         report = {"transform_version": STT_FORMAT_VERSION, "notice": NOTICE, "mock": any(p["mock"] for p in pairs),
-                  "cue_definitions": CUES, "datasets": datasets, "aggregate": measures(all_rows), "pairs": pairs}
+                  "cue_definitions": CUES, "numeric_definition": NUMERIC_DEFINITION,
+                  "datasets": datasets, "aggregate": cohort_measures(all_rows), "pairs": pairs}
         args.out_dir.mkdir(parents=True, exist_ok=False)
         with (args.out_dir / "changes.csv").open("x", encoding="utf-8-sig", newline="") as stream:
             writer = csv.DictWriter(stream, fieldnames=FIELDS)

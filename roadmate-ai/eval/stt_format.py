@@ -2,31 +2,63 @@
 import argparse
 import hashlib
 import json
+import re
 import unicodedata
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DATASETS = ("general.jsonl", "general_es.jsonl", "naturalness.dev.jsonl")
-STT_FORMAT_VERSION = "stt-format-v1"
+STT_FORMAT_VERSION = "stt-format-v2"
 APOSTROPHES = frozenset("'’‘＇")
+_CLOCK = re.compile(r"(?<![\w:.,])(?P<hour>0?[1-9]|1[0-2]):(?P<minute>[0-5][0-9])\s*(?P<meridiem>[ap])\.?\s*m\.?(?!\w)")
+_GROUPED_INTEGER = r"[1-9][0-9]{0,2}(?:,[0-9]{3})+"
+_CURRENCY = r"won|krw|usd|dollars?|eur|euros?|gbp"
+_MONEY_SUFFIX = re.compile(rf"(?<![\w.,])(?P<amount>{_GROUPED_INTEGER})\s*(?P<unit>{_CURRENCY})(?![\w'’‘＇])")
+_MONEY_PREFIX = re.compile(rf"(?<!\w)(?P<unit>{_CURRENCY}|[$₩€£])\s*(?P<amount>{_GROUPED_INTEGER})(?![\w.,])")
 RULES = [
     "Unicode str.lower; preserve accents, digits and symbols (category S).",
-    "Replace Unicode punctuation (category P) with spaces to avoid joining words.",
-    "Drop straight, curly and fullwidth apostrophes between letters/combining marks without a space.",
+    "Preserve apostrophes, including contractions; replace other sentence punctuation with spaces.",
+    "English only: valid 12-hour H:MM with am/pm becomes HMM a m or HMM p m.",
+    "English only: comma-grouped integers in currency context become N thousand M; omit a zero remainder and retain the currency.",
+    "Preserve other numeric internal punctuation, numeric minus signs, leading decimal separators and percent units.",
+    "Do not apply English time/amount conversions to Korean or Spanish; retain their numeric formats and units.",
+    "Never replace won with one, 1 or red; observed recognition errors are not deterministic formatting rules.",
     "Collapse Unicode whitespace and strip leading/trailing whitespace.",
     "Change only text; retain all other case fields and case order.",
 ]
+OBSERVATIONS = {
+    "source": "user_reported",
+    "environment": {"emulator": "Pleos v2.1.0", "recognizer": "ON_DEVICE", "input": "TTS recorded audio injection"},
+    "independently_reproduced": False,
+    "english": {"lowercase": True, "sentence_punctuation": False, "apostrophe_retained": "don't",
+                "examples": [{"input": "7:40 a.m.", "observed": ["740 a m"]},
+                             {"input": "30,000 won", "observed": ["30 thousand one", "30 thousand1"]},
+                             {"input": "87,500 won", "observed": ["87 thousand500red one"]}]},
+    "korean": {"number_unit_examples": ["오후 7시 30분", "3만 5천원"], "question_mark": False},
+    "limits": "Reported examples guide formatting only; this is not a recognizer replay or a measured error distribution. Won misrecognitions are recorded but not injected.",
+}
 
 
-def normalize_source(text: str) -> str:
+def _thousands(amount: str) -> str:
+    thousands, remainder = divmod(int(amount.replace(",", "")), 1000)
+    return f"{thousands} thousand" + (f" {remainder}" if remainder else "")
+
+
+def normalize_source(text: str, locale="en-US") -> str:
     text = text.lower()
+    if locale.split("-", 1)[0] == "en":
+        text = _CLOCK.sub(lambda m: f"{int(m['hour'])}{m['minute']} {m['meridiem']} m", text)
+        text = _MONEY_SUFFIX.sub(lambda m: f"{_thousands(m['amount'])} {m['unit']}", text)
+        text = _MONEY_PREFIX.sub(lambda m: f"{m['unit']} {_thousands(m['amount'])}", text)
     chars = []
     for index, char in enumerate(text):
-        if not unicodedata.category(char).startswith("P"):
+        before, after = text[index - 1:index] if index else "", text[index + 1:index + 2]
+        numeric_punctuation = (before.isdecimal() and after.isdecimal()
+            or char in "-.," and after.isdecimal() and not before.isalnum()
+            or char == "-" and after in (".", ",") and text[index + 2:index + 3].isdecimal() and not before.isalnum()
+            or char in "%‰‱" and before.isdecimal())
+        if char in APOSTROPHES or numeric_punctuation or not unicodedata.category(char).startswith("P"):
             chars.append(char)
-        elif (char in APOSTROPHES and 0 < index < len(text) - 1
-              and all(unicodedata.category(neighbor)[0] in "LM" for neighbor in (text[index - 1], text[index + 1]))):
-            continue
         else:
             chars.append(" ")
     return " ".join("".join(chars).split())
@@ -34,7 +66,7 @@ def normalize_source(text: str) -> str:
 
 def variant_bytes(cases: list[dict]) -> bytes:
     """Deterministic serialization shared by the variant writer and paired comparison."""
-    return "".join(json.dumps({**case, "text": normalize_source(case["text"])}, ensure_ascii=False,
+    return "".join(json.dumps({**case, "text": normalize_source(case["text"], case["source_locale"])}, ensure_ascii=False,
                               separators=(",", ":")) + "\n" for case in cases).encode("utf-8")
 
 
@@ -56,12 +88,12 @@ def build_variants(out_dir: Path) -> dict:
         changed = 0
         for case in cases:
             if (not isinstance(case, dict) or not isinstance(case.get("id"), str) or not case["id"]
-                    or not isinstance(case.get("text"), str)):
-                raise ValueError(f"invalid case in {name}: id and text must be strings")
+                    or not isinstance(case.get("text"), str) or not isinstance(case.get("source_locale"), str)):
+                raise ValueError(f"invalid case in {name}: id, text and source_locale must be strings")
             if case["id"] in seen:
                 raise ValueError(f"duplicate case id: {case['id']}")
             seen.add(case["id"])
-            normalized = normalize_source(case["text"])
+            normalized = normalize_source(case["text"], case["source_locale"])
             if not normalized:
                 raise ValueError(f"empty normalized source: {case['id']}")
             changed += normalized != case["text"]
@@ -69,7 +101,8 @@ def build_variants(out_dir: Path) -> dict:
         datasets.append({"source": f"eval/{name}", "source_sha256": hashlib.sha256(raw).hexdigest(),
                          "variant": name, "variant_sha256": hashlib.sha256(variants[name]).hexdigest(),
                          "count": len(cases), "changed_count": changed})
-    manifest = {"transform_version": STT_FORMAT_VERSION, "rules": RULES, "datasets": datasets}
+    manifest = {"transform_version": STT_FORMAT_VERSION, "rules": RULES,
+                "observations": OBSERVATIONS, "datasets": datasets}
     # Validate every source before creating any output or parent directories.
     out_dir.mkdir(parents=True)
     for name, content in variants.items():

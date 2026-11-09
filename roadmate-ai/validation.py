@@ -123,6 +123,7 @@ NATIVE_ALONE = {"둘": 2, "셋": 3, "넷": 4, "다섯": 5, "여섯": 6, "일곱"
 NATIVE_ALONE_RE = re.compile(r"(?<![가-힣])(둘|셋|넷|다섯|여섯|일곱|여덟|아홉)(?=[\s,.?!]|$|이|은|만|도|요|입니|이에|이서)")
 PHONE_RE = re.compile(r"(?<!\d)(?:\+?82[\s-]?)?0?\d{1,3}[\s-]\d{3,4}[\s-]\d{4}(?!\d)")
 CLOCK_RE = re.compile(r"(?<!\d)([01]?\d|2[0-4]):([0-5]\d)(?!\d)")
+EN_STT_CLOCK_RE = re.compile(r"(?<![\w.,:+-])(0?[1-9]|1[0-2])([0-5]\d)\s+([ap])\.?\s*m\.?(?!\w)", re.I)
 DIGIT_RE = re.compile(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?!\d|,\d)")
 _EN_DAYPART = r"(in the morning|in the afternoon|in the evening|at night|tonight|this morning|this afternoon|this evening)"
 EN_TIME_TAIL = re.compile(rf"\s*(?:o'clock(?:\s+{_EN_DAYPART})?|([ap])\.?\s?m\.?(?![A-Za-z])|{_EN_DAYPART})", re.IGNORECASE)
@@ -398,13 +399,26 @@ SCALES = {"en": {"k": 1e3, "thousand": 1e3, "million": 1e6, "mil": 1e6}, "es": {
 def _digit_nums(text: str, lang: str, out: list) -> list[tuple[int, int]]:
     spans = []
     for m in DIGIT_RE.finditer(text):
+        if spans and m.start() < spans[-1][1]:
+            continue
         v = float(m.group(1).replace(",", "") + ("." + m.group(2) if m.group(2) else ""))
         end = m.end()
         sm = re.match(r"\s?([A-Za-z]+)\b", text[end:end + 12])
         if sm and sm.group(1).lower() in SCALES[lang]:
             v *= SCALES[lang][sm.group(1).lower()]
             end += sm.end()
-        out.append(_num(v, text[:m.start()], text[m.end():], lang))
+            if lang == "en" and sm.group(1).lower() == "thousand" and not m.group(2):
+                remainder = re.match(r"\s+(?:and\s+)?(\d{1,3})(?!\w|[.,]\d|\s+\d|\s*/\s*\d)", text[end:], re.I)
+                if remainder:
+                    tail = text[end + remainder.end():]
+                    continuation = re.match(r"\s+(?:and\s+)?(?:" + "|".join([*EN_UNITS, *EN_TENS, *EN_SCALES,
+                                               "a half", "half", "a quarter", "quarter", "mil", "k"]) + r")\b", tail, re.I)
+                    prefix_unit = _unit(text[:m.start()], "", lang)
+                    suffix_unit = _unit("", tail, lang)
+                    if not continuation and (not prefix_unit or not suffix_unit or prefix_unit == suffix_unit):
+                        v += int(remainder.group(1))
+                        end += remainder.end()
+        out.append(_num(v, text[:m.start()], text[end:], lang))
         spans.append((m.start(), end))
     return spans
 
@@ -438,6 +452,13 @@ def extract_numbers(text: str, locale: str) -> list[Num]:
     text = _mask(text, spans)
 
     if lang == "en":
+        # Pleos의 HMM a m/p m 표기만 복원한다. 오전·오후 없는 숫자는 시각으로 추측하지 않는다.
+        for m in EN_STT_CLOCK_RE.finditer(text):
+            out.append(_time(int(m.group(1)), m.group(3).lower() == "p"))
+            if int(m.group(2)):
+                out.append(Num(float(m.group(2)), "n", unit="min"))
+            spans.append(m.span())
+        text = _mask(text, spans)
         # 검증: 말로 하는 시각(quarter past 4 p.m.)은 숫자 시각보다 먼저 읽어 두 번 세지 않는다
         for start, end, anchor, mins in english_times(text):
             out += [anchor, Num(float(mins), "n", unit="min")]
@@ -643,10 +664,11 @@ def add_meridiem(tt: str, source: str, src_locale: str, tgt_locale: str) -> str:
 
 # ---------------------------------------------------------------- negation
 # 검증: (확실한 부정, 부정에 가까운 말). 한쪽만 확실한 부정이고 다른 쪽에 둘 다 없으면 실패. 스페인어는 강세를 뺀 글자로 본다
+_EN_NEG_CONTRACTION = r"(?:are|is|was|were|do|does|did|have|has|had|ca|could|wo|would|sha|should|must|need|dare)n['’]?t"
 NEG = {
     "en": (
         re.compile(r"\b(not|no|never|none|nobody|nothing|nowhere|neither|nor|cannot|without|no one|unhurt|uninjured|unharmed"
-                   r"|prohibit\w*|forbidden|banned)\b|n't\b", re.I),
+                   rf"|prohibit\w*|forbidden|banned|{_EN_NEG_CONTRACTION})\b|n't\b", re.I),
         re.compile(r"\b(instead|rather than|other than|except|excluding|apart from|zero|only|stop|refuse|fine|okay|ok|all right|free"
                    r"|sick|unwell|bad)\b", re.I),
     ),
@@ -759,14 +781,14 @@ _ES_FUEL_FILL = (rf"de|del|el|la|los|las|un|una|con|le|les|me|lo|nos|te|se|es|se
                  rf"|que|a|{_ES_FUEL_AUX}|{_ES_FUEL_VERB}")
 FUEL_NEG_BEFORE = {
     "en": re.compile(
-        r"(?:\b(?:not|no|never|instead\s+of|rather\s+than|other\s+than|except|excluding|apart\s+from|without)|n't"
-        rf"|\b(?:not|cannot)\s+{_EN_FUEL_VERB}|n't\s+{_EN_FUEL_VERB})\s+(?:(?:any|the|a|an|in|it|some)\s+)*$", re.I),
+        rf"(?:\b(?:not|no|never|instead\s+of|rather\s+than|other\s+than|except|excluding|apart\s+from|without|{_EN_NEG_CONTRACTION})|n['’]t"
+        rf"|\b(?:not|cannot|{_EN_NEG_CONTRACTION})\s+{_EN_FUEL_VERB}|n['’]t\s+{_EN_FUEL_VERB})\s+(?:(?:any|the|a|an|in|it|some)\s+)*$", re.I),
     # "no le ponga diésel", "gasolina, no de diésel", "en lugar de diésel"
     "es": re.compile(rf"\b(?:no|nunca|sin|ni|nada|en\s+lugar|en\s+vez|excepto|salvo|menos)\s+(?:(?:{_ES_FUEL_FILL})\s+)*$", re.I),
     "ko": None,
 }
 FUEL_NEG_AFTER = {
-    "en": re.compile(r"^\s+(?:(?:is|was)\s+not|isn't|wasn't|is\s+(?:wrong|prohibited|forbidden)|not\s+allowed)\b", re.I),
+    "en": re.compile(r"^\s+(?:(?:is|was)\s+not|(?:is|was)n['’]?t|is\s+(?:wrong|prohibited|forbidden)|not\s+allowed)\b", re.I),
     "es": re.compile(rf"^\s+(?:no\s+(?:(?:se|le|les|me|lo|la|nos|te)\s+)*(?:es|esta|va|puede|permite|debe|{_ES_FUEL_VERB})\b"
                      r"|(?:esta|es|queda)\s+(?:prohibid[oa]|mal|incorrect[oa])\b)", re.I),
     # "아닌지/아닌가 확인"은 연료 종류를 묻는 말이므로 확정된 연료 부정으로 보지 않는다.
