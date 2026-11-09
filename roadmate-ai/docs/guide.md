@@ -215,6 +215,37 @@ done
 - 1차 목표(측정 전 목표값): 잠근 시험 의미 보존 90% 이상, 준비 후 짧은 문장 번역 p95 3초, 발화 종료→TTS 시작 p95 5초, 에뮬레이터와 30분 동시 실행, P 해제 후 이전 결과 재생 0건.
 - 평가 사례는 모두 `review_status: draft`다. 사람이 검수해 `approved`로 바꾼다. `tests/test_eval_data.py`가 정답이 검증기를 통과하는지, dev/test/few-shot 사이 누수가 없는지 확인한다.
 
+### STT 형식 입력 비교
+
+소문자·문장부호 없는 입력에 대한 견고성을 비교한다. `general`, `general_es`, `naturalness.dev` 세 파일의 `text`만 바꾼 사본을 만들고 원본·정답·기대값·ID·행 순서는 유지한다. locked 파일은 읽거나 바꾸지 않는다. 아래 도구는 프롬프트·검사기·서버를 수정하거나 시작하지 않는다.
+
+    .venv/bin/python eval/stt_format.py --out-dir run/stt-input-01
+
+변환 규칙은 소문자화, Unicode 문장부호를 공백으로 치환, 낱말 내부 apostrophe 제거, 공백 정리다. 악센트·숫자·Unicode 기호는 유지한다. 시각·소수점 등 숫자 내부 문장부호도 공백으로 바뀌므로 원문과 변형을 함께 확인한다. 이는 텍스트 형식 모사이며, 실제 음성 인식의 낱말 오인식·누락이나 숫자 표기 방식을 재현한 결과가 아니다. `stt_manifest.json`에 변환 버전·규칙·원본/사본 SHA256·변경 건수를 남긴다. 기존 폴더는 덮어쓰지 않는다.
+
+진행 중인 DLPC 작업이 끝난 뒤, 같은 모델·프롬프트·서버 설정에서 원본과 사본을 차례로 평가한다. `MODEL_PROFILE`은 실행 중인 서버와 맞춘다.
+
+```bash
+for dataset in general general_es naturalness.dev; do
+  .venv/bin/python eval/evaluate.py --file "eval/$dataset.jsonl" --label original-stt01
+  .venv/bin/python eval/evaluate.py --file "run/stt-input-01/$dataset.jsonl" --label stt-stt01
+done
+```
+
+평가기의 `saved:`에 나온 결과 폴더를 원본·STT 순서로 지정한다. `--pair` 한 쌍만 지정해도 되며 세 평가셋은 다음처럼 묶는다. 아래 꺾쇠 자리는 실제 결과 폴더로 바꾼다.
+
+```bash
+.venv/bin/python eval/compare_stt.py \
+  --pair <general_원본_결과> <general_STT_결과> \
+  --pair <general_es_원본_결과> <general_es_STT_결과> \
+  --pair <naturalness_원본_결과> <naturalness_STT_결과> \
+  --out-dir run/stt-report-01
+```
+
+`summary.md`·`summary.json`은 FAIL·502의 원본/STT 건수와 증감, 새 실패·회복 ID, 질문·부탁 표현 표지의 변화를 집계한다. `changes.csv`에는 원문·STT 입력·두 출력·기대 번역과 검토 칸을 나란히 남긴다. 질문·부탁 표지는 **검토 후보이며 의미 변경 판정이 아니다**. 특히 물음표만으로 질문과 부탁을 구분하지 않으며, 확인 질문·502는 번역 의도 판정에서 제외한다. 표지가 같아도 뜻이 달라질 수 있으므로 바뀐 출력 전체를 확인한다. 서로 다른 모델·팩·런타임 설정, 변조된 결과, 누락된 ID나 `text` 이외 평가 기준 변경은 비교를 거절한다. mock은 `--allow-mock`으로 도구 점검에만 허용한다.
+
+실제 비교 결과와 검토가 끝난 뒤 프롬프트·검사기 변경 여부를 별도로 정한다.
+
 ### 서버가 자동으로 하는 출력 검증(`validation.py`)
 JSON 계약 → 목표 언어 문자 → 설명문 섞임 → 길이 → 숫자·금액·시간·전화번호 보존(3만 원=30,000 won, 오후 3시=3 p.m. / 원↔달러, 오전↔오후가 바뀌면 실패) → 부정 보존 → 연료 용어(gas는 휘발유로 확정 금지)와 연료별 긍정·부정(“휘발유, 경유 말고”가 뒤집히면 실패) → 좌/우. 실패하면 이유를 붙여 **한 번만** temperature 0으로 다시 생성하고, 그래도 실패하면 502로 재생을 막는다.
 
@@ -392,7 +423,7 @@ GGUF 어댑터와 .gguf.json 출처 파일을 만들며 기본 manifest를 수�
 
 ## 11. 검증 상태
 
-현재 버전은 14B 토크나이저 테스트를 포함한 `python scripts/verify_mvp.py --local`로 API·번역 검증·학습 경계·개인화 회귀 1,533건과 주행 시나리오를 통과했다. 결과는 `run/verify-093a3c91f4/`에 기록한다. 14B 검사에는 8.3절의 `SOURCE_TOKENIZER_DIR` 설정을 사용했으며, 설정이 없으면 해당 4건은 건너뛴다. 이 명령은 실제 모델 번역이나 SDK 기기 시험이 아니다.
+현재 버전은 14B 토크나이저 테스트를 포함한 `python scripts/verify_mvp.py --local`로 API·번역 검증·학습 경계·STT 형식 비교·개인화 회귀 1,591건과 주행 시나리오를 통과했다. 결과는 `run/verify-ed94dc5e4d/`에 기록한다. 14B 검사에는 8.3절의 `SOURCE_TOKENIZER_DIR` 설정을 사용했으며, 설정이 없으면 해당 4건은 건너뛴다. 이 명령은 실제 모델 번역이나 SDK 기기 시험이 아니다.
 
 실제 모델 품질의 완료 기준과 실행 순서는 [mvp_acceptance.md](mvp_acceptance.md)에 있다. 평가기는 mock을 기본 거절하고, 실제 서버의 코드·팩 해시와 실행 설정을 기록한다. 자연스러움과 의미 보존은 review.csv에 별도로 검토해야 한다. 기존 버전의 모델 평가 수치를 이번 버전의 성적으로 쓰지 않는다.
 
