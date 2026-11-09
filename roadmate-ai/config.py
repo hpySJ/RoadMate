@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 MODEL_PROFILES = {"4b-q4": "manifest.json", "4b-q8": "manifest.qwen3-4b-q8.json", "8b-q4": "manifest.qwen3-8b.json",
                   "14b-q4": "manifest.qwen3-14b.json", "32b-q4": "manifest.qwen3-32b.json"}
+TEACHER_PROFILES = ("14b-q4", "32b-q4")
 
 
 def artifact_hashes() -> dict[str, str]:

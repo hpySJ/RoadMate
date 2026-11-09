@@ -33,7 +33,7 @@ def check_training(adapter: Path, manifest: dict) -> tuple[dict, Path]:
         raise SystemExit("adapter training base/revision differs from the serving base")
     if meta.get("smoke") or meta.get("dataset", {}).get("allow_draft", True):
         raise SystemExit("smoke/draft adapters cannot enter paired quality evaluation")
-    check_teacher_evidence(meta["dataset"])
+    check_teacher_evidence(meta["dataset"], meta["config"].get("teacher_profile", "14b-q4"))
     if meta.get("enable_thinking") is not False or meta["config"].get("enable_thinking") is not False:
         raise SystemExit("adapter training must use enable_thinking=False")
     if meta.get("adapter_sha256") != sha256(adapter / "adapter_model.safetensors"):
@@ -80,6 +80,8 @@ def main():
               "chat_template_sha256": meta["chat_template_sha256"], "enable_thinking": False,
               "smoke": False, "allow_draft": False, "adoption_status": "pending",
               "target_source": meta["dataset"]["target_source"], "review_status": meta["dataset"]["review_status"],
+              "teacher_profile": meta["dataset"].get("teacher_profile", "14b-q4"),
+              "teacher_model": meta["dataset"]["teacher_model"],
               "ai_review_sha256": meta["dataset"]["ai_review_sha256"],
               "source_adapter_sha256": meta["adapter_sha256"], "llama_cpp_tag": manifest["runtime"]["llama_cpp_tag"]}
     sidecar.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

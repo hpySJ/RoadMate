@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import prompting as P  # noqa: E402
+from config import MODEL_PROFILES, TEACHER_PROFILES, load_manifest  # noqa: E402
 from validation import looks_like_other_language, validate_destination, validate_translation  # noqa: E402
 from data_boundary import fingerprint, protected_templates, record_overlaps, server_prompt_hashes  # noqa: E402
 from distill import PENDING, REVIEWED, filter_issues, verify_ai_review, verify_teacher_record  # noqa: E402
@@ -74,6 +75,7 @@ def split_groups(groups: list[str], seed: int) -> dict[str, str]:
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
+    ap.add_argument("--teacher", choices=TEACHER_PROFILES, default="14b-q4")
     ap.add_argument("--inputs", nargs="*", default=sorted(glob.glob(str(ROOT / "train" / "data" / "*.jsonl"))))
     ap.add_argument("--out", default=str(ROOT / "train" / "out"))
     ap.add_argument("--allow-draft", action="store_true", help="검수 전 자료 포함(스모크 시험 전용)")
@@ -87,8 +89,8 @@ def main():
 
     blocked = protected_templates(ROOT)
     prompt_hashes = server_prompt_hashes(ROOT) if (ROOT / "prompting.py").exists() else {}
-    teacher_path = ROOT / "models/manifest.qwen3-14b.json"
-    teacher = json.loads(teacher_path.read_text(encoding="utf-8")) if teacher_path.exists() else None
+    teacher_path = ROOT / "models" / MODEL_PROFILES[a.teacher]
+    teacher = load_manifest(teacher_path) if teacher_path.exists() else None
     evidence = json.loads(a.ai_review.read_text(encoding="utf-8")) if a.ai_review else None
     input_hashes = {str(Path(path).resolve()): sha(Path(path)) for path in a.inputs}
     evidence_hash = sha(a.ai_review) if a.ai_review else None
@@ -112,7 +114,7 @@ def main():
                 if r.get("source") != "teacher_distillation" or teacher is None:
                     errors.append(f"{where} teacher_only: human/Claude/Codex or unverified targets are not training labels")
                     continue
-                provenance = verify_teacher_record(r, teacher, prompt_hashes)
+                provenance = verify_teacher_record(r, teacher, prompt_hashes, a.teacher)
                 if provenance:
                     errors.append(f"{where} {provenance}")
                     continue
@@ -187,6 +189,7 @@ def main():
         "target_source": "synthetic_or_unreviewed" if a.allow_draft else "qwen_teacher",
         "human_reviewed": False,
         "ai_review_sha256": evidence_hash,
+        "teacher_profile": a.teacher if not a.allow_draft else None,
         "teacher_model": teacher["model"] if teacher and not a.allow_draft else None,
         "source_mix_policy": POLICY_VERSION,
         "source_mix": {"overall": overall_mix, "by_split": by_split_mix},

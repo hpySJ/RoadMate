@@ -101,7 +101,7 @@ def test_training_rejects_groups_crossing_splits(tmp_path):
         train_qlora.check_groups(tmp_path, {"enable_thinking": False})
 
 
-def training_artifacts(tmp_path):
+def training_artifacts(tmp_path, teacher_profile="14b-q4"):
     base = config.load_manifest(config.ROOT / "models" / "manifest.qwen3-8b.json")
     adapter = tmp_path / "training" / "adapter"
     adapter.mkdir(parents=True)
@@ -114,11 +114,12 @@ def training_artifacts(tmp_path):
     dataset = {"target_source": "qwen_teacher", "review_status": "auto_filtered_ai_sample_reviewed",
                "source_mix_policy": POLICY_VERSION,
                "human_reviewed": False, "ai_review_sha256": "d" * 64,
-               "teacher_model": config.load_manifest(config.ROOT / "models" / "manifest.qwen3-14b.json")["model"],
+               "teacher_profile": teacher_profile,
+               "teacher_model": config.load_manifest(config.ROOT / "models" / config.MODEL_PROFILES[teacher_profile])["model"],
                "allow_draft": False, "outputs": {"train.jsonl": convert_adapter.sha256(data / "train.jsonl")}}
     save(data / "dataset_manifest.json", dataset)
     meta = {"config": {"base_model": base["model"]["base_repo"], "base_revision": base["model"]["base_revision"],
-                       "data_dir": str(data), "enable_thinking": False},
+                       "data_dir": str(data), "enable_thinking": False, "teacher_profile": teacher_profile},
             "dataset": dataset, "dataset_sha256": convert_adapter.sha256(data / "dataset_manifest.json"),
             "smoke": False, "enable_thinking": False, "adapter_sha256": convert_adapter.sha256(weights),
             "chat_template_sha256": "c" * 64}
@@ -156,8 +157,9 @@ def test_full_training_rejects_legacy_human_approved_dataset(tmp_path):
         train_qlora.check_teacher_evidence(meta["dataset"])
 
 
-def test_conversion_writes_sidecar_without_changing_base(tmp_path, monkeypatch):
-    adapter, base, _, _ = training_artifacts(tmp_path)
+@pytest.mark.parametrize("teacher_profile", config.TEACHER_PROFILES)
+def test_conversion_writes_sidecar_without_changing_base(tmp_path, monkeypatch, teacher_profile):
+    adapter, base, meta, _ = training_artifacts(tmp_path, teacher_profile)
     out = tmp_path / "candidate.gguf"
     root = tmp_path / "tools-root"
     executable = root / ".venv-convert" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
@@ -177,4 +179,61 @@ def test_conversion_writes_sidecar_without_changing_base(tmp_path, monkeypatch):
     assert record["sha256"] == convert_adapter.sha256(out)
     assert record["base"]["base_revision"] == base["model"]["base_revision"]
     assert record["adoption_status"] == "pending" and record["enable_thinking"] is False
+    assert record["teacher_profile"] == teacher_profile
+    assert record["teacher_model"] == meta["dataset"]["teacher_model"]
     assert not (root / "models").exists()
+
+
+@pytest.mark.parametrize("teacher_profile", config.TEACHER_PROFILES)
+@pytest.mark.parametrize("change", [None, "profile", "model", "base_revision", "gguf_revision", "gguf_sha256"])
+def test_training_requires_selected_teacher_identity(tmp_path, teacher_profile, change):
+    _, _, meta, _ = training_artifacts(tmp_path, teacher_profile)
+    dataset = meta["dataset"]
+    other = "32b-q4" if teacher_profile == "14b-q4" else "14b-q4"
+    if change == "profile":
+        dataset["teacher_profile"] = other
+    elif change == "model":
+        dataset["teacher_model"] = config.load_manifest(config.ROOT / "models" / config.MODEL_PROFILES[other])["model"]
+    elif change:
+        dataset["teacher_model"][change] = "f" * 64
+    if change:
+        with pytest.raises(SystemExit, match="Qwen teacher targets"):
+            train_qlora.check_teacher_evidence(dataset, teacher_profile)
+    else:
+        train_qlora.check_teacher_evidence(dataset, teacher_profile)
+
+
+@pytest.mark.parametrize("teacher_profile", config.TEACHER_PROFILES)
+def test_conversion_rejects_teacher_selection_changed_after_training(tmp_path, teacher_profile):
+    adapter, base, meta, _ = training_artifacts(tmp_path, teacher_profile)
+    meta["config"]["teacher_profile"] = "32b-q4" if teacher_profile == "14b-q4" else "14b-q4"
+    save(adapter.parent / "run_meta.json", meta)
+    with pytest.raises(SystemExit, match="Qwen teacher targets"):
+        convert_adapter.check_training(adapter, base)
+
+
+def test_training_rejects_cli_and_config_teacher_disagreement_before_model_load(tmp_path, monkeypatch):
+    cfg = tmp_path / "training_config.json"
+    save(cfg, {"teacher_profile": "32b-q4"})
+    monkeypatch.setattr(sys, "argv", ["train_qlora.py", "--config", str(cfg), "--teacher", "14b-q4"])
+    monkeypatch.setattr(sys.stdout, "reconfigure", lambda **kwargs: None, raising=False)
+    with pytest.raises(SystemExit, match="conflicts with the training config"):
+        train_qlora.main()
+
+
+@pytest.mark.parametrize("teacher_profile", config.TEACHER_PROFILES)
+def test_missing_profile_only_preserves_verified_legacy_14b(tmp_path, teacher_profile):
+    adapter, base, meta, data = training_artifacts(tmp_path, teacher_profile)
+    del meta["dataset"]["teacher_profile"]
+    del meta["config"]["teacher_profile"]
+    save(data / "dataset_manifest.json", meta["dataset"])
+    meta["dataset_sha256"] = convert_adapter.sha256(data / "dataset_manifest.json")
+    save(adapter.parent / "run_meta.json", meta)
+    if teacher_profile == "14b-q4":
+        train_qlora.check_teacher_evidence(meta["dataset"])
+        convert_adapter.check_training(adapter, base)
+    else:
+        with pytest.raises(SystemExit, match="Qwen teacher targets"):
+            train_qlora.check_teacher_evidence(meta["dataset"], teacher_profile)
+        with pytest.raises(SystemExit, match="Qwen teacher targets"):
+            convert_adapter.check_training(adapter, base)

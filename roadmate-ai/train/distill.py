@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "train"))
 
 import httpx
 import prompting as P
-from config import Settings, artifact_hashes
+from config import MODEL_PROFILES, TEACHER_PROFILES, Settings, artifact_hashes, load_manifest
 from data_boundary import fingerprint, overlaps, protected_templates, record_overlaps, server_prompt_hashes
 from eval.evaluate import translationese_stats
 from inference import LlamaClient, ModelError
@@ -81,11 +81,14 @@ def filter_issues(row: dict, protected: set[str]) -> list[str]:
     return issues + record_overlaps(row, protected)
 
 
-def assert_teacher(manifest: dict):
+def assert_teacher(manifest: dict, teacher_profile="14b-q4"):
+    if teacher_profile not in TEACHER_PROFILES:
+        raise ValueError(f"unsupported teacher profile: {teacher_profile}")
+    pinned = load_manifest(ROOT / "models" / MODEL_PROFILES[teacher_profile])
     model = manifest["model"]
-    if (model["base_repo"] != "Qwen/Qwen3-14B" or model.get("license") != "apache-2.0"
+    if (model != pinned["model"] or model.get("license") != "apache-2.0"
             or manifest.get("adapter") or manifest["runtime"].get("chat_template_kwargs") != {"enable_thinking": False}):
-        raise ValueError("distillation requires the pinned, unadapted non-thinking Qwen3-14B teacher")
+        raise ValueError(f"distillation requires the pinned, unadapted non-thinking {teacher_profile} teacher")
 
 
 def raw_output(raw: str, alias: str) -> dict:
@@ -105,9 +108,10 @@ def raw_output(raw: str, alias: str) -> dict:
 
 
 class Teacher:
-    def __init__(self, client: LlamaClient, manifest: dict, prompt_hashes: dict):
-        assert_teacher(manifest)
+    def __init__(self, client: LlamaClient, manifest: dict, prompt_hashes: dict, teacher_profile="14b-q4"):
+        assert_teacher(manifest, teacher_profile)
         self.client, self.manifest, self.prompt_hashes = client, manifest, prompt_hashes
+        self.teacher_profile = teacher_profile
         self.raw = None
         client.http.event_hooks["response"].append(self.capture)
 
@@ -135,20 +139,22 @@ class Teacher:
         if not self.raw or raw_output(self.raw, self.manifest["model"]["alias"]) != output:
             raise ValueError("teacher raw response does not match parsed output")
         identity = await self.client.runtime_identity()
-        return output, {"model": self.manifest["model"], "manifest_sha256": digest(self.manifest),
+        return output, {"teacher_profile": self.teacher_profile,
+                        "model": self.manifest["model"], "manifest_sha256": digest(self.manifest),
                         "token_budget": {"prompt": prompt_tokens, "generation_reserved": max_tokens, "context": context},
                         "runtime": identity, "prompt_hashes": self.prompt_hashes,
                         "messages_sha256": digest(messages), "raw_response_sha256": digest(self.raw.encode()),
                         "raw_response": self.raw}
 
 
-def verify_teacher_record(row: dict, manifest: dict, prompt_hashes: dict) -> list[str]:
+def verify_teacher_record(row: dict, manifest: dict, prompt_hashes: dict, teacher_profile="14b-q4") -> list[str]:
     """Integrity checks are reproducibility checks, not a remote cryptographic attestation."""
     try:
-        assert_teacher(manifest)
+        assert_teacher(manifest, teacher_profile)
         teacher = row["teacher"]
         if (row.get("source") != "teacher_distillation" or row.get("review_status") != PENDING
                 or row.get("prompt_version") != P.prompt("translate" if row["task"] == "translate" else "destination")[0]
+                or teacher.get("teacher_profile", teacher_profile) != teacher_profile
                 or teacher["model"] != manifest["model"] or teacher["manifest_sha256"] != digest(manifest)
                 or teacher["runtime"]["model_sha256"] != manifest["model"]["gguf_sha256"]
                 or teacher["runtime"].get("adapter_sha256") is not None
@@ -161,10 +167,10 @@ def verify_teacher_record(row: dict, manifest: dict, prompt_hashes: dict) -> lis
             return ["teacher_provenance_mismatch"]
     except (KeyError, TypeError, ValueError):
         return ["teacher_provenance_missing_or_invalid"]
-    return verify_source_record(row, manifest, prompt_hashes)
+    return verify_source_record(row, manifest, prompt_hashes, teacher_profile)
 
 
-def verify_source_record(row, manifest, prompt_hashes):
+def verify_source_record(row, manifest, prompt_hashes, teacher_profile=None):
     if row.get("source_origin") != "teacher_generated":
         return []
     try:
@@ -173,6 +179,7 @@ def verify_source_record(row, manifest, prompt_hashes):
         spec = json.loads(source["messages"][-1]["content"])
         utterances = raw_output(evidence["raw_response"], manifest["model"]["alias"])["utterances"]
         if (source["version"] != SOURCE_VERSION or evidence["model"] != manifest["model"]
+                or (teacher_profile is not None and evidence.get("teacher_profile", teacher_profile) != teacher_profile)
                 or evidence["manifest_sha256"] != digest(manifest) or evidence["prompt_hashes"] != prompt_hashes
                 or evidence["runtime"]["model_sha256"] != manifest["model"]["gguf_sha256"]
                 or evidence["runtime"].get("adapter_sha256") is not None
@@ -361,9 +368,9 @@ def balanced_sources(rows, seed):
 
 async def generate(args):
     settings = Settings.from_env()
-    assert_teacher(settings.manifest)
-    if settings.model_profile != "14b-q4" or settings.model_backend != "llama":
-        raise ValueError("set MODEL_PROFILE=14b-q4 and MODEL_BACKEND=llama")
+    assert_teacher(settings.manifest, args.teacher)
+    if settings.model_profile != args.teacher or settings.model_backend != "llama":
+        raise ValueError(f"set MODEL_PROFILE={args.teacher} and MODEL_BACKEND=llama")
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     for name in ("distill.draft.jsonl", "distill.rejected.jsonl", "source_generation.jsonl", "source_summary.json", "pool.jsonl",
@@ -372,14 +379,14 @@ async def generate(args):
             raise FileExistsError(out / name)
     client = LlamaClient(args.model_url or settings.model_base_url, settings.model_id, settings.manifest)
     hashes = server_prompt_hashes(ROOT)
-    teacher = Teacher(client, settings.manifest, hashes)
+    teacher = Teacher(client, settings.manifest, hashes, args.teacher)
     try:
         identity = await client.runtime_identity()
         async with httpx.AsyncClient(timeout=300) as http:
             ready = await http.get(args.url.rstrip("/") + "/health/ready")
             ready.raise_for_status()
             health = ready.json()
-        if (not health.get("ready") or health.get("backend") != "llama" or health.get("model_profile") != "14b-q4"
+        if (not health.get("ready") or health.get("backend") != "llama" or health.get("model_profile") != args.teacher
                 or health.get("model_runtime") != identity or health.get("artifact_hashes") != artifact_hashes()):
             raise ValueError("AI ready identity/artifacts differ from the verified teacher runtime")
         protected = protected_templates(ROOT)
@@ -442,7 +449,8 @@ async def generate(args):
                    "source_code_sha256": {name: digest((ROOT / "train/sources" / name).read_bytes())
                                           for name in ("make_pool.py", "source_templates.py")},
                    "rejection_reasons": dict(reasons), "draft_sha256": digest((out / "distill.draft.jsonl").read_bytes()),
-                   "teacher_model": settings.manifest["model"], "runtime": identity, "prompt_hashes": hashes,
+                   "teacher_profile": args.teacher, "teacher_model": settings.manifest["model"],
+                   "runtime": identity, "prompt_hashes": hashes,
                    "review_status": PENDING, "ai_sample_size": min(150, len(accepted)),
                    "source_mix_before_translation": source_mix(selected), "source_mix_after_safety": before_mix,
                    "source_mix_final": check_source_mix(accepted),
@@ -450,6 +458,7 @@ async def generate(args):
                    "directions": dict(Counter(f"{r['source_locale']}->{r.get('target_locale', 'destination')}" for r in accepted))}
         write_json(out / "summary.json", summary)
         (out / "summary.md").write_text("# Distillation generation\n\n" +
+            f"Teacher: {args.teacher} ({settings.manifest['model']['base_repo']}).\n\n" +
             f"Sources: {len(selected)}; accepted: {len(accepted)}; rejected: {len(selected) - len(accepted)}.\n\n" +
             f"Teacher-authored source share: {source_mix(accepted)['teacher_share']:.1%}; " +
             f"unique source fingerprints: {source_mix(accepted)['unique_sources']}; groups: {source_mix(accepted)['groups']}.\n\n" +
@@ -464,6 +473,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="stage", required=True)
     gen = sub.add_parser("generate")
+    gen.add_argument("--teacher", choices=TEACHER_PROFILES, default="14b-q4")
     gen.add_argument("--pool", type=Path, default=ROOT / "train/sources/pool.jsonl")
     gen.add_argument("--out", type=Path, required=True)
     gen.add_argument("--url", default=os.environ.get("AI_URL", "http://127.0.0.1:8000"))

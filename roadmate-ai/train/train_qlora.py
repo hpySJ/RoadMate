@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT))
 
 import prompting as P  # noqa: E402
 from train.data_boundary import server_prompt_hashes  # noqa: E402
-from config import load_manifest  # noqa: E402
+from config import MODEL_PROFILES, TEACHER_PROFILES, load_manifest  # noqa: E402
 from train.source_mix import POLICY_VERSION, check_source_mix, source_mix  # noqa: E402
 
 
@@ -46,11 +46,17 @@ def render_training_row(row, tok) -> dict:
     return {"prompt": prompt, "completion": completion}
 
 
-def check_teacher_evidence(manifest: dict) -> None:
-    teacher = load_manifest(ROOT / "models" / "manifest.qwen3-14b.json")["model"]
+def check_teacher_evidence(manifest: dict, teacher_profile=None) -> None:
+    # Legacy verified datasets were exclusively 14B; absence never implies 32B.
+    recorded_profile = manifest.get("teacher_profile", "14b-q4")
+    teacher_profile = teacher_profile or recorded_profile
+    if teacher_profile not in TEACHER_PROFILES:
+        raise SystemExit("full training requires a supported teacher_profile")
+    teacher = load_manifest(ROOT / "models" / MODEL_PROFILES[teacher_profile])["model"]
     if (manifest.get("target_source") != "qwen_teacher"
             or manifest.get("review_status") != "auto_filtered_ai_sample_reviewed"
             or manifest.get("human_reviewed") is not False
+            or recorded_profile != teacher_profile
             or manifest.get("teacher_model") != teacher
             or manifest.get("source_mix_policy") != POLICY_VERSION
             or not re.fullmatch(r"[0-9a-f]{64}", str(manifest.get("ai_review_sha256", "")))):
@@ -135,6 +141,7 @@ def main():
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=str(ROOT / "train" / "training_config.json"))
+    ap.add_argument("--teacher", choices=TEACHER_PROFILES, help="must match the prepared dataset and training config")
     ap.add_argument("--data-dir", type=Path)
     ap.add_argument("--output-dir", type=Path)
     ap.add_argument("--smoke", action="store_true", help="optimizer step 2회 + 저장·생성 확인")
@@ -144,6 +151,10 @@ def main():
     a = ap.parse_args()
 
     cfg = json.loads(Path(a.config).read_text(encoding="utf-8"))
+    teacher_profile = a.teacher or cfg.get("teacher_profile", "14b-q4")
+    if teacher_profile not in TEACHER_PROFILES or cfg.get("teacher_profile", teacher_profile) != teacher_profile:
+        raise SystemExit("--teacher conflicts with the training config teacher_profile")
+    cfg["teacher_profile"] = teacher_profile
     if a.base_model:
         cfg["base_model"], cfg["base_revision"] = a.base_model, None
     if a.data_dir:
@@ -173,7 +184,7 @@ def main():
         raise SystemExit("prompt input hashes changed: re-run train/prepare_data.py")
 
     if not a.smoke:
-        check_teacher_evidence(dm)
+        check_teacher_evidence(dm, teacher_profile)
     check_groups(data_dir, dm)
     if out_dir.exists():
         raise SystemExit(f"output directory already exists: {out_dir}")

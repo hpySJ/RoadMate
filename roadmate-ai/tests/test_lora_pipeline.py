@@ -102,11 +102,14 @@ def test_existing_stage_is_not_overwritten(tmp_path, monkeypatch):
     assert prior.read_text() == "prior evidence"
 
 
-def test_teacher_check_runs_only_8b_and_14b(tmp_path, monkeypatch):
+@pytest.mark.parametrize("teacher", ["14b-q4", "32b-q4"])
+def test_teacher_check_runs_only_8b_and_selected_teacher(tmp_path, monkeypatch, teacher):
     calls = []
     class FakePipeline:
-        def __init__(self, root, out, stage):
+        def __init__(self, root, out, stage, teacher):
             self.python = root / "python"
+        def disk_preflight(self, profiles, **kwargs):
+            calls.append(("disk", profiles))
         def ports(self, profiles):
             calls.append(("ports", profiles))
             return []
@@ -120,9 +123,11 @@ def test_teacher_check_runs_only_8b_and_14b(tmp_path, monkeypatch):
     monkeypatch.setattr(L, "ROOT", tmp_path)
     monkeypatch.setattr(L, "Pipeline", FakePipeline)
     monkeypatch.setattr(L, "ensure_idle", lambda *args: None)
-    assert L.main(["teacher-check", "--out", str(tmp_path / "stage")]) == 0
-    assert [args for name, *rest in calls if name == "evaluate" for args in rest] == [("8b-q4", "baseline"), ("14b-q4", "candidate")]
-    assert "32b-q4" not in repr(calls)
+    arguments = [] if teacher == "14b-q4" else ["--teacher", teacher]
+    assert L.main(["teacher-check", "--out", str(tmp_path / "stage"), *arguments]) == 0
+    assert [args for name, *rest in calls if name == "evaluate" for args in rest] == [("8b-q4", "baseline"), (teacher, "candidate")]
+    assert calls.index(("disk", ("8b-q4", teacher))) < calls.index(("evaluate", ("8b-q4", "baseline")))
+    assert json.loads((tmp_path / "stage/stage.json").read_text())["teacher"] == teacher
 
 
 def test_finish_only_calls_review_gate(tmp_path, monkeypatch):
@@ -135,7 +140,8 @@ def test_finish_only_calls_review_gate(tmp_path, monkeypatch):
     assert "--reviews" in calls[0]
 
 
-def test_train_commands_keep_adapter_identity_for_comparison(tmp_path, monkeypatch):
+@pytest.mark.parametrize("teacher", ["14b-q4", "32b-q4"])
+def test_train_commands_keep_adapter_identity_for_comparison(tmp_path, monkeypatch, teacher):
     (tmp_path / "train").mkdir()
     cfg = {"base_model": "Qwen/Qwen3-8B", "base_revision": "pinned", "max_length": 4096}
     (tmp_path / "train" / "training_config.json").write_text(json.dumps(cfg))
@@ -148,7 +154,7 @@ def test_train_commands_keep_adapter_identity_for_comparison(tmp_path, monkeypat
     out.mkdir()
     for name in ("distill.draft.jsonl", "sample.evidence.json"):
         (data / name).write_text("{}")
-    pipeline, calls = L.Pipeline(tmp_path, out, "train-eval"), []
+    pipeline, calls = L.Pipeline(tmp_path, out, "train-eval", teacher), []
     monkeypatch.setattr(pipeline, "run", lambda command, name, env=None: calls.append((name, command, env)))
     monkeypatch.setattr(pipeline, "evaluate", lambda *args: calls.append(("evaluate", args)))
     monkeypatch.setattr(pipeline, "compare", lambda *args: calls.append(("compare", args)))
@@ -156,6 +162,10 @@ def test_train_commands_keep_adapter_identity_for_comparison(tmp_path, monkeypat
     prepare = next(c[1] for c in calls if c[0] == "prepare")
     assert prepare[prepare.index("--ai-review") + 1] == data / "sample.evidence.json"
     assert prepare[prepare.index("--tokenizer-revision") + 1] == "pinned"
+    assert prepare[prepare.index("--teacher") + 1] == teacher
+    train = next(c[1] for c in calls if c[0] == "train")
+    assert train[train.index("--teacher") + 1] == teacher
+    assert json.loads((out / "training_config.json").read_text())["teacher_profile"] == teacher
     assert ("evaluate", ("8b-q4", "baseline")) in calls
     assert ("evaluate", ("8b-q4", "candidate", out / "adapter.gguf")) in calls
     assert next(c[2] for c in calls if c[0] == "convert")["MODEL_PROFILE"] == "8b-q4"

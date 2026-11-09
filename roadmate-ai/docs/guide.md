@@ -277,16 +277,18 @@ MODEL_PROFILE=8b-q4 .venv/bin/python eval/evaluate.py --file eval/general.jsonl 
 | Qwen3-8B HF 원본 | 약 16GB | NF4 학습 |
 | 8B Q4_K_M GGUF | 5.03GB | 기본·어댑터 비교 |
 | 14B Q4_K_M GGUF | 9.00GB | 선생 비교·생성 |
-| 32B Q4_K_M GGUF | 19.76GB | 프로필 정의만, 자동 실행·다운로드 안 함 |
+| 32B Q4_K_M GGUF | 19.76GB | `--teacher 32b-q4`로 선택하는 DLPC 선생 전용 |
 | 환경·캐시·체크포인트 | 추가 수~수십 GB | 설치·체크포인트 수에 따라 변동 |
 
 여유 디스크 50~70GB 이상을 계획한다. 파일 크기는 VRAM 요구량과 다르다. 현재 DLPC는 **VRAM 24GB**이므로 아래 명령은 GPU_LAYERS를 지정하지 않고 manifest의 n_gpu_layers=99로 전체 GPU 적재를 요청한다. 시작 로그의 실제 offload 레이어 수와 실행 중 VRAM 사용량으로 확인한다. 이 PC에서 24GB DLPC의 적재·학습·속도를 실측한 것은 아니다. MODEL_TIMEOUT_S=60은 실행 제한 시간이며 예상 지연이 아니다.
 
 [공식 14B](https://huggingface.co/Qwen/Qwen3-14B-GGUF/tree/530227a7d994db8eca5ab5ced2fb692b614357fd), [공식 32B](https://huggingface.co/Qwen/Qwen3-32B-GGUF/tree/938a7432affaec9157f883a87164e2646ae17555)의 revision·SHA256·크기를 manifest에 고정했다. 생각 모드를 끄며 실제 응답에 생각 내용이 나오면 거절한다.
 
+**32B는 24GB GPU에서 여유가 빠듯하다.** 19.76GB 모델 파일 외에도 KV 캐시와 실행 버퍼가 필요하므로 파일 크기만으로 적재 성공을 판단하지 않는다. 32B 선생은 n_gpu_layers=99·ctx=4096으로 실행하고 CPU로 넘기거나 레이어 수를 줄여 재시도하지 않는다. 실제 적재·품질·속도는 DLPC에서 확인해야 한다. 시연 기본 모델은 계속 8b-q4이며 `/translate`·`/internal/v1/*` 계약도 바뀌지 않는다.
+
 ### 8.2 단계별 명령
 
-각 --out은 새 폴더여야 한다. 24GB DLPC의 단계별 소요 시간은 **실측 전**이며, 기존 8GB CPU offload 가정의 시간 추정은 사용하지 않는다. 다운로드·검토 시간은 별도다.
+각 --out은 `teacher-02`처럼 **아직 없는 새 폴더**여야 한다. 기존 `teacher-01` 결과를 덮어쓰지 않는다. 24GB DLPC의 단계별 소요 시간은 **실측 전**이며, 기존 8GB CPU offload 가정의 시간 추정은 사용하지 않는다. 다운로드·검토 시간은 별도다.
 
 | 단계 | 소요 시간 |
 |---|---|
@@ -294,15 +296,30 @@ MODEL_PROFILE=8b-q4 .venv/bin/python eval/evaluate.py --file eval/general.jsonl 
 | generate | 생성 발화 수·실제 토큰 수에 따라 실측 필요 |
 | train-eval | 학습 토큰 수·처리량에 따라 실측 필요 |
 
-단계별 명령 한 줄:
+`--teacher`는 `14b-q4` 또는 `32b-q4`이며 기본값은 `14b-q4`다. 기본 선생의 단계별 명령:
 
     MODEL_TIMEOUT_S=60 bash scripts/lora.sh teacher-check --out train/runs/teacher-01
     MODEL_TIMEOUT_S=60 bash scripts/lora.sh generate --out train/runs/distill-01
     bash scripts/lora.sh train-eval --data train/runs/distill-01 --out train/runs/lora-01
 
+32B 선생 비교를 명시적으로 선택하는 명령:
+
+    MODEL_TIMEOUT_S=60 bash scripts/lora.sh teacher-check --teacher 32b-q4 --out train/runs/teacher-02
+
+비교·검토에서 32B를 선생으로 선택한 뒤에만 생성으로 진행한다. 자료 생성과 후속 학습에도 같은 선택을 전달한다(생성 후 AI 표본 검토 절차는 8.3절).
+
+    MODEL_TIMEOUT_S=60 bash scripts/lora.sh generate --teacher 32b-q4 --out train/runs/distill-02
+    bash scripts/lora.sh train-eval --teacher 32b-q4 --data train/runs/distill-02 --out train/runs/lora-02
+
+선택한 선생은 단계 기록·생성 기록·준비한 자료·학습 설정에 남는다. `prepare_data.py`와 `train_qlora.py`는 선택한 선생 manifest의 모델·revision·해시와 자료 출처를 대조한다. 14B와 32B 자료를 섞거나 다른 선생을 지정하면 중단한다. 학습 대상 본체는 두 경우 모두 8B다.
+
 이전에 GPU_LAYERS를 export했다면 실행 전에 unset GPU_LAYERS로 해제한다. 실제 토큰 수와 필터 통과율에 따라 시간·자료 수가 달라진다. 각 단계는 설정·로그·산출물·stage_summary.md를 한 폴더에 남기고 요약과 경과 시간을 출력한다. 홈의 roadmate-review-*.tgz에는 리뷰 CSV/MD만 포함하고 key·설정·평가 원본은 넣지 않는다. 비교 리뷰는 Claude용·Codex용을 분리한다. 기존 PID·사용 중인 포트를 발견하면 시작하지 않고 자신이 시작한 프로세스만 종료한다.
 
-teacher-check는 8B·14B로 general·general_es·naturalness.dev를 평가한다. FAIL·502·첫 시도 오언어·재시도·번역투·p50/p95와 블라인드 리뷰를 남긴다. **14B가 더 좋은 선생인지 검토한 뒤 generate로 진행한다.** 두 모델 모두 전체 GPU 적재를 요청하고 같은 제한 시간을 사용한다. 실제 적재 방식이 다르면 로그에 남기고 지연 비교에 구분해 표시한다. 32B는 자동 대안으로 실행하지 않는다.
+teacher-check는 **8B 기준 모델과 선택한 선생**으로 general·general_es·naturalness.dev를 평가한다. FAIL·502·첫 시도 오언어·재시도·번역투·p50/p95와 블라인드 리뷰를 남긴다. 선생이 더 나은지 검토한 뒤 generate로 진행한다. 두 모델에는 같은 제한 시간을 적용한다. 14B 실패 시 32B로 자동 전환하지 않는다.
+
+32B의 teacher-check·generate는 시작 전에 디스크를 검사한다. 아직 없는 GGUF(32B 19.76GB, 비교 시 필요한 8B 포함), 보존할 기존 로그의 복사본과 단계 산출물 여유 2GiB를 예약한다. 같은 파일시스템의 필요량은 합산하며 이미 있는 정상 크기 모델은 다시 예약하지 않고 기존 다운로드 단계에서 SHA256을 검증한다. 기존 산출물은 삭제하지 않는다. 부족하면 다운로드·서버 시작 전에 중단한다.
+
+32B는 GPU_LAYERS가 99가 아닌 설정을 거절하며 자동 메모리 맞춤을 끄고 CUDA 장치를 요구한다. 현재 실행의 llama-server 로그에서 실제 `offloaded N/N layers to GPU`와 CUDA 모델 적재를 확인하고, 실제 레이어 수·로그 경로·디스크 검사 결과를 `stage_summary.md`에 남긴다. 부분 적재·확인할 로그 누락·로딩 실패는 실패로 보고하며 CPU 비교 결과를 만들지 않는다. 실패한 시작 로그도 해당 단계 폴더에 보존한다.
 
 ### 8.3 원문·정답·AI 표본 검토
 
@@ -346,7 +363,7 @@ GGUF 어댑터와 .gguf.json 출처 파일을 만들며 기본 manifest를 수�
 
     MODEL_PROFILE=8b-q4 bash scripts/run.sh start --lora /절대경로/adapter.gguf
 
-후속 평가에도 같은 LORA_ADAPTER 절대 경로를 전달한다. 기본 복귀는 종료 후 LORA_ADAPTER= bash scripts/run.sh start로 실행한다. 실제 14B 품질·VRAM, 학습·변환·적재·LoRA 효과는 DLPC 확인 항목이다.
+후속 평가에도 같은 LORA_ADAPTER 절대 경로를 전달한다. 기본 복귀는 종료 후 LORA_ADAPTER= bash scripts/run.sh start로 실행한다. 실제 14B·32B 품질·VRAM, 학습·변환·적재·LoRA 효과는 DLPC 확인 항목이다.
 
 ## 9. 문제 해결
 
@@ -375,7 +392,7 @@ GGUF 어댑터와 .gguf.json 출처 파일을 만들며 기본 manifest를 수�
 
 ## 11. 검증 상태
 
-현재 버전은 14B 토크나이저 테스트를 포함한 `python scripts/verify_mvp.py --local`로 API·번역 검증·학습 경계·개인화 회귀 1,454건과 주행 시나리오를 통과했다. 결과는 `run/verify-31dc31d865/`에 기록한다. 14B 검사에는 8.3절의 `SOURCE_TOKENIZER_DIR` 설정을 사용했으며, 설정이 없으면 해당 4건은 건너뛴다. 이 명령은 실제 모델 번역이나 SDK 기기 시험이 아니다.
+현재 버전은 14B 토크나이저 테스트를 포함한 `python scripts/verify_mvp.py --local`로 API·번역 검증·학습 경계·개인화 회귀 1,533건과 주행 시나리오를 통과했다. 결과는 `run/verify-093a3c91f4/`에 기록한다. 14B 검사에는 8.3절의 `SOURCE_TOKENIZER_DIR` 설정을 사용했으며, 설정이 없으면 해당 4건은 건너뛴다. 이 명령은 실제 모델 번역이나 SDK 기기 시험이 아니다.
 
 실제 모델 품질의 완료 기준과 실행 순서는 [mvp_acceptance.md](mvp_acceptance.md)에 있다. 평가기는 mock을 기본 거절하고, 실제 서버의 코드·팩 해시와 실행 설정을 기록한다. 자연스러움과 의미 보존은 review.csv에 별도로 검토해야 한다. 기존 버전의 모델 평가 수치를 이번 버전의 성적으로 쓰지 않는다.
 

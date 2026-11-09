@@ -17,9 +17,29 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from config import MODEL_PROFILES  # noqa: E402
+from config import MODEL_PROFILES, TEACHER_PROFILES  # noqa: E402
 
 DATASETS = ("general", "general_es", "naturalness.dev")
+STAGE_HEADROOM = 2 * 1024 ** 3
+
+
+def existing_parent(path):
+    path = path.resolve()
+    while not path.exists():
+        path = path.parent
+    return path
+
+
+def copy_process_logs(root, name, log_dir):
+    log_dir.mkdir(parents=True, exist_ok=True)
+    copied = []
+    for stream in ("out", "err"):
+        source = root / "logs" / f"{name}.{stream}.log"
+        if source.is_file():
+            target = log_dir / source.name
+            shutil.copy2(source, target)
+            copied.append(target)
+    return copied
 
 
 def alive(pid):
@@ -60,13 +80,17 @@ def stop_owned(root, start_log, log_dir):
     if not start_log.exists():
         return
     entries = re.findall(r"^(ai|llama) started \(pid (\d+)\),", start_log.read_text(encoding="utf-8"), re.M)
-    waiting, refused = [], []
+    waiting, refused, log_errors = [], [], []
     for name, raw_pid in entries:
         pid = int(raw_pid)
         pidfile = root / "run" / f"{name}.pid"
         matching = pidfile.exists() and pidfile.read_text().strip() == raw_pid
         if not alive(pid):
             if matching:
+                try:
+                    copy_process_logs(root, name, log_dir)
+                except OSError as error:
+                    log_errors.append(str(error))
                 pidfile.unlink()
             continue
         try:
@@ -77,11 +101,10 @@ def stop_owned(root, start_log, log_dir):
         if not matching or tag not in command:
             refused.append(f"{name} PID {pid}")
             continue
-        log_dir.mkdir(parents=True, exist_ok=True)
-        for stream in ("out", "err"):
-            source = root / "logs" / f"{name}.{stream}.log"
-            if source.exists():
-                shutil.copy2(source, log_dir / source.name)
+        try:
+            copy_process_logs(root, name, log_dir)
+        except OSError as error:
+            log_errors.append(str(error))
         try:
             os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
@@ -97,6 +120,8 @@ def stop_owned(root, start_log, log_dir):
             pidfile.unlink()
     if refused:
         raise ValueError("Cannot confirm process ownership; left running: " + ", ".join(refused))
+    if log_errors:
+        raise ValueError("Owned processes stopped, but log archival failed: " + "; ".join(log_errors))
 
 
 def review_archive(files, home):
@@ -112,14 +137,16 @@ def review_archive(files, home):
 
 
 class Pipeline:
-    def __init__(self, root, out, stage):
+    def __init__(self, root, out, stage, teacher="14b-q4"):
         self.root, self.out, self.stage = root, out, stage
+        self.teacher = teacher
         self.python = root / ".venv" / "bin" / "python"
         self.env = {**os.environ, "LOG_REJECTED": "1", "MODEL_BACKEND": "llama", "MODEL_PROFILE": "8b-q4",
                     "PYTHONIOENCODING": "utf-8"}
         self.env.pop("MODEL_ID", None)
         self.env["LORA_ADAPTER"] = ""
         self.runs, self.archive = {}, None
+        self.disk_checks, self.offload_checks = [], {}
         self.started = time.monotonic()
 
     def manifest(self, profile):
@@ -127,6 +154,72 @@ class Pipeline:
 
     def ports(self, profiles):
         return [int(self.env.get("AI_PORT", "8000")), *(self.manifest(p)["runtime"]["port"] for p in profiles)]
+
+    def require_32b_settings(self):
+        runtime = self.manifest("32b-q4")["runtime"]
+        if runtime["ctx"] != 4096 or runtime["n_gpu_layers"] != 99:
+            raise ValueError("32b-q4 requires manifest ctx=4096 and n_gpu_layers=99; no CPU fallback")
+        if self.env.get("GPU_LAYERS", "99") != "99":
+            raise ValueError("32b-q4 requires GPU_LAYERS=99; remove the override or set 99")
+        if self.env.get("LLAMA_ARG_N_CPU_FFN", "0") not in ("", "0"):
+            raise ValueError("32b-q4 refuses LLAMA_ARG_N_CPU_FFN: CPU tensor fallback is disabled")
+        if self.env.get("LLAMA_ARG_OVERRIDE_TENSOR"):
+            raise ValueError("32b-q4 refuses LLAMA_ARG_OVERRIDE_TENSOR: custom tensor placement is disabled")
+        if "GGML_CUDA_ENABLE_UNIFIED_MEMORY" in self.env:
+            raise ValueError("32b-q4 refuses GGML_CUDA_ENABLE_UNIFIED_MEMORY: CPU memory fallback is disabled")
+
+    def disk_preflight(self, profiles, *, copy_old_logs=False):
+        if self.teacher != "32b-q4" or self.stage not in ("teacher-check", "generate"):
+            return
+        self.require_32b_settings()
+        entries = []
+        for profile in dict.fromkeys(profiles):
+            model = self.manifest(profile)["model"]
+            target = self.root / "models" / model["gguf_file"]
+            cached = target.is_file() and target.stat().st_size == model["gguf_size"]
+            entries.append({"purpose": profile + " GGUF", "path": str(target.parent),
+                            "cached_size_matches": cached, "required_bytes": 0 if cached else model["gguf_size"]})
+        old_logs = sum(p.stat().st_size for p in (self.root / "logs").rglob("*") if p.is_file()) if copy_old_logs else 0
+        entries.append({"purpose": "stage headroom and prior log copy", "path": str(self.out),
+                        "required_bytes": STAGE_HEADROOM + old_logs})
+        filesystems = {}
+        for entry in entries:
+            parent = existing_parent(Path(entry["path"]))
+            device = str(parent.stat().st_dev)
+            group = filesystems.setdefault(device, {"device": device, "probe_path": str(parent),
+                "free_bytes": shutil.disk_usage(parent).free, "required_bytes": 0, "entries": []})
+            group["required_bytes"] += entry["required_bytes"]
+            group["entries"].append(entry)
+        evidence = {"profiles": list(profiles), "stage_headroom_bytes": STAGE_HEADROOM,
+                    "prior_logs_bytes": old_logs, "filesystems": list(filesystems.values())}
+        self.disk_checks.append(evidence)
+        for group in filesystems.values():
+            if group["free_bytes"] < group["required_bytes"]:
+                raise ValueError(f"Insufficient disk space at {group['probe_path']}: need {group['required_bytes']} bytes, "
+                                 f"free {group['free_bytes']}; next download/start blocked; existing artifacts preserved")
+
+    def inspect_32b_offload(self, start_log, arm, startup_succeeded):
+        text = start_log.read_text(encoding="utf-8") if start_log.is_file() else ""
+        pids = re.findall(r"^llama started \(pid (\d+)\),", text, re.M)
+        pidfile = self.root / "run" / "llama.pid"
+        owned = len(pids) == 1 and pidfile.is_file() and pidfile.read_text().strip() == pids[0]
+        paths = copy_process_logs(self.root, "llama", self.out / "logs" / arm) if owned else []
+        raw = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in paths)
+        reports = [{"offloaded": int(a), "total": int(b)}
+                   for a, b in re.findall(r"offloaded\s+(\d+)/(\d+)\s+layers to GPU", raw)]
+        cuda = [float(n) for n in re.findall(r"CUDA\d+\s+model buffer size\s*=\s*([\d.]+)\s*MiB", raw)]
+        failures = [line for line in raw.splitlines() if re.search(
+            r"failed to load (?:the )?model|error loading model|failed to allocate|out of memory|CUDA error|cudaMalloc.*failed",
+            line, re.I)]
+        verified = bool(startup_succeeded and owned and reports and all(
+            r["offloaded"] == r["total"] > 0 for r in reports) and any(n > 0 for n in cuda) and not failures)
+        evidence = {"profile": "32b-q4", "startup_succeeded": startup_succeeded,
+                    "requested_gpu_layers": 99, "device": "CUDA0", "fit": "off", "context": 4096,
+                    "pid": int(pids[0]) if len(pids) == 1 else None, "pidfile_matches": owned,
+                    "raw_logs": [str(p) for p in paths], "offload_reports": reports,
+                    "cuda_model_buffer_mib": cuda, "loading_failures": failures, "verified": verified}
+        self.offload_checks[arm] = evidence
+        return verified
 
     def run(self, command, name, env=None):
         log = self.out / "logs" / f"{name}.log"
@@ -146,15 +239,27 @@ class Pipeline:
         env = {**self.env, "MODEL_PROFILE": profile, "MODEL_ID": manifest["model"]["alias"],
                "MODEL_BASE_URL": f"http://127.0.0.1:{manifest['runtime']['port']}/v1",
                "LORA_ADAPTER": str(adapter) if adapter else ""}
+        if profile == "32b-q4":
+            self.require_32b_settings()
+            env.update(GPU_LAYERS="99", LLAMA_ARG_FIT="off", LLAMA_ARG_DEVICE="CUDA0")
+        self.disk_preflight((profile,))
         (self.out / f"{arm}.manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         self.run([self.python, "scripts/download_model.py"], f"{arm}-download", env)
         start_log = self.out / "logs" / f"{arm}-start.log"
+        startup_succeeded = False
         try:
             command = ["bash", "scripts/run.sh", "start"] + (["--lora", str(adapter)] if adapter else [])
             self.run(command, f"{arm}-start", env)
+            startup_succeeded = True
+            if profile == "32b-q4" and not self.inspect_32b_offload(start_log, arm, True):
+                raise ValueError("32b-q4 full CUDA offload was not verified in current startup logs; no evaluation or generation run")
             yield env
         finally:
-            stop_owned(self.root, start_log, self.out / "logs" / arm)
+            try:
+                if profile == "32b-q4":
+                    self.inspect_32b_offload(start_log, arm, startup_succeeded)
+            finally:
+                stop_owned(self.root, start_log, self.out / "logs" / arm)
 
     def evaluate(self, profile, arm, adapter=None):
         with self.server(profile, arm, adapter) as env:
@@ -203,9 +308,10 @@ class Pipeline:
         self.archive = review_archive(files, Path.home())
 
     def generate(self):
-        with self.server("14b-q4", "teacher") as env:
+        with self.server(self.teacher, "teacher") as env:
             self.run([self.python, "train/distill.py", "generate", "--pool", "train/sources/pool.jsonl",
-                      "--out", self.out, "--url", f"http://127.0.0.1:{env.get('AI_PORT', '8000')}"], "generate", env)
+                      "--out", self.out, "--teacher", self.teacher,
+                      "--url", f"http://127.0.0.1:{env.get('AI_PORT', '8000')}"], "generate", env)
         draft = self.out / "distill.draft.jsonl"
         canonical = self.root / "train" / "data" / "distill.draft.jsonl"
         if canonical.exists():
@@ -218,6 +324,7 @@ class Pipeline:
 
     def train_eval(self, data):
         config = json.loads((self.root / "train" / "training_config.json").read_text(encoding="utf-8"))
+        config["teacher_profile"] = self.teacher
         draft, evidence = data / "distill.draft.jsonl", data / "sample.evidence.json"
         if not draft.is_file() or not evidence.is_file():
             raise ValueError(f"Teacher draft and completed AI sample evidence are required in {data}")
@@ -230,9 +337,9 @@ class Pipeline:
         prepared = self.out / "prepared"
         self.run([train_python, "train/prepare_data.py", "--inputs", draft, "--ai-review", evidence, "--out", prepared,
                   "--tokenizer", config["base_model"], "--tokenizer-revision", config["base_revision"],
-                  "--max-length", str(config["max_length"])], "prepare")
+                  "--max-length", str(config["max_length"]), "--teacher", self.teacher], "prepare")
         self.run([train_python, "train/train_qlora.py", "--config", snapshot, "--data-dir", prepared,
-                  "--output-dir", self.out / "training"], "train")
+                  "--output-dir", self.out / "training", "--teacher", self.teacher], "train")
         adapter = self.out / "adapter.gguf"
         self.run([self.python, "train/convert_adapter.py", "--adapter", self.out / "training" / "adapter",
                   "--out", adapter, "--profile", "8b-q4"], "convert", {**self.env, "MODEL_PROFILE": "8b-q4"})
@@ -243,12 +350,22 @@ class Pipeline:
 
     def summary(self, error=None):
         lines = [f"# LoRA {self.stage}", "", f"- artifacts: {self.out}",
+                 f"- teacher: {self.teacher}",
                  f"- status: {'failed' if error else 'AI 검토 대기 (참고)'}",
                  f"- elapsed seconds: {time.monotonic() - self.started:.1f}"]
         if error:
             lines.append(f"- error: {error}")
         if self.archive:
             lines.append(f"- blind review archive (no keys): {self.archive}")
+        for index, check in enumerate(self.disk_checks, 1):
+            for fs in check["filesystems"]:
+                lines.append(f"- disk check {index}: {fs['probe_path']}; required={fs['required_bytes']} bytes; free={fs['free_bytes']} bytes")
+        for arm, check in self.offload_checks.items():
+            lines.append(f"- {arm} CUDA offload verified: {check['verified']}; reports={check['offload_reports']}; "
+                         f"CUDA model buffers MiB={check['cuda_model_buffer_mib']}; startup succeeded={check['startup_succeeded']}")
+            lines.append(f"- {arm} raw logs: {', '.join(check['raw_logs']) or 'no owned startup log'}")
+            if check["loading_failures"]:
+                lines.append(f"- {arm} loading failures: {check['loading_failures']}")
         for (arm, dataset), run in self.runs.items():
             lines += ["", f"## {arm} / {dataset}", ""]
             rows = [json.loads(line) for line in (run / "results.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -261,6 +378,9 @@ class Pipeline:
         lines += ["", "검토 결과가 비어 있으면 선생 모델 우위·학습 자료 승인·어댑터 채택을 뜻하지 않습니다."]
         path = self.out / "stage_summary.md"
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        (self.out / "stage_summary.json").write_text(json.dumps({"stage": self.stage, "teacher": self.teacher,
+            "error": error, "disk_checks": self.disk_checks, "offload_checks": self.offload_checks},
+            ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print("\n".join(lines), flush=True)
         print(f"summary: {path}", flush=True)
 
@@ -268,6 +388,7 @@ class Pipeline:
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("stage", choices=("teacher-check", "generate", "train-eval"))
+    parser.add_argument("--teacher", choices=TEACHER_PROFILES, default="14b-q4")
     parser.add_argument("--out", type=Path)
     parser.add_argument("--data", type=Path, help="Completed generate folder with sample.evidence.json")
     parser.add_argument("--finish", type=Path, help="Existing train-eval folder; review decision only, no model execution")
@@ -282,25 +403,27 @@ def main(argv=None):
         parser.error("--data is required only for train-eval; --reviews requires --finish")
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     out = (args.out or ROOT / "train" / "runs" / f"{args.stage}-{stamp}-{uuid.uuid4().hex[:6]}").resolve()
-    pipeline = Pipeline(ROOT, out, args.stage)
+    pipeline = Pipeline(ROOT, out, args.stage, args.teacher)
     created = False
     try:
         if out.exists():
             raise ValueError(f"Output already exists; prior evidence was preserved: {out}")
         if not pipeline.python.is_file():
             raise ValueError("Run bash scripts/run.sh setup first.")
-        profiles = ("8b-q4", "14b-q4") if args.stage == "teacher-check" else ("14b-q4",) if args.stage == "generate" else ("8b-q4",)
+        profiles = ("8b-q4", args.teacher) if args.stage == "teacher-check" else (args.teacher,) if args.stage == "generate" else ("8b-q4",)
         ensure_idle(ROOT, pipeline.ports(profiles))
         out.mkdir(parents=True)
         created = True
+        pipeline.disk_preflight(profiles, copy_old_logs=True)
         if (ROOT / "logs").is_dir():
             shutil.copytree(ROOT / "logs", out / "logs-before")
         (out / "stage.json").write_text(json.dumps({"stage": args.stage, "created_utc": stamp, "profiles": profiles,
+                                                    "teacher": args.teacher,
                                                     "gpu_layers_override": os.environ.get("GPU_LAYERS"),
                                                     "data": str(args.data.resolve()) if args.data else None}, indent=2) + "\n", encoding="utf-8")
         if args.stage == "teacher-check":
             pipeline.evaluate("8b-q4", "baseline")
-            pipeline.evaluate("14b-q4", "candidate")
+            pipeline.evaluate(args.teacher, "candidate")
             pipeline.compare()
         elif args.stage == "generate":
             pipeline.generate()
