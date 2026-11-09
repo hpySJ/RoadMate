@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 기본 MODEL_PROFILE=8b-q4. 대안은 MODEL_PROFILE=4b-q4 또는 4b-q8.
 # Linux(DLPC 등)용 설치·실행. Windows는 같은 폴더의 .ps1 스크립트를 쓴다.
 #   bash scripts/run.sh setup            .venv + llama.cpp(CUDA 12.8) + 모델 다운로드 + 환경 확인
 #   bash scripts/run.sh start [--mock]   llama-server(8081) → AI 서버(8000) 백그라운드 실행 → smoke 시험

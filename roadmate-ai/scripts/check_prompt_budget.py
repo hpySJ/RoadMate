@@ -2,7 +2,6 @@
 import argparse
 import json
 import sys
-from itertools import product
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,10 +17,6 @@ def main() -> int:
     ap.add_argument("--tokenizer-dir", type=Path, required=True, help="manifest base_revision의 tokenizer.json/config 경로")
     ap.add_argument("--manifest", type=Path, help="MODEL_PROFILE 대신 검사할 모델 manifest")
     ap.add_argument("--chat-template", type=Path, help="llama-server /props의 chat_template을 저장한 Jinja 파일")
-    ap.add_argument("--two-step-ko", action="store_true")
-    ap.add_argument("--natural-style-ko", action="store_true")
-    ap.add_argument("--field-glossary", action="store_true")
-    ap.add_argument("--all-flags", action="store_true", help="세 독립 실험 플래그의 8개 조합을 모두 검사")
     ap.add_argument("--output", type=Path, help="프로필별 검사 결과를 보관할 JSON 경로")
     args = ap.parse_args()
     selected_profile = model_profile() if args.manifest is None else None
@@ -40,10 +35,10 @@ def main() -> int:
     template_kwargs = manifest["runtime"].get("chat_template_kwargs", {})
     rows = []
 
-    def check(name, messages, generation, flags):
+    def check(name, messages, generation):
         text = template.render(messages=messages, add_generation_prompt=True, tools=None, **template_kwargs)
         n = len(tok.encode(text, add_special_tokens=False).ids)
-        rows.append({"case": name, "flags": flags, "prompt": n, "generation_reserved": generation,
+        rows.append({"case": name, "prompt": n, "generation_reserved": generation,
                      "total": n + generation, "fits": n + generation <= limit})
 
     cases = [json.loads(line) for name in ("dev.jsonl", "general.jsonl", "general_es.jsonl", "naturalness.dev.jsonl")
@@ -59,31 +54,21 @@ def main() -> int:
     # 400자에 여러 용어가 함께 있는 입력도 측정해 선택 힌트가 늘어나는 경우를 포함한다.
     for source in ("en-US", "es-US"):
         lang = P.LANG_KEY[source]
-        terms = [e[lang][0] for e in P.optional_field_terms()["entries"] + P.glossary()["entries"]]
+        terms = [e[lang][0] for e in P.glossary()["entries"]]
         cases.append({"id": f"max-terms-{source}-ko", "task": "translate", "source_locale": source,
                       "target_locale": "ko-KR", "scenario": "general", "text": "; ".join(terms)[:400]})
-    flag_names = ("two_step_ko", "natural_style_ko", "field_glossary")
-    configurations = [dict(zip(flag_names, values)) for values in product((False, True), repeat=3)] if args.all_flags else [
-        {name: getattr(args, name) for name in flag_names}]
-    for flags in configurations:
-        for c in cases:
-            if c["task"] != "translate":
-                check(c["id"], P.destination_messages(c["source_locale"], c["text"]), P.DESTINATION_MAX_TOKENS, flags)
-                continue
-            messages = P.translate_messages(c["source_locale"], c["target_locale"], c["scenario"], c["text"], **flags)
-            generation = P.translation_max_tokens(c["target_locale"], flags["two_step_ko"])
-            check(c["id"], messages, generation, flags)
-            # 모든 교정 지시와 혼합 문자 교정의 원문 단어 전체를 예약해 상한을 잰다. 오답 초안은 넣지 않는다.
-            issues = list(REPAIR_HINT) + [f"mixed_script:{w}" for w in latin_tokens(c["text"])]
-            check(c["id"] + ":retry", translation_repair(messages, issues), generation, flags)
-            if c["target_locale"] == "ko-KR":
-                # 다듬기는 실험 중에도 끈다. 기존 예산 검사에는 초안 상한 전체를 계속 예약한다.
-                check(c["id"] + ":polish", P.polish_messages(c["source_locale"], c["text"], "",
-                      P.select_glossary(c["text"], c["source_locale"], "ko-KR", field_glossary=flags["field_glossary"])),
-                      P.POLISH_MAX_TOKENS + generation, flags)
+    for c in cases:
+        if c["task"] != "translate":
+            check(c["id"], P.destination_messages(c["source_locale"], c["text"]), P.DESTINATION_MAX_TOKENS)
+            continue
+        messages = P.translate_messages(c["source_locale"], c["target_locale"], c["scenario"], c["text"])
+        check(c["id"], messages, P.TRANSLATE_MAX_TOKENS)
+        # 모든 교정 지시와 혼합 문자 교정의 원문 단어 전체를 예약해 상한을 잰다. 오답 초안은 넣지 않는다.
+        issues = list(REPAIR_HINT) + [f"mixed_script:{w}" for w in latin_tokens(c["text"])]
+        check(c["id"] + ":retry", translation_repair(messages, issues), P.TRANSLATE_MAX_TOKENS)
     report = {"context": limit, "tokenizer_dir": str(args.tokenizer_dir), "manifest": str(args.manifest),
               "model": manifest["model"]["alias"], "model_profile": selected_profile, "chat_template": str(template_path),
-              "chat_template_kwargs": template_kwargs, "configurations": configurations, "checks": len(rows),
+              "chat_template_kwargs": template_kwargs, "checks": len(rows),
               "largest": sorted(rows, key=lambda r: -r["total"])[:5], "failures": [r for r in rows if not r["fits"]]}
     dest = args.output or ROOT / "run" / "prompt_budget.json"
     dest.parent.mkdir(parents=True, exist_ok=True)

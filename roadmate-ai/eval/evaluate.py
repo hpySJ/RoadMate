@@ -20,7 +20,7 @@ import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from config import artifact_hashes, experiment_flags, load_dotenv, load_manifest, model_profile  # noqa: E402
+from config import artifact_hashes, load_dotenv, load_manifest, model_profile  # noqa: E402
 from validation import latin_words  # noqa: E402
 
 load_dotenv()
@@ -111,7 +111,6 @@ def translationese_summary(stats: dict) -> list[str]:
 def attach_attempts(rows: list[dict], path: Path) -> dict:
     """서버의 opt-in 로그만 읽는다. 검사 통과는 의미 정확도와 별개다."""
     by_id = {}
-    literal_pairs = {}
     stats = Counter(translate_cases=0, traced_cases=0, retried=0, recovered=0, identical=0,
                     incomplete=0, log_errors=0, first_attempts=0, first_wrong_language=0)
     first_by_direction = {}
@@ -123,10 +122,9 @@ def attach_attempts(rows: list[dict], path: Path) -> dict:
         lines = []
         stats["log_errors"] += 1
     for line in lines:
-        event = re.search(r"translation_(attempt|literal) ", line)
-        if not event:
+        if "translation_attempt " not in line:
             continue
-        prefix, payload = line[:event.start()], line[event.end():]
+        prefix, payload = line.split("translation_attempt ", 1)
         if (prefix.strip() not in ("", "WARNING:", "WARNING:roadmate.ai:") and not re.fullmatch(
                 r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} WARNING roadmate\.ai\s+", prefix)):
             continue
@@ -135,12 +133,6 @@ def attach_attempts(rows: list[dict], path: Path) -> dict:
             if (not isinstance(record, dict) or not isinstance(record.get("request_id"), str)
                     or type(record.get("attempt")) is not int or record["attempt"] not in (1, 2)):
                 raise ValueError("invalid attempt identity")
-            if event[1] == "literal":
-                # Compare raw model fields, before time/pronoun normalization; retain only the boolean.
-                literal, translated = record.get("literal"), record.get("translated_text")
-                if isinstance(literal, str) and isinstance(translated, str):
-                    literal_pairs.setdefault((record["request_id"], record["attempt"]), []).append(literal == translated)
-                continue
             if (not isinstance(record.get("issues"), list)
                     or not all(isinstance(i, str) for i in record["issues"])
                     or not (record.get("output") is None or isinstance(record["output"], dict))):
@@ -158,10 +150,6 @@ def attach_attempts(rows: list[dict], path: Path) -> dict:
         first_stats = first_by_direction.setdefault(direction, Counter(cases=0, traced=0, wrong_language=0))
         first_stats["cases"] += 1
         attempts = by_id.get(row["request_id"], [])
-        for attempt in attempts:
-            pairs = literal_pairs.get((row["request_id"], attempt["attempt"]), [])
-            if len(pairs) == 1:
-                attempt["literal_equals_translated_text"] = pairs[0]
         row["translation_attempts"] = attempts
         if not attempts:
             continue
@@ -184,37 +172,6 @@ def attach_attempts(rows: list[dict], path: Path) -> dict:
                 counts["recovered"] += (bool(first["issues"]) and not second["issues"]
                                         and (second["output"] or {}).get("status") == "ok")
     return {**stats, "first_by_direction": first_by_direction, "retry_by_first_issue": retry_by_first_issue}
-
-
-def two_step_stats(rows: list[dict]) -> dict:
-    attempts, finals = [], []
-    eligible = 0
-    for row in rows:
-        if row["case"].get("task") != "translate" or row["case"].get("target_locale") != "ko-KR":
-            continue
-        accepted = row["http"] == 200 and row["body"].get("status") == "ok"
-        eligible += accepted
-        trace = row.get("translation_attempts", [])
-        if [a["attempt"] for a in trace] not in ([1], [1, 2]):
-            continue
-        attempts += [a["literal_equals_translated_text"] for a in trace
-                     if type(a.get("literal_equals_translated_text")) is bool and (a.get("output") or {}).get("status") == "ok"]
-        final = trace[-1]
-        if accepted and not final["issues"] and type(final.get("literal_equals_translated_text")) is bool:
-            finals.append(final["literal_equals_translated_text"])
-    return {"eligible_final_outputs": eligible, "traced_final_outputs": len(finals), "identical_final_outputs": sum(finals),
-            "identical_final_rate": sum(finals) / len(finals) if finals else None,
-            "traced_attempts": len(attempts), "identical_attempts": sum(attempts),
-            "identical_attempt_rate": sum(attempts) / len(attempts) if attempts else None}
-
-
-def two_step_summary(stats: dict) -> list[str]:
-    rate = lambda value: "N/A" if value is None else f"{value:.1%}"
-    return [f"- two-step literal == translated_text: {stats['identical_final_outputs']}/{stats['traced_final_outputs']} "
-            f"({rate(stats['identical_final_rate'])}); final-output trace coverage: "
-            f"{stats['traced_final_outputs']}/{stats['eligible_final_outputs']}",
-            f"- two-step attempts literal == translated_text: {stats['identical_attempts']}/{stats['traced_attempts']} "
-            f"({rate(stats['identical_attempt_rate'])}); raw model strings before postprocessing, not a quality score"]
 
 
 def retry_summary(stats: dict) -> list[str]:
@@ -277,7 +234,6 @@ def main():
         ap.error("잠근 시험은 튜닝 종료 후 --final로 한 번만 실행하세요")
 
     selected_profile = model_profile()
-    selected_flags = experiment_flags()
     bundle = load_manifest()["engine_bundle"]
     headers = {"X-Internal-Token": os.environ["AI_INTERNAL_TOKEN"]} if os.environ.get("AI_INTERNAL_TOKEN") else {}
     cases = [json.loads(x) for x in Path(a.file).read_text(encoding="utf-8").splitlines() if x.strip()]
@@ -297,8 +253,6 @@ def main():
     if (ready.get("model_profile") != selected_profile
             or ready.get("runtime_config", {}).get("model_profile") != selected_profile):
         raise SystemExit("server model profile is missing or differs from MODEL_PROFILE; evaluation not started")
-    if any(ready.get("runtime_config", {}).get(k) != v for k, v in selected_flags.items()):
-        raise SystemExit("server experiment flags differ from evaluation environment; restart with matching flags")
     try:
         final_attempt = reserve_final(Path(a.file), ready) if locked else None
     except FileExistsError:
@@ -331,11 +285,9 @@ def main():
     ready_end_response = client.get(f"{a.url}/health/ready")
     ready_end = ready_end_response.json()
     retry_stats = attach_attempts(rows, a.attempt_log) if a.attempt_log else None
-    literal_stats = two_step_stats(rows) if selected_flags["two_step_ko"] else None
     style_stats = translationese_stats(rows)
     profile_consistent = (ready_end.get("model_profile") == selected_profile
                           and ready_end.get("runtime_config", {}).get("model_profile") == selected_profile)
-    flags_consistent = all(ready_end.get("runtime_config", {}).get(k) == v for k, v in selected_flags.items())
 
     with (out_dir / "results.jsonl").open("w", encoding="utf-8") as f:
         for row in rows:
@@ -356,9 +308,7 @@ def main():
     meta = {"dataset": Path(a.file).name, "dataset_sha256": hashlib.sha256(Path(a.file).read_bytes()).hexdigest(),
             "ready": ready, "ready_end": ready_end, "label": a.label, "timestamp": stamp, "final_attempt": final_attempt,
             "retry_stats": retry_stats, "translationese_stats": style_stats,
-            "two_step_stats": literal_stats,
             "model_profile": ready["model_profile"], "model_profile_consistent": profile_consistent,
-            **selected_flags, "experiment_flags_consistent": flags_consistent,
             "results_sha256": hashlib.sha256((out_dir / "results.jsonl").read_bytes()).hexdigest()}
     (out_dir / "run.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     client.close()
@@ -366,8 +316,6 @@ def main():
     lines = [f"# 평가 결과 {a.label} ({Path(a.file).name}, {stamp})", "",
              f"- engine_bundle: {bundle}", f"- model_profile: {ready['model_profile']}",
              f"- model profile consistent through run: {profile_consistent}",
-             *(f"- {k.upper()}: {int(v)}" for k, v in selected_flags.items()),
-             f"- experiment flags consistent through run: {flags_consistent}",
              f"- ready: {json.dumps(ready, ensure_ascii=False)}", ""]
     lines += ["| task | n | auto pass | pass rate |", "|---|---:|---:|---:|"]
     for task in sorted({r["case"]["task"] for r in rows}):
@@ -397,16 +345,12 @@ def main():
     else:
         lines.append("- retry recovery: not measured (use LOG_REJECTED=1 and --attempt-log)")
     lines += translationese_summary(style_stats)
-    if literal_stats is not None:
-        lines += two_step_summary(literal_stats)
     lines += ["", "자동 통과·재시도 회복은 보조 지표다. review.csv에서 사람이 의미 보존·치명 오류를 판정한다."]
     (out_dir / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines))
     print(f"\nsaved: {out_dir}")
     if not profile_consistent:
         raise SystemExit("model profile changed or is missing at end; saved results are not a consistent profile evaluation")
-    if not flags_consistent:
-        raise SystemExit("experiment flags changed during evaluation; results saved but comparison is invalid")
 
 
 if __name__ == "__main__":

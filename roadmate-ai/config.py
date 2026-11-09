@@ -29,7 +29,7 @@ def load_dotenv(path: Path = ROOT / ".env"):
 
 def model_profile() -> str:
     load_dotenv()
-    name = os.environ.get("MODEL_PROFILE", "4b-q4")
+    name = os.environ.get("MODEL_PROFILE", "8b-q4")
     if name not in MODEL_PROFILES:
         raise ValueError(f"unknown MODEL_PROFILE {name!r}; choose {', '.join(MODEL_PROFILES)}")
     return name
@@ -41,12 +41,6 @@ def manifest_path() -> Path:
 
 def load_manifest(path: Path | None = None) -> dict:
     return json.loads((path or manifest_path()).read_text(encoding="utf-8"))
-
-
-def experiment_flags() -> dict[str, bool]:
-    load_dotenv()
-    return {name: os.environ.get(name.upper(), "0") == "1"
-            for name in ("two_step_ko", "natural_style_ko", "field_glossary")}
 
 
 @dataclass(frozen=True)
@@ -63,11 +57,7 @@ class Settings:
     internal_token: str
     manifest: dict
     log_rejected: bool = False
-    polish_ko: bool = False
-    model_profile: str = "4b-q4"
-    two_step_ko: bool = False
-    natural_style_ko: bool = False
-    field_glossary: bool = False
+    model_profile: str = "8b-q4"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -92,7 +82,4 @@ class Settings:
             model_profile=model_profile(),
             # 검증: 개발·평가 전용. 1이면 검사에 걸린 원문과 모델 출력을 로그에 남긴다(실사용 금지, 개인정보)
             log_rejected=env("LOG_REJECTED", "0") == "1",
-            # 다듬기 비교에서 의미 변경과 지연이 확인돼 꺼 둔다. 1은 개발 비교용이다.
-            polish_ko=env("POLISH_KO", "0") == "1",
-            **experiment_flags(),
         )

@@ -70,7 +70,7 @@ def test_profile_selection_matches_settings_and_artifact_hashes(name, monkeypatc
 def test_profile_defaults_to_baseline_and_rejects_unknown_values(monkeypatch):
     monkeypatch.setattr("config.load_dotenv", lambda: None)
     monkeypatch.delenv("MODEL_PROFILE", raising=False)
-    assert model_profile() == "4b-q4"
+    assert model_profile() == "8b-q4"
     for name in ("8b", "", "../manifest.json"):
         monkeypatch.setenv("MODEL_PROFILE", name)
         with pytest.raises(ValueError, match="unknown MODEL_PROFILE"):

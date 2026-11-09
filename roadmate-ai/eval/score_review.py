@@ -105,8 +105,7 @@ def score(rows, key):
         eligible = [(row, side) for row, side in selected if key["rows"][row["id"]]["sides"][side]["status"] == "ok"]
         config = {"label": metadata.get("label", run_id),
                   "model_profile": metadata.get("model_profile") or ready.get("model_profile"),
-                  "experiment_flags": {name: metadata.get(name, ready.get(name, runtime.get(name)))
-                                       for name in ("two_step_ko", "natural_style_ko", "field_glossary")},
+                  "runtime_config": runtime,
                   "statuses_in_workbook": dict(status), "statuses_original": dict(full_status), "reviewers": {}}
         for reviewer in (*REVIEWERS, "final"):
             verdict_field = "final" if reviewer == "final" else f"{reviewer}_verdict"
@@ -161,7 +160,7 @@ def summary_markdown(result):
             lines.append(f"| {rid}: {safe(config['label'])} | {safe(config['model_profile'])} | {name} | "
                          f"{stats['reviewed']}/{stats['eligible_in_workbook']} | " + " | ".join(rates) + " |")
     for rid, config in result["configurations"].items():
-        lines += ["", f"## {rid}", "", f"- 실험 설정 (null은 미기록): {json.dumps(config['experiment_flags'], ensure_ascii=False)}",
+        lines += ["", f"## {rid}", "", f"- 실행 설정: {json.dumps(config['runtime_config'], ensure_ascii=False)}",
                   f"- 파일 내 출력 상태: {json.dumps(config['statuses_in_workbook'], ensure_ascii=False)}",
                   f"- 원본 전체 출력 상태: {json.dumps(config['statuses_original'], ensure_ascii=False)}"]
         for name, stats in config["reviewers"].items():

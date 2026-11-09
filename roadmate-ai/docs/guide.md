@@ -4,6 +4,8 @@
 
 ## Linux(DLPC)에서 실행
 
+기본 프로필은 **8b-q4(Qwen3-8B Q4_K_M, 생각 모드 끔)**입니다. 4B 대안은 `MODEL_PROFILE=4b-q4`로 선택합니다.
+
 Ubuntu에서는 PowerShell 스크립트 대신 `scripts/run.sh` 하나로 설치하고 실행합니다. llama.cpp는 공식 Ubuntu CUDA 12.8 빌드를 받아 쓰므로 직접 빌드하지 않습니다. 명령은 JupyterLab 터미널의 `roadmate-ai` 폴더에서 실행합니다.
 
 ```bash
@@ -237,7 +239,7 @@ JSON 계약 → 목표 언어 문자 → 설명문 섞임 → 길이 → 숫자�
 | 3 | 샘플링 | `prompting.py`의 `TRANSLATE_SAMPLING` 등(기본 temperature 0.2, top_p 0.8, top_k 20) |
 | 4 | 추론 자원 | `models/manifest.json`의 `runtime`(ctx 4096, parallel 1, n_gpu_layers 99, batch 256, ubatch 128) |
 | 5 | 검증 임계값 | `validation.py`(숫자·부정·방향 규칙), `engine.py`의 POI 점수 0.62 |
-| 6 | 영·스→한 다듬기 | `POLISH_KO=0` 유지. 비교에서 의미 변경과 general p95 337→1135ms가 보고됐다. 검사 통과가 의미 보존을 보증하지 않음 |
+| 6 | 영·스→한 다듬기 | 폐기·코드 삭제. 비교에서 의미 변경과 general p95 337→1135ms가 보고됐다. |
 | 7 | Q5 비교 | Q4에서 의미 오류가 남고 VRAM 여유가 있을 때만(아래) |
 
 변경할 때마다 `eval\evaluate.py --file eval\dev.jsonl --label <이름>`으로 같은 dev 자료를 다시 돌려 비교한다.
@@ -260,114 +262,19 @@ Q5_K_M 비교:
 ```
 `models/manifest.json`의 `gguf_file`, `gguf_sha256`, `gguf_size`, `engine_bundle`(예: `roadmate-ko-en-q5-v1`)을 바꾸고 재시작 → dev 평가. 두 모델을 동시에 띄우지 않는다.
 
-### 7.3 세 프로필 비교(DLPC)
+### 7.3 선택된 모델과 평가
 
-`MODEL_PROFILE=4b-q4|4b-q8|8b-q4`가 setup/start·서버·평가기에서 같은 manifest를 고른다. Windows도 `$env:MODEL_PROFILE='4b-q8'` 뒤 기존 `.ps1`을 사용한다. 새 PC의 설치 예시는 `MODEL_PROFILE=4b-q8 bash scripts/run.sh setup`이다. 기존 DLPC 체크아웃은 작업 브랜치를 fast-forward한 뒤 아래 명령을 `roadmate-ai`에서 실행한다. [파일 핀·thinking·토큰 예산 설명](model_comparison.md)을 함께 확인한다.
+DLPC 34bfd43 실행 및 Claude 블라인드 검토(사용자 제공, **AI 검토·참고**)에 따라 기본 모델을 8b-q4로 선택했다. 좋음/어색함/나쁨은 4B 64/30/6%, 8B 71/27/2%였고, 뜻 오류는 각각 16/268과 5/269였다. 8B 목적지 20/20, general p95 약 511ms가 보고됐다. 원본 결과를 이 PC에서 재실행한 수치는 아니다.
 
-같은 커밋에서 기준 4B Q4도 다시 실행한다. `run.sh start`는 로그를 덮어쓰므로 먼저 종료·보존한다. 8B가 적재되지 않으면 실패 로그를 남기고 멈추며, CPU offload 등 조건을 임의로 바꾸어 같은 비교로 합치지 않는다.
-
-```bash
-set -euo pipefail
-export POLISH_KO=0 LOG_REJECTED=1 TWO_STEP_KO=0 NATURAL_STYLE_KO=0 FIELD_GLOSSARY=0
-unset MODEL_ID  # 이전 모델 alias 환경 변수가 프로필 선택을 덮어쓰지 않게 한다
-export COMPARISON_LABEL="naturalness-stage1-$(date -u +%Y%m%dT%H%M%SZ)"
-mkdir -p "run/$COMPARISON_LABEL"
-git rev-parse HEAD > "run/$COMPARISON_LABEL/commit.txt"
-
-stop_and_wait() {
-  local pids=() pid alive
-  for name in ai llama; do
-    if [[ -f "run/$name.pid" ]]; then pids+=("$(cat "run/$name.pid")"); fi
-  done
-  bash scripts/run.sh stop
-  for attempt in {1..30}; do
-    alive=0
-    for pid in "${pids[@]}"; do
-      if kill -0 "$pid" 2>/dev/null; then alive=1; fi
-    done
-    if [[ "$alive" == 0 ]]; then return; fi
-    sleep 1
-  done
-  echo 'Old server is still running; comparison stopped.' >&2
-  return 1
-}
-stop_and_wait
-trap stop_and_wait EXIT
-if [[ -d logs ]]; then cp -a logs "run/$COMPARISON_LABEL/logs-before"; fi
-
-for profile in 4b-q4 4b-q8 8b-q4; do
-  export MODEL_PROFILE="$profile"
-  dest="run/$COMPARISON_LABEL/$profile"
-  mkdir -p "$dest"
-  .venv/bin/python scripts/download_model.py | tee "$dest/download.log"
-  if ! bash scripts/run.sh start > "$dest/start.log" 2>&1; then
-    cat "$dest/start.log"
-    stop_and_wait
-    cp -a logs "$dest/logs"
-    exit 1
-  fi
-  cat "$dest/start.log"  # ready 프로필·8B non-thinking 실제 응답 확인 포함
-  nvidia-smi > "$dest/gpu-after-start.txt"
-  for dataset in dev general general_es naturalness.dev; do
-    .venv/bin/python eval/evaluate.py --file "eval/$dataset.jsonl" \
-      --label "$COMPARISON_LABEL-$profile" --attempt-log logs/ai.err.log \
-      | tee "$dest/$dataset.stdout.log"
-  done
-  nvidia-smi > "$dest/gpu-after-eval.txt"
-  stop_and_wait
-  cp -a logs "$dest/logs"
-done
-export MODEL_PROFILE=4b-q4
-trap - EXIT
-```
-
-각 실행은 FAIL 목록, 첫 시도 오언어(기록된 시도 수 포함), 언어/기타/혼합 재시도 표, 한국어 번역투 표지와 비율, 모델·HTTP p50/p95를 함께 출력한다. `nvidia-smi` 두 파일은 메모리 스냅샷이며 최대 사용량이라고 해석하지 않는다. HTTP 지연 표본은 성공 응답이므로 실패율도 함께 비교한다. 새 profile 설정만 바꾸고 이전 실행의 수치나 검수 칸을 복사하지 않는다.
-
-각 자료의 실제 결과 폴더끼리 전체 출력을 나란히 놓는다. `<...>`는 위 출력 마지막 `saved:` 경로로 바꾼다.
+두 단계·추가 문체·추가 현장 용어·다듬기 실험은 폐기했다. 실행 옵션과 관련 파일을 제거했으며, 모두 끈 기존 번역 프롬프트는 삭제 전 345개 요청 해시와 비교해 유지한다. 모델만 비교할 때는 같은 커밋과 자료로 각각 실행하고 [블라인드 리뷰 도구](naturalness_rubric.md)를 사용한다.
 
 ```bash
-.venv/bin/python eval/compare.py eval/results/<4b-q4-general-실행> eval/results/<4b-q8-general-실행>
-.venv/bin/python eval/compare.py eval/results/<4b-q4-general-실행> eval/results/<8b-q4-general-실행>
-# dev, general_es, naturalness.dev도 같은 방식으로 전체 행을 검수한다.
+MODEL_PROFILE=8b-q4 bash scripts/run.sh setup
+MODEL_PROFILE=8b-q4 bash scripts/run.sh start
+MODEL_PROFILE=8b-q4 .venv/bin/python eval/evaluate.py --file eval/general.jsonl --label 8b-base
 ```
 
-### 7.4 자연스러움 블라인드 비교
-
-**현재 DLPC 비교가 끝난 뒤** 같은 작업 브랜치의 새 코드를 받아 실행한다. 이번 개발 작업에서는 DLPC 명령을 실행하지 않았다. 아래 파일은 기존 서버가 실행 중이면 중단하며, 자기 실행의 서버만 종료하고 로그를 보존한다.
-
-```bash
-# roadmate-ai 디렉터리에서 실행한다. 긴 명령을 터미널에 붙일 필요가 없다.
-bash scripts/naturalness_ab.sh
-```
-
-4B Q4 기준 → 같은 모델 TWO_STEP_KO=1 → 8B Q4 기준 순서로 general/general_es/naturalness.dev를 실행한다. POLISH_KO=0, NATURAL_STYLE_KO=0, FIELD_GLOSSARY=0은 고정한다. 시작 시 기존 smoke와 8B의 실제 non-thinking 응답 검사를 거친다. 실패하면 시작 로그를 출력하고 멈춘다. 실행 폴더에는 로그, FAIL·502·첫 시도 오언어·재시도·번역투·p50/p95 요약과 두 비교 쌍의 데이터셋별 리뷰 파일 총 6개가 생긴다. `test.locked*`는 실행하지 않는다.
-
-리뷰 CSV/MD는 **AI 검토(참고)**다. `.key.json`은 설정 복원용으로 관리자만 보관하고 검토자에게 전달하지 않는다. [독립 검토·병합·불일치/나쁨 필터·집계 명령](naturalness_rubric.md)을 따라 Codex와 Claude에 자기 검토 파일만 전달한다. 현재 비교 출력을 아직 받지 않았으므로 실제 판정 칸은 비어 있다.
-
-문체와 용어의 효과는 각각 따로 시험한다. 모델과 데이터셋을 고정하고 `NATURAL_STYLE_KO=1` 또는 `FIELD_GLOSSARY=1` 하나만 바꿔 재시작한 후 같은 evaluate 명령을 사용한다. 두 단계의 짧은 비교만 필요할 때도 아래처럼 **기존 비교가 끝난 후** 실행한다.
-
-```bash
-export MODEL_PROFILE=4b-q4 POLISH_KO=0 LOG_REJECTED=1 NATURAL_STYLE_KO=0 FIELD_GLOSSARY=0
-# 각 설정 사이에는 scripts/run.sh stop 후 기존 PID 종료를 확인한다.
-export TWO_STEP_KO=0  # 두 번째 실행에서는 1로 바꾸고 재시작
-bash scripts/run.sh start
-.venv/bin/python eval/evaluate.py --file eval/general.jsonl --label short-step-$TWO_STEP_KO --attempt-log logs/ai.err.log
-.venv/bin/python eval/evaluate.py --file eval/naturalness.dev.jsonl --label short-step-$TWO_STEP_KO --attempt-log logs/ai.err.log
-# 로그를 별도 폴더에 복사한 뒤 stop한다. start는 서버 로그를 덮어쓴다.
-```
-
-출력의 `saved:` 경로 두 개를 `export_review.py`에 전달한다. 행별 A/B를 섞은 읽기용 MD에서 전체 출력을 나란히 검토할 수 있다. 번역투 표지는 참고 지표이며, 최종 채택은 같은 행의 나쁨 감소·FAIL/502/뜻 오류 악화 없음·HTTP p95 증가 300ms 이하를 함께 확인한다. [개선 방법·자료 경계·LoRA 문서 계획](naturalness_plan.md)을 참고한다.
-
-새 예시·용어를 바꾸면 세 프로필의 모든 실험 조합 예산을 다시 검사한다. 모델별 pinned tokenizer와 **GGUF 실제 chat template**을 사용한다. 예를 들어 4B Q4는 다음과 같다(4B Q8은 같은 tokenizer, 8B는 별도 tokenizer/template).
-
-```bash
-MODEL_PROFILE=4b-q4 .venv/bin/python scripts/check_prompt_budget.py \
-  --tokenizer-dir run/tokenizers/qwen3-4b \
-  --chat-template run/tokenizers/qwen3-4b/gguf-chat-template.jinja --all-flags \
-  --output run/prompt_budget_4b-q4_flags.json
-```
-
-두 단계 요청의 `max_tokens=512`는 b12076에서 서버 기본 `-n 256`보다 우선한다([고정 버전 구현](https://github.com/ggml-org/llama.cpp/blob/b12076/tools/server/server-context.cpp#L1926)). 일반 번역은 계속 256이다. 실제 출력 완결성과 지연은 DLPC에서 별도로 확인해야 한다.
+다른 서버가 실행 중이면 먼저 그 작업을 마친다. 4B Q4/Q8 대안은 MODEL_PROFILE만 바꾸며, 원본 결과와 로그를 보존한다. 잠근 시험은 튜닝에 사용하지 않는다.
 
 ## 8. 학습(QLoRA)과 배포
 
@@ -397,7 +304,7 @@ MODEL_PROFILE=4b-q4 .venv/bin/python scripts/check_prompt_budget.py \
 검수 자료는 손으로 다 쓰지 않고 아래 순서로 만든다. 학습 목표는 숫자·부정·연료를 지키면서 자연스러운 한국어로 옮기는 것이다.
 ```bash
 python train/sources/make_pool.py                  # 원문 묶음 train/sources/pool.jsonl (평가셋과 겹치는 문장은 자동 제외)
-POLISH_KO=0 bash scripts/run.sh start              # 다듬기 없이 초안을 뽑고 사람이 의미·자연스러움을 고친다
+bash scripts/run.sh start              # 다듬기 없이 초안을 뽑고 사람이 의미·자연스러움을 고친다
 .venv/bin/python train/review_data.py draft --name batch1
 # train/data/drafts/batch1.review.csv를 엑셀로 열어 어색한 문장은 fixed에 고쳐 쓰고, 맞으면 approve에 y
 .venv/bin/python train/review_data.py import --name batch1 --reviewer 이름
@@ -472,7 +379,7 @@ POLISH_KO=0 bash scripts/run.sh start              # 다듬기 없이 초안을 
 
 실제 모델 품질의 완료 기준과 실행 순서는 [mvp_acceptance.md](mvp_acceptance.md)에 있다. 평가기는 mock을 기본 거절하고, 실제 서버의 코드·팩 해시와 실행 설정을 기록한다. 자연스러움과 의미 보존은 review.csv에 별도로 검토해야 한다. 기존 버전의 모델 평가 수치를 이번 버전의 성적으로 쓰지 않는다.
 
-현재 기본 모델은 Qwen3-4B-Instruct-2507 Q4_K_M, 다듬기는 꺼 둔다. 세 프로필의 고정 tokenizer와 실제 GGUF 내장 template으로 개발 문장·400자 입력·교정 재시도·다듬기 932개 조합씩을 측정했다. 4B Q4·Q8의 최대 예약은 2,706토큰, 8B Q4는 2,710토큰으로 모두 4,096 문맥 안에 들어왔다. 이는 측정 사례의 결과이며 모든 400자 문자열에 대한 상한 증명은 아니다. GPU 메모리·지연은 미실측이다.
+현재 기본 모델은 Qwen3-8B Q4_K_M이다. 4B Q4·Q8 대안을 포함해 고정 tokenizer와 실제 GGUF template으로 개발 문장·400자 입력·교정 재시도의 토큰 예산을 검사한다. 이는 측정 사례의 결과이며 모든 입력에 대한 상한 증명은 아니다.
 
 토큰 예산 재검사에는 모델 가중치 대신 해당 base_revision의 tokenizer 파일만 필요하다. `tokenizers`, `Jinja2`가 설치된 Python에서 다음 명령을 쓴다.
 

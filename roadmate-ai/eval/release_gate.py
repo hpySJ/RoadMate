@@ -18,13 +18,9 @@ def check_run(run: Path) -> tuple[dict, list[str]]:
     meta = json.loads((run / "run.json").read_text(encoding="utf-8"))
     ready = meta["ready"]
     settings = Settings.from_env()
-    target = {"model_id": settings.model_id, "model_profile": settings.model_profile, "polish_ko": settings.polish_ko,
-              **{k: getattr(settings, k) for k in ("two_step_ko", "natural_style_ko", "field_glossary")},
+    target = {"model_id": settings.model_id, "model_profile": settings.model_profile,
               "model_timeout_s": settings.model_timeout_s, "max_text_chars": settings.max_text_chars}
     issues = []
-    if (meta.get("experiment_flags_consistent") is not True
-            or any(meta.get(k) != target[k] for k in ("two_step_ko", "natural_style_ko", "field_glossary"))):
-        issues.append("experiment_flags_missing_or_changed")
     if ready.get("backend") != "llama" or ready.get("model_id") == "mock" or not ready.get("ready"):
         issues.append("real_model_required")
     if ready.get("runtime_config") != target or ready.get("model_id") != settings.model_id:
@@ -106,7 +102,7 @@ def check_run(run: Path) -> tuple[dict, list[str]]:
     if p95 is None or p95 > 8000:
         issues.append("p95_over_8s_or_missing")
     return {"dataset": meta["dataset"], "n": len(rows), "auto": auto_rate, "meaning": meaning_rate,
-            "naturalness": natural_rate, "p95_ms": p95, "polish_ko": ready.get("polish_ko"),
+            "naturalness": natural_rate, "p95_ms": p95,
             "model_profile": meta.get("model_profile"),
             "runtime_config": ready.get("runtime_config"),
             "model_runtime": {k: v for k, v in runtime.items() if k != "process"}}, issues
@@ -128,8 +124,6 @@ def main() -> int:
     failures.extend(f"missing_dataset:{name}" for name in sorted(REQUIRED - set(names)))
     if len(names) != len(set(names)):
         failures.append("duplicate_dataset: select one final configuration per dataset")
-    if len({r["polish_ko"] for r in reports}) > 1:
-        failures.append("mixed_polish_configuration")
     if len({r["model_profile"] for r in reports}) > 1:
         failures.append("mixed_model_profile")
     if len({json.dumps(r["model_runtime"], sort_keys=True) for r in reports}) > 1:

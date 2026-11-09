@@ -27,7 +27,6 @@
   "versions": {
     "translate_prompt": "translate-v11",
     "destination_prompt": "destination-v5",
-    "polish_prompt": "polish-v4",
     "glossary": "rental-ko-en-es-v12",
     "rules": "rules-v5",
     "poi": "poi-jeju-demo-v3",

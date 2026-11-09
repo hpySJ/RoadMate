@@ -8,7 +8,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 
 import prompting as P
-from inference import ModelBadOutput, ModelError, ModelTimeout, ModelTruncated, ModelUnavailable
+from inference import ModelBadOutput, ModelError, ModelTruncated
 from validation import add_meridiem, latin_tokens, looks_like_other_language, neg_level, validate_destination, validate_translation
 
 ROOT = Path(__file__).resolve().parent
@@ -177,88 +177,6 @@ def _normalize_korean_pronouns(out, req):
     return {**out, "translated_text": "".join(result)}
 
 
-def _polish_reported(text: str) -> bool:
-    if re.search(r"(?:다고|라고|냐고|자고).*(?:하|했|합|말|전했|들었)", text):
-        return True
-    for before, ending in re.findall(r"([가-힣])([대래냬재])요(?:\s|[.!?。]|$)", text):
-        if before == "그" and ending == "래":  # 그래요는 그렇다의 활용이다.
-            continue
-        # ㄹ 받침 + 래요는 의지·요청(할래요/주실래요). 달래요/말래요는 달라고/말라고의 전언이다.
-        if ending != "래" or before in ("달", "말") or (ord(before) - 0xAC00) % 28 != 8:
-            return True
-    return False
-
-
-def _polish_intent(text: str, source_request: bool) -> tuple:
-    question = bool(re.search(r"[?？]|(?:나요|까요|습니까|니요)\s*[.!。]?$", text))
-    request = bool(re.search(r"주세|주시|주실|주십시오|부탁|줘(?:요)?(?:\s|[.!?]|$)", text))
-    # 원문의 공손한 요청은 한국어에서 질문형·명령형으로 모두 자연스럽게 표현할 수 있다.
-    kind = "request" if request or source_request and question else "question" if question else "statement"
-    return (kind, bool(re.search(r"도\s*(?:될|돼|되나|됩|괜찮)|해도|해도\s*좋", text)),
-            bool(re.search(r"(?:할|올|갈|드릴|줄|가져올|돌려드릴)게(?:요)?|(?:하|가|오|드리|주)겠(?:어(?:요)?|습니다)", text)),
-            _polish_reported(text), bool(re.search(r"모르|확실하지|것\s*같|듯|아마", text)))
-
-
-_POLISH_PERSON = re.compile(
-    r"(?<![가-힣])(?:(?:제|내|나의|저의)\s*)?"
-    r"((?:다른|상대)\s*운전자|친구|아내|남편|직원|고객님|기사님|그쪽|그|저|나|제|내|너|당신)"
-    r"(에게|한테|를|을|가|이|는|은|게)(?![가-힣])")
-_POLISH_ACTIONS = {
-    "check": r"확인|점검|검사|살펴|봐\s*주",
-    "repair": r"수리|수정|고치|고쳐|고쳤|고칠",
-    "notify": r"통지|알려|알리|알릴",
-    "find": r"찾",
-    "open": r"열(?:리|립|어|었|려|지|수|\s)|여는",
-    "wait": r"기다|대기",
-    "help": r"도와|도움|돕|손을\s*주",
-}
-
-
-def _polish_people(text: str) -> dict[str, tuple[str, ...]]:
-    roles = {"actor": [], "patient": []}
-    for person, particle in _POLISH_PERSON.findall(text):
-        person = re.sub(r"\s+", "", person)
-        person = ({"저": "speaker", "나": "speaker", "제": "speaker", "내": "speaker",
-                   "그": "third", "그쪽": "third", "다른운전자": "상대운전자"}).get(person, person)
-        roles["actor" if particle in ("가", "이", "는", "은") else "patient"].append(person)
-    return {role: tuple(people) for role, people in roles.items()}
-
-
-def _polish_changes(source: str, locale: str, draft: str, polished: str) -> list[str]:
-    # shortcut: 작은 발화·인물·동작 검사의 거부 근거일 뿐 의미 동등성 증명은 아니다. 기본 활성화 전 사람 A/B 검수가 필요하다.
-    source = P.fold(source).lower()
-    source_request = bool(re.search(
-        r"\b(?:can|could|would|will)\s+you\b|\bplease\b" if locale == "en-US" else
-        r"\b(?:me|nos)\s+(?:puede[sn]?|podria[sn]?)\b|\bpor favor\b", source))
-    issues = []
-    if _polish_intent(draft, source_request) != _polish_intent(polished, source_request):
-        issues.append("polish_intent_changed")
-    giving = [{name for name, pattern in (("honorific", r"주(?:시|실|신|셔|셨|세|십)"),
-                                         ("humble", r"드(?:리|릴|린|려|렸)")) if re.search(pattern, text)}
-              for text in (draft, polished)]
-    if giving[0] and giving[1] and giving[0] != giving[1]:
-        issues.append("polish_transfer_changed")
-    before, after = _polish_people(draft), _polish_people(polished)
-    for role in before:
-        omitted_speaker = not after[role] and set(before[role]) <= {"speaker"}
-        if before[role] != after[role] and not omitted_speaker:
-            issues.append("polish_person_changed")
-            break
-    actions = [{name for name, pattern in _POLISH_ACTIONS.items() if re.search(pattern, text)}
-               for text in (draft, polished)]
-    if actions[0] != actions[1]:
-        issues.append("polish_action_changed")
-    normalized = []
-    for text in (draft, polished):
-        for name, pattern in _POLISH_ACTIONS.items():
-            text = re.sub(pattern, name, text)
-        normalized.append(re.sub(r"\s+", "", text))
-    # 동의어를 같은 표기로 비교하되, 공통 동작 하나만으로 대폭 재작성을 허용하지 않는다.
-    if max(SequenceMatcher(None, draft, polished).ratio(), SequenceMatcher(None, *normalized).ratio()) < 0.5:
-        issues.append("polish_rewrote")
-    return issues
-
-
 # 검증: 이름 단어 비교에서 빼는 기능어(playa de Hamdeok의 de가 playa de Hyeopjae와 겹쳐 점수를 올리지 않게)
 NAME_STOP = {"de", "del", "la", "el", "los", "las", "a", "al", "en", "the", "of", "to"}
 
@@ -349,16 +267,13 @@ class Engine:
         if looks_like_other_language(req.text, req.source_locale):
             return {"status": "clarification_required", "translated_text": None,
                     "clarification_question": WRONG_LANG[req.source_locale]}
-        flags = {name: getattr(self.s, name, False) for name in ("two_step_ko", "natural_style_ko", "field_glossary")}
-        messages = P.translate_messages(req.source_locale, req.target_locale, req.scenario, req.text, **flags)
-        schema = P.translation_schema(req.target_locale, flags["two_step_ko"])
-        max_tokens = P.translation_max_tokens(req.target_locale, flags["two_step_ko"])
+        messages = P.translate_messages(req.source_locale, req.target_locale, req.scenario, req.text)
         structural = self.client.is_mock
         issues: list[str] = []
         out: dict | None = None
         try:
-            out = await self.client.chat_json(messages, schema, max_tokens, P.TRANSLATE_SAMPLING, deadline - time.monotonic())
-            out = self._final_translation(req, out, 1)
+            out = await self.client.chat_json(messages, P.TRANSLATE_SCHEMA, P.TRANSLATE_MAX_TOKENS,
+                                              P.TRANSLATE_SAMPLING, deadline - time.monotonic())
             out = _with_meridiem(out, req)
             out = _normalize_korean_pronouns(out, req)
             issues = validate_translation(out, req.text, req.source_locale, req.target_locale, structural)
@@ -366,7 +281,7 @@ class Engine:
             issues = [e.code]
         self._log_attempt(req, 1, issues, out)
         if not issues:
-            return await self._polish(req, out, deadline)
+            return out
         if set(issues) <= CLARIFY_ISSUES:
             # QWEN 구현: 확인 질문만 잘못 썼으면 다시 생성하지 않고 말한 사람 언어의 고정 문구로 바꾼다(재생할 번역 없음)
             return {"status": "clarification_required", "translated_text": None,
@@ -376,8 +291,8 @@ class Engine:
             raise ValidationFailed(issues)
         repair = translation_repair(messages, issues)
         try:
-            out = await self.client.chat_json(repair, schema, max_tokens, P.RETRY_SAMPLING, deadline - time.monotonic())
-            out = self._final_translation(req, out, 2)
+            out = await self.client.chat_json(repair, P.TRANSLATE_SCHEMA, P.TRANSLATE_MAX_TOKENS,
+                                              P.RETRY_SAMPLING, deadline - time.monotonic())
             out = _with_meridiem(out, req)
             out = _normalize_korean_pronouns(out, req)
         except (ModelBadOutput, ModelTruncated) as e:
@@ -390,65 +305,12 @@ class Engine:
         self._log_attempt(req, 2, issues, out)
         if issues:
             raise ValidationFailed(issues)
-        return await self._polish(req, out, deadline)
-
-    def _final_translation(self, req, out, attempt):
-        if (getattr(self.s, "two_step_ko", False) and req.target_locale == "ko-KR" and not self.client.is_mock
-                and isinstance(out, dict)):
-            literal = out.get("literal")
-            if ("literal" not in out or out.get("status") == "ok" and not isinstance(literal, str)
-                    or out.get("status") == "clarification_required" and literal is not None):
-                raise ModelBadOutput("two-step literal has invalid format")
-        if isinstance(out, dict) and "literal" in out:
-            literal = out["literal"]
-            out = {key: value for key, value in out.items() if key != "literal"}
-            if self.s.log_rejected:
-                log.warning("translation_literal %s", json.dumps({"request_id": req.request_id,
-                            "attempt": attempt, "literal": literal,
-                            "translated_text": out.get("translated_text")}, ensure_ascii=False))
         return out
-
-    async def _polish(self, req, out: dict, deadline: float) -> dict:
-        # QWEN 구현: 영·스→한 번역을 한 번 더 자연스러운 한국어로 다듬는다. 다듬은 문장도 같은 검사를 통과해야만 바꾼다
-        if not (self.s.polish_ko and not self.client.is_mock and req.target_locale == "ko-KR"
-                and out.get("status") == "ok" and deadline - time.monotonic() > MIN_RETRY_S):
-            return out
-        messages = P.polish_messages(req.source_locale, req.text, out["translated_text"],
-                                     P.select_glossary(req.text, req.source_locale, req.target_locale))
-        try:
-            pol = await self.client.chat_json(messages, P.POLISH_SCHEMA, P.POLISH_MAX_TOKENS, P.RETRY_SAMPLING,
-                                              deadline - time.monotonic())
-        except (ModelBadOutput, ModelTruncated, ModelUnavailable):
-            return out  # 다듬기가 실패해도 이미 검사를 통과한 번역은 돌려준다
-        except ModelTimeout:
-            # QWEN 구현: 모델 계산이 끝난 게 확인되면 초안을 돌려주고, 아니면 timeout으로 올려 슬롯을 계속 잡아 둔다
-            if await self.client.wait_idle(self.s.cancel_settle_s):
-                return out
-            raise
-        text = pol.get("text") if isinstance(pol, dict) else None
-        if not isinstance(text, str) or not text.strip():
-            return out
-        try:
-            cand = _with_meridiem({**out, "translated_text": text.strip()}, req)
-            cand = _normalize_korean_pronouns(cand, req)
-        except ModelBadOutput:
-            return out
-        issues = validate_translation(cand, req.text, req.source_locale, req.target_locale)
-        issues += _polish_changes(req.text, req.source_locale, out["translated_text"], cand["translated_text"])
-        if issues:
-            self._log_rejected(req, ["polish"] + issues, cand)
-            return out
-        return cand
 
     def _log_attempt(self, req, attempt: int, issues: list[str], out: dict | None):
         if self.s.log_rejected:
             log.warning("translation_attempt %s", json.dumps({"request_id": req.request_id, "attempt": attempt,
                         "issues": issues, "output": out}, ensure_ascii=False))
-
-    def _log_rejected(self, req, issues: list[str], out: dict | None):
-        if self.s.log_rejected:
-            log.warning("rejected %s %s | %s | %s", req.request_id, ",".join(issues), req.text,
-                        P.completion_text(out) if out else None)
 
     async def parse_destination(self, req, deadline: float) -> dict:
         messages = P.destination_messages(req.source_locale, req.text)

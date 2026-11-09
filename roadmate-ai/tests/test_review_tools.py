@@ -316,11 +316,8 @@ def test_paired_meaning_and_latency_missing_measurements_are_not_zero_errors(tmp
     assert paired["paired_latency"]["wall_ms"]["p95_delta_run2_minus_run1"] is None
 
 
-def test_configuration_flags_are_explicit_and_missing_is_not_false(tmp_path):
+def test_configuration_records_effective_runtime(tmp_path):
     rows, key = export.export_runs([run_folder(tmp_path, "run", [record("x")])])
-    metadata = key["runs"]["run1"]["metadata"]
-    metadata["two_step_ko"] = False
-    metadata["ready"] = {"runtime_config": {"natural_style_ko": True}}
-    result = score(rows, key)
-    assert result["configurations"]["run1"]["experiment_flags"] == {"two_step_ko": False, "natural_style_ko": True, "field_glossary": None}
-    assert '"two_step_ko": false' in summary_markdown(result)
+    runtime = {"model_profile": "8b-q4", "adapter_sha256": "synthetic"}
+    key["runs"]["run1"]["metadata"]["ready"] = {"runtime_config": runtime}
+    assert score(rows, key)["configurations"]["run1"]["runtime_config"] == runtime

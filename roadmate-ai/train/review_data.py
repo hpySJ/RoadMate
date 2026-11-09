@@ -1,7 +1,7 @@
 """학습: 원문 묶음 → 서버 초안 → 사람 검수 CSV → 승인 자료(train/data/*.approved.jsonl).
 
 초안: .venv/bin/python train/review_data.py draft --pool train/sources/pool.jsonl --name batch1
-      (AI 서버를 POLISH_KO=1로 띄워 둔다. 서버와 같은 프롬프트·검사·다듬기를 거친 초안이 나온다)
+      (AI 서버와 같은 프롬프트·검사를 거친 초안이 나온다)
 검수: train/data/drafts/batch1.review.csv를 엑셀로 열어 fixed(고친 문장, 그대로면 비움)와 approve(y)를 채운다
 가져오기: .venv/bin/python train/review_data.py import --name batch1
 로컬 모델 초안을 검수 없이 정답으로 쓰지 않는다. approve가 y인 줄만, 검사기를 통과해야 가져온다.

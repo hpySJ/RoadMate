@@ -94,7 +94,7 @@ def test_training_excludes_all_evaluation_files(monkeypatch, tmp_path, capsys, e
     text = "주차비는 30분에 2천 원이에요."
     held = {"text": "주차비는 10분에 천 원이에요.", "source_locale": "ko-KR"}
     (tmp_path / "eval" / eval_name).write_text(json.dumps(held) + "\n", encoding="utf-8")
-    for name in ("translate", "destination", "polish"):
+    for name in ("translate", "destination"):
         (tmp_path / "prompts" / f"{name}.examples.json").write_text("[]", encoding="utf-8")
     monkeypatch.setattr(make_pool, "ROOT", tmp_path)
     monkeypatch.setattr(make_pool, "KO", [("general", text)])
@@ -116,16 +116,16 @@ def test_training_excludes_all_evaluation_files(monkeypatch, tmp_path, capsys, e
     assert not (tmp_path / "train/out").exists()
 
 
-@pytest.mark.parametrize("case, message", [("draft", "no records"), ("polish", "leak:"),
+@pytest.mark.parametrize("case, message", [("draft", "no records"), ("few_shot", "leak:"),
                                            ("validation_only", "train split is empty")])
 def test_prepare_rejects_unusable_training_data(tmp_path, case, message):
     rec = prepare_data.load_jsonl(ROOT / "train" / "data" / "seed.draft.jsonl")[0]
     if case != "draft":
         rec["review_status"] = "approved"
-    if case == "polish":
-        ex = prepare_data.P.examples("polish")[0]
-        rec.update(text=ex["input"]["source"], source_locale=ex["input"]["source_locale"],
-                   output={"status": "ok", "translated_text": ex["output"]["text"], "clarification_question": None})
+    if case == "few_shot":
+        ex = prepare_data.P.examples("translate")[0]
+        rec.update(text=ex["input"]["utterance"], source_locale=ex["input"]["source_locale"],
+                   output=ex["output"])
     elif case == "validation_only":
         rec.update(text="The orange folder belongs in the glove compartment.",
                    output={"status": "ok", "translated_text": "주황색 서류철은 글러브 박스에 넣어야 해요.",

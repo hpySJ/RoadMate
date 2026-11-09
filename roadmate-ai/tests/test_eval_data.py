@@ -35,8 +35,7 @@ def test_no_exact_duplicates_between_legacy_sets_and_prompt_examples():
     assert not {c["group_id"] for c in DEV} & {c["group_id"] for c in TEST}
     norm = lambda s: "".join(s.lower().split())  # noqa: E731
     shots = {norm(e["input"]["utterance"]) for e in P.examples("translate")} | {
-        norm(e["input"]["utterance"]) for e in P.examples("destination")} | {
-        norm(e["input"]["source"]) for e in P.examples("polish")}
+        norm(e["input"]["utterance"]) for e in P.examples("destination")}
     texts = [norm(c["text"]) for c in DEV + TEST + GENERAL + NATURAL + TEST_V2]
     assert len(texts) == len(set(texts)) and not set(texts) & shots
 

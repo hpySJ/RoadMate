@@ -1,4 +1,6 @@
+import hashlib
 import json
+from pathlib import Path
 
 import pytest
 
@@ -14,7 +16,7 @@ def test_manifest_versions_match_served_artifacts():
     from config import load_manifest
     from guidance import load_pack
     versions = load_manifest()["versions"]
-    for name in ("translate", "destination", "polish"):
+    for name in ("translate", "destination"):
         assert versions[f"{name}_prompt"] == P.prompt(name)[0]
     assert versions["glossary"] == P.glossary()["version"]
     assert versions["rules"] == load_pack()["version"]
@@ -199,19 +201,6 @@ def test_payment_machine_glossary(source, target, text, expected):
     assert P.select_glossary(text, source, target) == expected
 
 
-def test_polish_examples_keep_meaning_checks():
-    from validation import validate_translation
-    for ex in P.examples("polish"):
-        i, o = ex["input"], ex["output"]
-        for ko in (i["korean"], o["text"]):
-            out = {"status": "ok", "translated_text": ko, "clarification_question": None}
-            assert validate_translation(out, i["source"], i["source_locale"], "ko-KR") == [], ko
-        assert P.select_glossary(i["source"], i["source_locale"], "ko-KR") == i["glossary"]
-    m = P.polish_messages("es-US", "Hola.", "안녕하세요.", {})
-    assert m[0]["role"] == "system" and json.loads(m[-1]["content"]) == {
-        "source_locale": "es-US", "source": "Hola.", "korean": "안녕하세요.", "glossary": {}}
-
-
 def test_place_hint_wins_over_area_inside_it():
     g = P.select_glossary("Seongsan Ilchulbong is far.", "en-US", "ko-KR")
     assert g == {"Seongsan Ilchulbong": "성산일출봉"}
@@ -378,135 +367,16 @@ def test_midnight_hints_and_ambiguous_spanish_words():
     assert P.select_glossary("보증금은 30만 원이에요.", "ko-KR", "es-US")["보증금"] == "depósito de garantía"
 
 
-@pytest.mark.parametrize("source,target", [("en-US", "ko-KR"), ("es-MX", "ko-KR"), ("ko-KR", "en-US"), ("ko-KR", "es-US")])
-def test_two_step_schema_and_examples_follow_target_language(source, target):
-    korean = target == "ko-KR"
-    schema = P.translation_schema(target, True)
-    assert list(schema["properties"]) == (["status", "literal", "translated_text", "clarification_question"] if korean else
-                                          ["status", "translated_text", "clarification_question"])
-    assert schema["required"] == list(schema["properties"])
-    assert P.translation_max_tokens(target, True) == (512 if korean else 256)
-    assert P.translation_max_tokens(target) == 256
-    baseline = P.translate_messages(source, target, "general", "x")
-    enabled = P.translate_messages(source, target, "general", "x", two_step_ko=True)
-    if not korean:
-        assert baseline == enabled
-        return
-    assert '"literal"' in enabled[0]["content"]
-    for index in range(1, len(enabled) - 1, 2):
-        inp = json.loads(enabled[index]["content"])
-        output = json.loads(enabled[index + 1]["content"])
-        expected = inp["target_locale"] == "ko-KR"
-        assert ("literal" in output) == expected
-        if expected:
-            assert list(output) == ["status", "literal", "translated_text", "clarification_question"]
-            stored = next(e["output"] for e in P.examples("translate") if e["input"] == inp)
-            assert output["literal"] == stored["literal"]
-            assert output["translated_text"] == stored["translated_text"]
-            assert (output["literal"] is None) == (output["status"] == "clarification_required")
-    assert all("literal" not in json.loads(m["content"]) for m in baseline if m["role"] == "assistant")
-
-
-@pytest.mark.parametrize("source", ["en-US", "es-US", "es-MX"])
-@pytest.mark.parametrize("natural_style", [False, True])
-def test_two_step_prompt_demonstrates_at_least_four_actual_rewrites(source, natural_style):
-    messages = P.translate_messages(source, "ko-KR", "general", "x", two_step_ko=True,
-                                    natural_style_ko=natural_style)
-    pairs = [(json.loads(messages[n]["content"]), json.loads(messages[n + 1]["content"]))
-             for n in range(1, len(messages) - 1, 2)]
-    rewritten = [o for i, o in pairs if i["target_locale"] == "ko-KR" and o["status"] == "ok"
-                 and o["literal"] != o["translated_text"]]
-    assert len(rewritten) >= 4
-    assert all(o["literal"] is None for _, o in pairs if o["status"] == "clarification_required")
-
-
-@pytest.mark.parametrize("name", ["translate", "translate.natural"])
-def test_authored_literals_preserve_fixture_safety_facts_and_default_output(name):
-    from validation import validate_translation
-    for ex in P.examples(name):
-        i, output = ex["input"], ex["output"]
-        if i["target_locale"] != "ko-KR":
-            continue
-        assert "literal" in output
-        # Fixture quality check only: runtime validation still receives translated_text, never literal.
-        literal_output = {**output, "translated_text": output["literal"]}
-        assert validate_translation(literal_output, i["utterance"], i["source_locale"], "ko-KR") == []
-    messages = P._few_shot(name)
-    assert [json.loads(m["content"]) for m in messages if m["role"] == "assistant"] == [
-        {k: v for k, v in ex["output"].items() if k != "literal"} for ex in P.examples(name)]
-
-
-def test_optional_flags_are_explicit_and_independent(monkeypatch):
-    args = ("en-US", "ko-KR", "rental_counter", "Please collect the car after lunch.")
-    baseline = P.translate_messages(*args)
-    for key in ("TWO_STEP_KO", "NATURAL_STYLE_KO", "FIELD_GLOSSARY"):
-        monkeypatch.setenv(key, "1")
-    assert P.translate_messages(*args) == baseline
-    field = P.translate_messages(*args, field_glossary=True)
-    assert field[:-1] == baseline[:-1]
-    assert json.loads(field[-1]["content"])["glossary"] == {"collect the car": "차를 받다"}
-    natural = P.translate_messages(*args, natural_style_ko=True)
-    assert len(natural) == len(baseline) + 6
-    assert P.NATURAL_KO_RULE in natural[0]["content"]
-    assert natural[-1] == baseline[-1]
-    assert all("literal" not in json.loads(m["content"]) for m in natural if m["role"] == "assistant")
-
-
-def test_natural_examples_are_only_for_korean_and_same_source_language():
-    from validation import validate_translation
-    samples = P.examples("translate.natural")
-    assert 4 <= len(samples) <= 6
-    for ex in samples:
-        i = ex["input"]
-        assert ex["training_allowed"] is False and "inference" in ex["provenance"]
-        assert i["target_locale"] == "ko-KR"
-        assert validate_translation(ex["output"], i["utterance"], i["source_locale"], "ko-KR") == []
-        assert i["glossary"] == P.select_glossary(i["utterance"], i["source_locale"], "ko-KR")
-    for target in ("en-US", "es-US", "es-MX"):
-        assert P.translate_messages("ko-KR", target, "general", "x", natural_style_ko=True) == P.translate_messages(
-            "ko-KR", target, "general", "x")
-    es = P.translate_messages("es-MX", "ko-KR", "general", "x", natural_style_ko=True)
-    assert all(json.loads(m["content"])["source_locale"] != "en-US" for m in es[1:] if m["role"] == "user")
-
-
-@pytest.mark.parametrize("source,text,surface,expected", [
-    ("en-US", "The passenger door handle is sticky.", "passenger door", "조수석 문"),
-    ("es-US", "El lado del conductor está mojado.", "lado del conductor", "운전석 쪽"),
-    ("en-US", "It has half a tank remaining.", "half a tank", "반"),
-    ("es-MX", "Queda medio tanque.", "medio tanque", "반"),
-    ("en-US", "The tire pressure warning light flashes.", "tire pressure warning light", "타이어 공기압 경고등"),
-    ("en-US", "Keep the parking entry ticket.", "parking entry ticket", "주차권"),
-    ("es-US", "Hay una multa de estacionamiento.", "multa de estacionamiento", "주차 위반 과태료"),
-    ("en-US", "The toll charge is listed separately.", "toll charge", "통행료"),
-])
-def test_field_hints_preserve_specific_meanings(source, text, surface, expected):
-    hints = P.select_glossary(text, source, "ko-KR", field_glossary=True)
-    assert hints == {surface: expected}
-    assert surface not in P.select_glossary(text, source, "ko-KR")
-
-
-@pytest.mark.parametrize("source,text", [("en-US", "parking ticket"), ("es-US", "peaje"), ("en-US", "passenger")])
-def test_field_hints_do_not_resolve_ambiguous_bare_words(source, text):
-    assert P.select_glossary(text, source, "ko-KR", field_glossary=True) == {}
-
-
-def test_field_hints_do_not_change_safety_concepts_or_fuel_hints():
-    text = "Collect the car with gasoline, not diesel."
-    assert P.select_glossary(text, "en-US", "ko-KR", field_glossary=True) == {
-        "Collect the car": "차를 받다", "gasoline": "휘발유", "diesel": "경유"}
-    assert P.match_concepts(text, "en-US", {"fuel"}) == {"fuel_gasoline": "gasoline", "fuel_diesel": "diesel"}
-
-
-@pytest.mark.parametrize("source,text", [
-    ("en-US", "Please add half a tank."),
-    ("en-US", "There is half a tank left."),
-    ("es-US", "Ponga medio tanque, por favor."),
-    ("es-US", "Todavía queda medio tanque."),
-])
-def test_half_tank_hint_does_not_add_only_or_a_tank_object(source, text):
-    assert list(P.select_glossary(text, source, "ko-KR", field_glossary=True).values()) == ["반"]
-
-
-def test_half_tank_preferred_korean_does_not_create_a_bare_half_source_alias():
-    assert P.select_glossary("차를 반납할게요.", "ko-KR", "en-US", field_glossary=True) == {"반납": "return the car"}
-    assert P.select_glossary("반대편으로 가요.", "ko-KR", "en-US", field_glossary=True) == {}
+def test_baseline_translation_messages_are_unchanged_after_experiment_removal():
+    root = Path(__file__).resolve().parents[1]
+    baseline = json.loads((root / "tests/fixtures/translation_prompt_baseline.json").read_text(encoding="utf-8"))
+    datasets = {"dev.jsonl", "general.jsonl", "general_es.jsonl", "naturalness.dev.jsonl"}
+    cases = {(name, row["id"]): row for name in datasets
+             for line in (root / "eval" / name).read_text(encoding="utf-8").splitlines()
+             if line.strip() for row in [json.loads(line)] if row["task"] == "translate"}
+    expected = {(row["dataset"], row["id"]): row["sha256"] for row in baseline["records"]}
+    assert set(cases) == set(expected)
+    for key, row in cases.items():
+        messages = P.translate_messages(row["source_locale"], row["target_locale"], row["scenario"], row["text"])
+        serialized = json.dumps(messages, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        assert hashlib.sha256(serialized.encode("utf-8")).hexdigest() == expected[key], key
