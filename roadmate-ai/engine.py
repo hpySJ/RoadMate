@@ -404,7 +404,8 @@ class Engine:
             out = {key: value for key, value in out.items() if key != "literal"}
             if self.s.log_rejected:
                 log.warning("translation_literal %s", json.dumps({"request_id": req.request_id,
-                            "attempt": attempt, "literal": literal}, ensure_ascii=False))
+                            "attempt": attempt, "literal": literal,
+                            "translated_text": out.get("translated_text")}, ensure_ascii=False))
         return out
 
     async def _polish(self, req, out: dict, deadline: float) -> dict:
@@ -450,12 +451,6 @@ class Engine:
                         P.completion_text(out) if out else None)
 
     async def parse_destination(self, req, deadline: float) -> dict:
-        from destination_intents import nearby_category_request
-        category = nearby_category_request(req.text, req.source_locale)
-        if category:
-            # A generic category cannot identify a branch in the named-place catalog.
-            return {**category, "status": "clarification_required", "candidates": [],
-                    "clarification_question": WHICH_PLACE[req.source_locale]}
         messages = P.destination_messages(req.source_locale, req.text)
         try:
             out = await self.client.chat_json(messages, P.DESTINATION_SCHEMA, P.DESTINATION_MAX_TOKENS,

@@ -216,9 +216,9 @@ def _few_shot(name: str, lang: str | None = None, *, two_step_ko: bool = False) 
         if lang and "source_locale" in i and foreign_lang(i["source_locale"], i["target_locale"]) != lang:
             continue
         msgs.append({"role": "user", "content": _dump(i)})
-        output = ex["output"]
+        output = {key: value for key, value in ex["output"].items() if key != "literal"}
         if two_step_ko and i.get("target_locale") == "ko-KR":
-            output = {"status": output["status"], "literal": output["translated_text"], **output}
+            output = {"status": output["status"], "literal": ex["output"]["literal"], **output}
         msgs.append({"role": "assistant", "content": _dump(output)})
     return msgs
 

@@ -7,7 +7,7 @@
     {"id": "passenger_side", "en": ["passenger side", "passenger's side"], "es": ["lado del acompañante", "lado del copiloto"], "ko": ["조수석 쪽"]},
     {"id": "passenger_door", "en": ["passenger door", "passenger's door"], "es": ["puerta del acompañante", "puerta del copiloto"], "ko": ["조수석 문"]},
     {"id": "driver_side", "en": ["driver's side", "driver side"], "es": ["lado del conductor"], "ko": ["운전석 쪽"]},
-    {"id": "half_tank", "en": ["half a tank", "half the tank"], "es": ["medio tanque", "la mitad del tanque"], "ko": ["연료통의 절반"]},
+    {"id": "half_tank", "en": ["half a tank", "half the tank"], "es": ["medio tanque", "la mitad del tanque"], "ko": ["연료통의 절반"], "preferred": {"ko": "반"}},
     {"id": "tire_pressure_warning", "en": ["tire pressure warning light", "tyre pressure warning light"], "es": ["luz de advertencia de presión de las llantas", "testigo de presión de los neumáticos"], "ko": ["타이어 공기압 경고등"]},
     {"id": "parking_entry_ticket", "en": ["parking entry ticket", "parking entry slip"], "es": ["boleto de entrada al estacionamiento", "ticket de entrada al estacionamiento"], "ko": ["주차권"]},
     {"id": "parking_fine", "en": ["parking fine", "parking citation"], "es": ["multa de estacionamiento", "multa por estacionamiento"], "ko": ["주차 위반 과태료"]},

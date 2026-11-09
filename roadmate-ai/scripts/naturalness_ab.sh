@@ -5,7 +5,43 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 PY="$ROOT/.venv/bin/python"
 STAMP="$(date +%Y%m%d-%H%M%S)"
-OUT="${1:-$ROOT/eval/results/naturalness-ab-$STAMP}"
+selected_profile="${MODEL_PROFILE-4b-q4}"
+arms_arg="${ARMS-two-step}"
+OUT=""
+usage() {
+    echo 'Usage: bash scripts/naturalness_ab.sh [OUTPUT_DIR] [--model-profile 4b-q4|4b-q8|8b-q4] [--arms two-step,style,glossary]'
+    echo 'MODEL_PROFILE and ARMS provide defaults; CLI options take precedence. Baseline runs once automatically.'
+}
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --model-profile|--arms)
+            [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+            if [ "$1" = --model-profile ]; then selected_profile="$2"; else arms_arg="$2"; fi
+            shift 2 ;;
+        --help|-h) usage; exit 0 ;;
+        --*) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
+        *) [ -z "$OUT" ] || { echo 'Supply only one output directory.' >&2; exit 2; }
+           OUT="$1"; shift ;;
+    esac
+done
+case "$selected_profile" in
+    4b-q4|4b-q8|8b-q4) ;;
+    *) echo "Invalid model profile: $selected_profile" >&2; exit 2 ;;
+esac
+[[ "$arms_arg" != *$'\n'* && "$arms_arg" != *$'\r'* ]] || { echo 'ARMS must be one comma/space-separated line.' >&2; exit 2; }
+read -r -a requested_arms <<< "${arms_arg//,/ }"
+[ "${#requested_arms[@]}" -gt 0 ] || { echo 'Select at least one arm: two-step, style, glossary.' >&2; exit 2; }
+declare -A seen_arms=()
+for requested in "${requested_arms[@]}"; do
+    case "$requested" in
+        two-step|style|glossary) ;;
+        *) echo "Invalid arm: $requested (choose two-step, style, glossary; baseline is automatic)" >&2; exit 2 ;;
+    esac
+    [ -z "${seen_arms[$requested]:-}" ] || { echo "Duplicate arm: $requested" >&2; exit 2; }
+    seen_arms[$requested]=1
+done
+OUT="${OUT:-$ROOT/eval/results/naturalness-ab-$STAMP}"
+export MODEL_PROFILE="$selected_profile"
 [ -x "$PY" ] || { echo 'Run scripts/run.sh setup first.' >&2; exit 1; }
 [ ! -e "$OUT" ] || { echo "Output already exists: $OUT" >&2; exit 1; }
 for name in ai llama; do
@@ -69,11 +105,14 @@ stop_owned() {
 }
 trap stop_owned EXIT
 declare -A RUNS
-for arm in baseline two-step larger; do
-    export MODEL_PROFILE=4b-q4 TWO_STEP_KO=0
-    [ "$arm" != two-step ] || export TWO_STEP_KO=1
-    [ "$arm" != larger ] || export MODEL_PROFILE=8b-q4
-    "$PY" scripts/download_model.py
+"$PY" scripts/download_model.py
+for arm in baseline "${requested_arms[@]}"; do
+    export MODEL_PROFILE="$selected_profile" TWO_STEP_KO=0 NATURAL_STYLE_KO=0 FIELD_GLOSSARY=0
+    case "$arm" in
+        two-step) export TWO_STEP_KO=1 ;;
+        style) export NATURAL_STYLE_KO=1 ;;
+        glossary) export FIELD_GLOSSARY=1 ;;
+    esac
     owned=1
     bash scripts/run.sh start > "$OUT/$arm-start.log" 2>&1 || {
         cat "$OUT/$arm-start.log" >&2; exit 1;
@@ -89,14 +128,15 @@ for arm in baseline two-step larger; do
         RUNS["$arm:$dataset"]="$run"
         echo "=== $arm / $dataset: $run ==="
         # Keep full raw output separately; show failures, latency, retry and advisory tables here.
-        grep -E '^\[.*FAIL|^- (model_profile|TWO_STEP_KO|NATURAL_STYLE_KO|FIELD_GLOSSARY|model latency|HTTP wall|errors:|502 reasons:|first-attempt|retry|Korean translationese)|^\|' "$log" || true
+        grep -E '^\[.*FAIL|^- (model_profile|TWO_STEP_KO|NATURAL_STYLE_KO|FIELD_GLOSSARY|model latency|HTTP wall|errors:|502 reasons:|first-attempt|retry|Korean translationese|two-step literal|two-step attempts literal)|^\|' "$log" || true
     done
     stop_owned
 done
 for dataset in general general_es naturalness.dev; do
-    for pair in two-step larger; do
-        label=pair01
-        [ "$pair" != larger ] || label=pair02
+    pair_index=0
+    for pair in "${requested_arms[@]}"; do
+        pair_index=$((pair_index + 1))
+        printf -v label 'pair%02d' "$pair_index"
         "$PY" eval/export_review.py "${RUNS[baseline:$dataset]}" "${RUNS[$pair:$dataset]}" \
             --label "$label-$dataset" --out-dir "$OUT/review"
     done

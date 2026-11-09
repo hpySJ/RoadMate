@@ -1,5 +1,6 @@
-"""Category search must survive a model's OTHER intent without selecting a branch."""
+"""Category requests use the model path; rules must not hide its intent mistakes."""
 import asyncio
+import json
 import time
 from types import SimpleNamespace
 
@@ -13,29 +14,55 @@ OTHER = {"intent": "other", "query_original": None, "query_ko_candidate": None,
          "region_hint": None, "category_hint": None, "needs_confirmation": False}
 
 
+class RecordingModel(MockClient):
+    is_mock = False
+
+    async def chat_json(self, messages, *args, **kwargs):
+        self.messages = messages
+        return await super().chat_json(messages, *args, **kwargs)
+
+
 def parse(text, locale, model_output=OTHER):
-    engine = Engine(MockClient(outputs=[dict(model_output)]), SimpleNamespace())
+    model = RecordingModel(outputs=[dict(model_output)])
+    engine = Engine(model, SimpleNamespace())
     request = SimpleNamespace(text=text, source_locale=locale)
-    return asyncio.run(engine.parse_destination(request, time.monotonic() + 5))
+    out = asyncio.run(engine.parse_destination(request, time.monotonic() + 5))
+    assert model.calls == 1
+    assert json.loads(model.messages[-1]["content"]) == {"source_locale": locale, "utterance": text}
+    return out
 
 
-@pytest.mark.parametrize("text,locale,category", [
-    ("근처 편의점 찾아 줘", "ko-KR", "편의점"),
-    ("가까운 약국을 찾아 주세요.", "ko-KR", "약국"),
-    ("근처 충전소를 찾아 주세요.", "ko-KR", "충전소"),
-    ("가까운 주차장을 찾아 줘.", "ko-KR", "주차장"),
-    ("Find a convenience store near here.", "en-US", "편의점"),
-    ("Please find a pharmacy near here.", "en-US", "약국"),
-    ("Find a charging station nearby.", "en-US", "충전소"),
-    ("Find a gas station near here.", "en-US", "주유소"),
-    ("Busque una farmacia cerca.", "es-MX", "약국"),
-    ("Busque una gasolinera cerca, por favor.", "es-US", "주유소"),
-    ("Busque un estacionamiento cerca.", "es-MX", "주차장"),
+@pytest.mark.parametrize("text,locale", [
+    ("근처 편의점 찾아 줘", "ko-KR"),
+    ("가까운 약국을 찾아 주세요.", "ko-KR"),
+    ("근처 충전소를 찾아 주세요.", "ko-KR"),
+    ("가까운 주차장을 찾아 줘.", "ko-KR"),
+    ("Find a convenience store near here.", "en-US"),
+    ("Please find a pharmacy near here.", "en-US"),
+    ("Find a charging station nearby.", "en-US"),
+    ("Find a gas station near here.", "en-US"),
+    ("Busque una farmacia cerca.", "es-MX"),
+    ("Busque una gasolinera cerca, por favor.", "es-US"),
+    ("Busque un estacionamiento cerca.", "es-MX"),
 ])
-def test_nearby_category_request_recovers_model_other(text, locale, category):
+def test_nearby_category_requests_keep_model_other(text, locale):
     out = parse(text, locale)
+    assert {key: out[key] for key in OTHER} == OTHER
+    assert out["status"] == "not_destination"
+    assert out["candidates"] == [] and out["clarification_question"] is None
+
+
+@pytest.mark.parametrize("text,locale,original,category", [
+    ("가까운 약국을 찾아 주세요.", "ko-KR", "약국", "약국"),
+    ("Find a charging station nearby.", "en-US", "charging station", "충전소"),
+    ("Busque un estacionamiento cerca.", "es-MX", "estacionamiento", "주차장"),
+])
+def test_model_extracted_category_requires_confirmation(text, locale, original, category):
+    extracted = {**OTHER, "intent": "set_destination", "query_original": original,
+                 "query_ko_candidate": category, "category_hint": "other", "needs_confirmation": True}
+    out = parse(text, locale, extracted)
     assert out["intent"] == "set_destination"
-    assert out["query_original"] and out["query_ko_candidate"] == category
+    assert out["query_original"] == original and out["query_ko_candidate"] == category
     assert out["needs_confirmation"] is True
     assert out["status"] == "clarification_required"
     assert out["candidates"] == [] and out["clarification_question"]
@@ -61,18 +88,10 @@ def test_category_fact_history_and_negation_do_not_create_navigation(text, local
     "Find Mirae Pharmacy near here.",
     "Don't find a pharmacy near here; take me to Mirae Pharmacy.",
 ])
-def test_category_matching_keeps_requested_named_place(text):
+def test_model_extracted_named_place_is_preserved(text):
     named = {**OTHER, "intent": "set_destination", "query_original": "Mirae Pharmacy",
              "query_ko_candidate": "미래약국", "category_hint": "other", "needs_confirmation": True}
     out = parse(text, "en-US", named)
     assert out["query_original"] == "Mirae Pharmacy"
     assert out["query_ko_candidate"] == "미래약국"
     assert out["needs_confirmation"] is True
-
-
-def test_category_model_output_cannot_skip_confirmation_or_pick_a_landmark():
-    invented = {**OTHER, "intent": "set_destination", "query_original": "Seongsan Sunrise Peak",
-                "query_ko_candidate": "성산일출봉", "category_hint": "attraction"}
-    out = parse("Please find a pharmacy near here.", "en-US", invented)
-    assert out["query_ko_candidate"] == "약국" and out["needs_confirmation"] is True
-    assert out["candidates"] == []

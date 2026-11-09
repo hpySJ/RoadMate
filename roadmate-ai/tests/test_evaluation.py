@@ -8,6 +8,7 @@ from pathlib import Path
 from config import Settings, artifact_hashes
 from eval.release_gate import check_run
 from eval.evaluate import attach_attempts, reserve_final, retry_summary, translationese_stats, translationese_summary
+from eval.evaluate import two_step_stats, two_step_summary
 
 
 @pytest.mark.parametrize("text,marker", [
@@ -136,6 +137,11 @@ def test_evaluation_records_actual_profile_and_preserves_raw_output(tmp_path, mo
     assert meta["model_profile"] == selected
     assert meta["model_profile_consistent"] is (profile_state in ("consistent", "end_flags"))
     assert meta["two_step_ko"] is two_step
+    if two_step:
+        assert meta["two_step_stats"]["eligible_final_outputs"] == 1
+        assert meta["two_step_stats"]["identical_final_rate"] is None
+    else:
+        assert meta["two_step_stats"] is None
     assert meta["experiment_flags_consistent"] is (profile_state != "end_flags")
     assert meta["translationese_stats"]["marker_outputs"]["first_person_pronoun"] == 1
     raw = json.loads((runs[0] / "results.jsonl").read_text(encoding="utf-8"))
@@ -144,6 +150,7 @@ def test_evaluation_records_actual_profile_and_preserves_raw_output(tmp_path, mo
     summary = (runs[0] / "summary.md").read_text(encoding="utf-8")
     assert "- model_profile: 4b-q8" in summary and "Korean translationese signals (advisory): 1/1" in summary
     assert f"- TWO_STEP_KO: {int(two_step)}" in summary
+    assert ("two-step literal == translated_text:" in summary) is two_step
 
 
 def test_retry_measurement_counts_only_traced_attempts(tmp_path):
@@ -214,6 +221,57 @@ def test_retry_summary_without_logs_does_not_claim_zero_percent_recovery(tmp_pat
     lines = retry_summary(attach_attempts([row], tmp_path / "missing.log"))
     assert "| other | 0 | 0/0 (N/A) | 0 |" in lines
     assert "- retry validator recovery: 0/0 (N/A)" in lines
+
+
+def test_two_step_copy_rate_uses_raw_pairs_and_reports_missing_traces(tmp_path):
+    rows = [{"case": {"task": "translate", "target_locale": "ko-KR"}, "request_id": rid,
+             "http": 502 if rid == "blocked" else 200,
+             "body": {"status": "ok", "translated_text": "저는 확인했어요."}}
+            for rid in ("fixed", "same", "blocked", "missing")]
+    events = []
+    for rid, attempt, literal, translated, issues in [
+        ("fixed", 1, "틀렸어요.", "틀렸어요.", ["number_missing"]),
+        ("fixed", 2, "저는 확인했습니다.", "확인했어요.", []),
+        ("same", 1, "나는 확인했어요.", "나는 확인했어요.", []),
+        ("blocked", 1, "초안입니다.", "오류예요.", ["number_missing"]),
+        ("blocked", 2, "초안입니다.", "오류예요.", ["number_missing"]),
+    ]:
+        identity = {"request_id": rid, "attempt": attempt}
+        events += ["translation_literal " + json.dumps({**identity, "literal": literal, "translated_text": translated}),
+                   "translation_attempt " + json.dumps({**identity, "issues": issues,
+                       "output": {"status": "ok", "translated_text": translated}})]
+    log = tmp_path / "attempt.log"
+    log.write_text("\n".join(events), encoding="utf-8")
+    attach_attempts(rows, log)
+    stats = two_step_stats(rows)
+    assert stats == {"eligible_final_outputs": 3, "traced_final_outputs": 2, "identical_final_outputs": 1,
+                     "identical_final_rate": .5, "traced_attempts": 5, "identical_attempts": 2,
+                     "identical_attempt_rate": .4}
+    assert "final-output trace coverage: 2/3" in two_step_summary(stats)[0]
+    assert all("literal" not in attempt for row in rows for attempt in row["translation_attempts"])
+    assert rows[1]["translation_attempts"][0]["literal_equals_translated_text"] is True
+
+
+def test_two_step_legacy_null_and_duplicate_logs_are_not_counted_as_copies(tmp_path):
+    rows = [{"case": {"task": "translate", "target_locale": "ko-KR"}, "request_id": rid,
+             "http": 200, "body": {"status": "ok"}} for rid in ("old", "null", "duplicate")]
+    events = []
+    for row in rows:
+        identity = {"request_id": row["request_id"], "attempt": 1}
+        record = {**identity, "literal": "초안"}
+        if row["request_id"] == "null":
+            record.update(literal=None, translated_text=None)
+        elif row["request_id"] == "duplicate":
+            record["translated_text"] = "초안"
+            events.append("translation_literal " + json.dumps(record))
+        events += ["translation_literal " + json.dumps(record), "translation_attempt " + json.dumps({
+            **identity, "issues": [], "output": {"status": "ok", "translated_text": "번역"}})]
+    log = tmp_path / "attempt.log"
+    log.write_text("\n".join(events), encoding="utf-8")
+    attach_attempts(rows, log)
+    stats = two_step_stats(rows)
+    assert stats["eligible_final_outputs"] == 3 and stats["traced_final_outputs"] == 0
+    assert stats["identical_final_rate"] is None and "(N/A)" in two_step_summary(stats)[0]
 
 
 def test_quality_gate_rejects_mock_unreviewed_and_changed_evidence(tmp_path, monkeypatch):

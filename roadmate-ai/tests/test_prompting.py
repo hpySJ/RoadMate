@@ -400,8 +400,40 @@ def test_two_step_schema_and_examples_follow_target_language(source, target):
         assert ("literal" in output) == expected
         if expected:
             assert list(output) == ["status", "literal", "translated_text", "clarification_question"]
-            assert output["literal"] == output["translated_text"]
+            stored = next(e["output"] for e in P.examples("translate") if e["input"] == inp)
+            assert output["literal"] == stored["literal"]
+            assert output["translated_text"] == stored["translated_text"]
             assert (output["literal"] is None) == (output["status"] == "clarification_required")
+    assert all("literal" not in json.loads(m["content"]) for m in baseline if m["role"] == "assistant")
+
+
+@pytest.mark.parametrize("source", ["en-US", "es-US", "es-MX"])
+@pytest.mark.parametrize("natural_style", [False, True])
+def test_two_step_prompt_demonstrates_at_least_four_actual_rewrites(source, natural_style):
+    messages = P.translate_messages(source, "ko-KR", "general", "x", two_step_ko=True,
+                                    natural_style_ko=natural_style)
+    pairs = [(json.loads(messages[n]["content"]), json.loads(messages[n + 1]["content"]))
+             for n in range(1, len(messages) - 1, 2)]
+    rewritten = [o for i, o in pairs if i["target_locale"] == "ko-KR" and o["status"] == "ok"
+                 and o["literal"] != o["translated_text"]]
+    assert len(rewritten) >= 4
+    assert all(o["literal"] is None for _, o in pairs if o["status"] == "clarification_required")
+
+
+@pytest.mark.parametrize("name", ["translate", "translate.natural"])
+def test_authored_literals_preserve_fixture_safety_facts_and_default_output(name):
+    from validation import validate_translation
+    for ex in P.examples(name):
+        i, output = ex["input"], ex["output"]
+        if i["target_locale"] != "ko-KR":
+            continue
+        assert "literal" in output
+        # Fixture quality check only: runtime validation still receives translated_text, never literal.
+        literal_output = {**output, "translated_text": output["literal"]}
+        assert validate_translation(literal_output, i["utterance"], i["source_locale"], "ko-KR") == []
+    messages = P._few_shot(name)
+    assert [json.loads(m["content"]) for m in messages if m["role"] == "assistant"] == [
+        {k: v for k, v in ex["output"].items() if k != "literal"} for ex in P.examples(name)]
 
 
 def test_optional_flags_are_explicit_and_independent(monkeypatch):
@@ -440,8 +472,8 @@ def test_natural_examples_are_only_for_korean_and_same_source_language():
 @pytest.mark.parametrize("source,text,surface,expected", [
     ("en-US", "The passenger door handle is sticky.", "passenger door", "조수석 문"),
     ("es-US", "El lado del conductor está mojado.", "lado del conductor", "운전석 쪽"),
-    ("en-US", "It has half a tank remaining.", "half a tank", "연료통의 절반"),
-    ("es-MX", "Queda medio tanque.", "medio tanque", "연료통의 절반"),
+    ("en-US", "It has half a tank remaining.", "half a tank", "반"),
+    ("es-MX", "Queda medio tanque.", "medio tanque", "반"),
     ("en-US", "The tire pressure warning light flashes.", "tire pressure warning light", "타이어 공기압 경고등"),
     ("en-US", "Keep the parking entry ticket.", "parking entry ticket", "주차권"),
     ("es-US", "Hay una multa de estacionamiento.", "multa de estacionamiento", "주차 위반 과태료"),
@@ -463,3 +495,18 @@ def test_field_hints_do_not_change_safety_concepts_or_fuel_hints():
     assert P.select_glossary(text, "en-US", "ko-KR", field_glossary=True) == {
         "Collect the car": "차를 받다", "gasoline": "휘발유", "diesel": "경유"}
     assert P.match_concepts(text, "en-US", {"fuel"}) == {"fuel_gasoline": "gasoline", "fuel_diesel": "diesel"}
+
+
+@pytest.mark.parametrize("source,text", [
+    ("en-US", "Please add half a tank."),
+    ("en-US", "There is half a tank left."),
+    ("es-US", "Ponga medio tanque, por favor."),
+    ("es-US", "Todavía queda medio tanque."),
+])
+def test_half_tank_hint_does_not_add_only_or_a_tank_object(source, text):
+    assert list(P.select_glossary(text, source, "ko-KR", field_glossary=True).values()) == ["반"]
+
+
+def test_half_tank_preferred_korean_does_not_create_a_bare_half_source_alias():
+    assert P.select_glossary("차를 반납할게요.", "ko-KR", "en-US", field_glossary=True) == {"반납": "return the car"}
+    assert P.select_glossary("반대편으로 가요.", "ko-KR", "en-US", field_glossary=True) == {}

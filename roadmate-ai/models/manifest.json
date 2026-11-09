@@ -25,7 +25,7 @@
     "cache_ram_mib": 0
   },
   "versions": {
-    "translate_prompt": "translate-v10",
+    "translate_prompt": "translate-v11",
     "destination_prompt": "destination-v5",
     "polish_prompt": "polish-v4",
     "glossary": "rental-ko-en-es-v12",

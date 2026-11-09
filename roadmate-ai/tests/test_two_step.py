@@ -57,7 +57,8 @@ def test_literal_is_private_unvalidated_and_unnormalized(settings, caplog, log_r
     if log_rejected:
         logged = [json.loads(line.removeprefix("translation_literal ")) for line in records
                   if line.startswith("translation_literal ")]
-        assert logged == [{"request_id": "two-step-test", "attempt": 1, "literal": literal}]
+        assert logged == [{"request_id": "two-step-test", "attempt": 1, "literal": literal,
+                           "translated_text": "나는 8 p.m.에 돌아갈게요."}]
         attempt = next(json.loads(line.removeprefix("translation_attempt ")) for line in records
                        if line.startswith("translation_attempt "))
         assert "literal" not in attempt["output"]

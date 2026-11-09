@@ -57,7 +57,7 @@ fi
     fake_python.write_text(r'''#!/usr/bin/env bash
 set -euo pipefail
 case "$1" in
-    -c) echo 1 ;;
+    -c) printf 'probe\t%s\n' "$MODEL_PROFILE" >> events.tsv; echo 1 ;;
     scripts/download_model.py)
         printf 'download\t%s\n' "$MODEL_PROFILE" >> events.tsv ;;
     eval/evaluate.py)
@@ -72,7 +72,7 @@ case "$1" in
             echo 'simulated evaluation failure'
             exit 43
         fi
-        folder="eval/results/$MODEL_PROFILE-$TWO_STEP_KO-${dataset#eval/}"
+        folder="eval/results/$MODEL_PROFILE-$TWO_STEP_KO-$NATURAL_STYLE_KO-$FIELD_GLOSSARY-${dataset#eval/}"
         mkdir -p "$folder"
         echo '{}' > "$folder/run.json"
         echo '[2/4] FAIL sample 23ms http_502'
@@ -83,6 +83,8 @@ case "$1" in
         echo '- first-attempt wrong_language: 0/4 traced first attempts'
         echo '- retry validator recovery: 1/2 (50.0%)'
         echo '- Korean translationese signals (advisory): 1/3 (33.3%)'
+        echo '- two-step literal == translated_text: 1/3 final accepted outputs'
+        echo '- two-step attempts literal == translated_text: 2/4 traced attempts'
         echo '| other | 2 | 1 |'
         printf 'saved: %s\n' "$folder"
         ;;
@@ -96,12 +98,15 @@ esac
 ''', encoding="utf-8")
     fake_python.chmod(0o755)
 
-    def run(failure="", active=False):
+    def run(failure="", active=False, *, args=(), env_changes=None):
         env = {**os.environ, "STUB_FAIL": failure, "MODEL_PROFILE": "8b-q4", "TWO_STEP_KO": "1",
                "NATURAL_STYLE_KO": "1", "FIELD_GLOSSARY": "1", "POLISH_KO": "1"}
-        command = [bash, "scripts/naturalness_ab.sh", "output with spaces"]
+        env.pop("ARMS", None)
+        env.update(env_changes or {})
+        command = [bash, "scripts/naturalness_ab.sh", "output with spaces", *args]
         if active:
-            command = [bash, "-c", 'echo $$ > run/ai.pid; bash scripts/naturalness_ab.sh "output with spaces"']
+            command = [bash, "-c", 'echo $$ > run/ai.pid; bash scripts/naturalness_ab.sh "$@"',
+                       "comparison", "output with spaces", *args]
         result = subprocess.run(command, cwd=work, env=env, capture_output=True, text=True,
                                 encoding="utf-8", errors="replace", timeout=30)
         log = work / "events.tsv"
@@ -120,33 +125,82 @@ esac
                        cwd=work, capture_output=True, timeout=10)
 
 
-def test_three_arms_and_six_blinded_exports_use_isolated_flags(comparison):
-    result, events, output, alive = comparison()
+def test_requested_arms_and_blinded_exports_use_one_profile_and_isolated_flags(comparison):
+    result, events, output, alive = comparison(args=("--model-profile", "4b-q8", "--arms", "two-step,style,glossary"),
+                                              env_changes={"ARMS": "style"})
     assert result.returncode == 0, result.stdout + result.stderr
     starts = [e for e in events if e[0] == "start"]
-    assert starts == [["start", "4b-q4", "0", "0", "0", "0"],
-                      ["start", "4b-q4", "1", "0", "0", "0"],
-                      ["start", "8b-q4", "0", "0", "0", "0"]]
+    assert starts == [["start", "4b-q8", "0", "0", "0", "0"],
+                      ["start", "4b-q8", "1", "0", "0", "0"],
+                      ["start", "4b-q8", "0", "1", "0", "0"],
+                      ["start", "4b-q8", "0", "0", "1", "0"]]
+    assert [e for e in events if e[0] == "probe"] == [["probe", "4b-q8"]]
+    assert [e for e in events if e[0] == "download"] == [["download", "4b-q8"]]
     evaluations = [e for e in events if e[0] == "evaluate"]
-    assert len(evaluations) == 9
+    assert len(evaluations) == 12
     for index, arm in enumerate(starts):
         assert [e[1:6] for e in evaluations[index * 3:index * 3 + 3]] == [arm[1:]] * 3
         assert [e[-1] for e in evaluations[index * 3:index * 3 + 3]] == [
             "eval/general.jsonl", "eval/general_es.jsonl", "eval/naturalness.dev.jsonl"]
     assert not any(e[0] == "stop" for e in events)  # never call the global stop command
     reviews = [e for e in events if e[0] == "review"]
-    assert len(reviews) == 6
+    assert len(reviews) == 9
     for dataset in ("general", "general_es", "naturalness.dev"):
-        assert ["review", f"eval/results/4b-q4-0-{dataset}.jsonl", f"eval/results/4b-q4-1-{dataset}.jsonl",
-                f"pair01-{dataset}"] in reviews
-        assert ["review", f"eval/results/4b-q4-0-{dataset}.jsonl", f"eval/results/8b-q4-0-{dataset}.jsonl",
-                f"pair02-{dataset}"] in reviews
+        for index, flags in enumerate(("1-0-0", "0-1-0", "0-0-1"), 1):
+            assert ["review", f"eval/results/4b-q8-0-0-0-{dataset}.jsonl", f"eval/results/4b-q8-{flags}-{dataset}.jsonl",
+                    f"pair{index:02d}-{dataset}"] in reviews
     for marker in ("FAIL sample", "http_502", "502 reasons", "model latency p50/p95", "HTTP wall p50/p95",
-                   "first-attempt wrong_language", "retry validator recovery", "Korean translationese", "| other |"):
+                   "first-attempt wrong_language", "retry validator recovery", "Korean translationese", "| other |",
+                   "two-step literal == translated_text", "two-step attempts literal == translated_text"):
         assert marker in result.stdout
-    assert all((output / f"{arm}-ai.err.log").is_file() for arm in ("baseline", "two-step", "larger"))
+    assert all((output / f"{arm}-ai.err.log").is_file() for arm in ("baseline", "two-step", "style", "glossary"))
     assert (output / "logs-before/ai.err.log").read_text() == "previous completed comparison\n"
     assert not (output.parent / "run/ai.pid").exists()
+    assert alive == []
+
+
+@pytest.mark.parametrize("profile,arm,flags", [
+    ("4b-q4", "style", ["0", "1", "0"]),
+    ("4b-q8", "two-step", ["1", "0", "0"]),
+    ("8b-q4", "glossary", ["0", "0", "1"]),
+])
+def test_single_requested_option_runs_baseline_once_and_only_selected_profile(comparison, profile, arm, flags):
+    result, events, _, alive = comparison(args=("--model-profile", profile, "--arms", arm))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert [e for e in events if e[0] == "start"] == [
+        ["start", profile, "0", "0", "0", "0"], ["start", profile, *flags, "0"]]
+    assert [e for e in events if e[0] == "download"] == [["download", profile]]
+    assert len([e for e in events if e[0] == "evaluate"]) == 6
+    assert len([e for e in events if e[0] == "review"]) == 3
+    assert alive == []
+
+
+def test_environment_selection_keeps_requested_arm_order(comparison):
+    result, events, _, alive = comparison(env_changes={"MODEL_PROFILE": "4b-q4", "ARMS": "glossary style"})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert [e for e in events if e[0] == "start"] == [
+        ["start", "4b-q4", "0", "0", "0", "0"],
+        ["start", "4b-q4", "0", "0", "1", "0"],
+        ["start", "4b-q4", "0", "1", "0", "0"]]
+    assert alive == []
+
+
+@pytest.mark.parametrize("args,env_changes", [
+    (("--model-profile", "unknown"), {}),
+    (("--arms", "larger"), {}),
+    (("--arms", "two-step,style,unknown"), {}),
+    (("--arms", "two-step,two-step"), {}),
+    (("--arms", ""), {}),
+    (("--arms",), {}),
+    (("--unknown",), {}),
+    ((), {"ARMS": "bad"}),
+    ((), {"MODEL_PROFILE": "bad"}),
+])
+def test_invalid_selection_performs_no_actions(comparison, args, env_changes):
+    result, events, output, alive = comparison(args=args, env_changes=env_changes)
+    assert result.returncode == 2
+    assert events == []
+    assert not output.exists()
     assert alive == []
 
 
